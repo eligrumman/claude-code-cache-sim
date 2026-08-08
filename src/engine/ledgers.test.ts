@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { mainBaseTok, subBaseTok, mcpShare, SUB_SCALE } from "./ledgers.js";
 import { DEFAULT_CFG, BASE_IDENTICAL } from "./constants.js";
+import type { Config } from "./types.js";
 
 describe("base-size functions (Section 5.2, invariant 6)", () => {
   it("mainBaseTok(defaultCfg) === 34738 + 400*10", () => {
@@ -20,7 +21,13 @@ describe("base-size functions (Section 5.2, invariant 6)", () => {
   });
 
   it("trimming MCP and skills shrinks the base", () => {
-    const lean = { ...DEFAULT_CFG, mcp: [true, false, false, false], skills: 10, skillsMode: "invoke", memoryFiles: 0 };
+    const lean: Config = {
+      ...DEFAULT_CFG,
+      mcp: [true, false, false, false],
+      skills: 10,
+      skillsMode: "invoke",
+      memoryFiles: 0,
+    };
     expect(mainBaseTok(lean)).toBeLessThan(mainBaseTok(DEFAULT_CFG));
   });
 });

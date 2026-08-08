@@ -1,8 +1,8 @@
-// simulate.js - the pure, deterministic cost functions.
-//   computeRun(cfg)     : a full 8-task fan-out run (byte-identical to
-//                         sim-fanout-prototype.html computeRun - canonical).
+// simulate.ts - the pure, deterministic cost functions.
+//   computeRun(cfg)      : a full 8-task fan-out run (byte-identical to
+//                          sim-fanout-prototype.html computeRun - canonical).
 //   simulateRequest(...) : a single request against a cache (extends the Tape's
-//                         simulateSend, per SIMULATOR_SPEC.md Section 5.4).
+//                          simulateSend, per SIMULATOR_SPEC.md Section 5.4).
 // No Date.now / Math.random anywhere in this module.
 
 import { RATE, MODEL_IN, priceTable } from "./pricing.js";
@@ -18,7 +18,19 @@ import {
   VAR_R,
   MIN_CACHEABLE_PREFIX,
 } from "./constants.js";
-import { subBaseTok, ledgerScale } from "./ledgers.js";
+import { subBaseTok, ledgerScale, mainBaseTok } from "./ledgers.js";
+import type {
+  CacheState,
+  Config,
+  Model,
+  RunCfg,
+  RunResult,
+  RunSeg,
+  RunTask,
+  RequestRow,
+  SimRequest,
+  WriteTier,
+} from "./types.js";
 
 export { priceTable };
 
@@ -27,13 +39,13 @@ export { priceTable };
 // segs [{tok, rate, role, kind}], outTok, cost, cum; plus total, shipped, diedAt,
 // and a rolled-up breakdown. Verbatim from the fan-out prototype (the numbers
 // $5.58 / $22.49 are asserted in the tests).
-export function computeRun(cfg) {
+export function computeRun(cfg: RunCfg): RunResult {
   const P = MODEL_IN[cfg.model];
   const perTokUSD = P / 1e6;
-  const tasks = [];
+  const tasks: RunTask[] = [];
   let cum = 0,
     total = 0,
-    diedAt = null;
+    diedAt: number | null = null;
   const bd = {
     work: 0,
     output: 0,
@@ -48,7 +60,7 @@ export function computeRun(cfg) {
   };
 
   for (let s = 0; s < 8; s++) {
-    const segs = [];
+    const segs: RunSeg[] = [];
     if (cfg.who === "inline") {
       const prefix = INLINE_B0 + INLINE_GROWTH * s;
       segs.push({ tok: prefix, rate: RATE.read, role: "read", kind: "prefix" });
@@ -101,11 +113,11 @@ export function computeRun(cfg) {
 
 // ======================= Single-request simulation =======================
 // TTL in minutes for a write tier.
-export function ttlMin(tier) {
+export function ttlMin(tier: WriteTier): number {
   return tier === "1h" ? 60 : 5;
 }
 
-function isExpired(entry, nowMin) {
+function isExpired(entry: { lastTouchMin: number; tier: WriteTier }, nowMin: number): boolean {
   return nowMin - entry.lastTouchMin > ttlMin(entry.tier);
 }
 
@@ -117,7 +129,11 @@ function isExpired(entry, nowMin) {
 //  - warm inline main: read prefix, write growth (INLINE_GROWTH) @ w1h
 //  - workIn @ 1x, outTok @ 5x
 //  - min-prefix rule (<1,024 tok never caches, C26)
-export function simulateRequest(cache, cfg, req) {
+export function simulateRequest(
+  cache: CacheState,
+  cfg: Config,
+  req: SimRequest,
+): { row: RequestRow; cache: CacheState } {
   const { agent, promptHash, model, workIn, outTok, nowMin } = req;
   const key = agent === "main" ? "main" : `sub:${promptHash}`;
   const entries = { ...cache.entries };
@@ -127,12 +143,12 @@ export function simulateRequest(cache, cfg, req) {
   const scale = ledgerScale(cfg);
   const isVaried = agent === "sub" && cfg.prompts === "varied";
   // main writes 1h; subs write 1h iff the flag is on, else 5m (C12/C22).
-  const writeTier = agent === "main" ? "1h" : cfg.oneHourFlag ? "1h" : "5m";
+  const writeTier: WriteTier = agent === "main" ? "1h" : cfg.oneHourFlag ? "1h" : "5m";
   const writeRate = writeTier === "1h" ? RATE.w1h : RATE.w5m;
 
   let readTok = 0;
   let writeTok = 0;
-  let newPrefix;
+  let newPrefix: number;
 
   if (!live) {
     // Cold.
@@ -142,7 +158,7 @@ export function simulateRequest(cache, cfg, req) {
       newPrefix = Math.round(subBaseTok(cfg));
     } else {
       readTok = 0;
-      writeTok = agent === "main" ? mainBase(cfg) : subBaseTok(cfg);
+      writeTok = agent === "main" ? mainBaseTok(cfg) : subBaseTok(cfg);
       newPrefix = writeTok;
     }
   } else if (agent === "main") {
@@ -166,9 +182,9 @@ export function simulateRequest(cache, cfg, req) {
   const usd =
     (readTok * RATE.read + writeTok * writeRate + workIn * RATE.input + outTok * RATE.out) * per;
 
-  const row = {
+  const row: RequestRow = {
     tMin: nowMin,
-    unitId: req.unitId || null,
+    unitId: req.unitId ?? null,
     agent,
     model,
     readTok,
@@ -181,12 +197,7 @@ export function simulateRequest(cache, cfg, req) {
 
   // Min-prefix rule: prefixes below 1,024 tok never cache (C26).
   if (newPrefix >= MIN_CACHEABLE_PREFIX) {
-    entries[key] = {
-      prefixTok: newPrefix,
-      tier: writeTier,
-      lastTouchMin: nowMin,
-      keyId: key,
-    };
+    entries[key] = { prefixTok: newPrefix, tier: writeTier, lastTouchMin: nowMin, keyId: key };
   } else {
     delete entries[key];
   }
@@ -194,15 +205,14 @@ export function simulateRequest(cache, cfg, req) {
   return { row, cache: { entries } };
 }
 
-// mainBase re-exported through a thin wrapper to avoid a circular import shape.
-import { mainBaseTok as _mainBaseTok } from "./ledgers.js";
-function mainBase(cfg) {
-  return _mainBaseTok(cfg);
-}
-
 // Keep-warm during a gap of G minutes: cost = floor(G / interval) pings, each
 // prefixTok * 0.1x; entry stays warm. Section 5.4.
-export function keepWarmCost(prefixTok, gapMin, intervalMin, model) {
+export function keepWarmCost(
+  prefixTok: number,
+  gapMin: number,
+  intervalMin: number,
+  model: Model,
+): number {
   const pings = Math.floor(gapMin / intervalMin);
   return pings * prefixTok * RATE.read * (MODEL_IN[model] / 1e6);
 }

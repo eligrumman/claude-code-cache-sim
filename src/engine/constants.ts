@@ -1,6 +1,8 @@
-// constants.js - calibration constants from SIMULATOR_SPEC.md Section 2.
+// constants.ts - calibration constants from SIMULATOR_SPEC.md Section 2.
 // Every value traces to a real measured number (diag / TC-D / content) or is
 // explicitly labeled [FICTION]. Citations are the C-numbers in the spec table.
+
+import type { Config, Model } from "./types.js";
 
 // ---- Work per dev task (C28) [FICTION, calibrated so the scripted runs land] ----
 export const WORK_IN = 6000; // fresh file/context tokens read per task (1x)
@@ -58,10 +60,10 @@ export const MAX_BREAKPOINTS = 4;
 
 // ---- MCP schema sizes (C24 / Section 4.10) ----
 // Four fictional servers whose sizes sum to ~16,295 (the tool base).
-export const MCP_SIZES = [6295, 4000, 3000, 3000];
+export const MCP_SIZES: readonly number[] = [6295, 4000, 3000, 3000];
 
 // ---- Default config (Section 8 table; deliberately-bad defaults) ----
-export const DEFAULT_CFG = {
+export const DEFAULT_CFG: Config = {
   orchestratorModel: "sonnet",
   planModel: "opus",
   devModel: "sonnet",
@@ -79,5 +81,5 @@ export const DEFAULT_CFG = {
 };
 
 // ---- Planning-quality / dev-quality multipliers (Section 3.4) [FICTION] ----
-export const DEV_Q = { sonnet: 1.5, opus: 1.0, fable: 0.7 };
-export const PLAN_Q = { sonnet: 1.6, opus: 1.0, fable: 0.75 };
+export const DEV_Q: Record<Model, number> = { sonnet: 1.5, opus: 1.0, fable: 0.7 };
+export const PLAN_Q: Record<Model, number> = { sonnet: 1.6, opus: 1.0, fable: 0.75 };

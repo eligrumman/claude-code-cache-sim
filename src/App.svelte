@@ -1,13 +1,13 @@
-<script>
+<script lang="ts">
   import { onMount } from "svelte";
   import { computeRun } from "./engine/simulate.js";
 
-  let canvas;
+  let canvas: HTMLCanvasElement;
   // Prove the engine is wired in: the canonical winning run.
   const winning = computeRun({ model: "sonnet", who: "subagent", prompts: "identical", width: 8 });
 
   onMount(() => {
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d")!;
     const w = (canvas.width = canvas.clientWidth * devicePixelRatio);
     const h = (canvas.height = 120 * devicePixelRatio);
     ctx.fillStyle = "#3b82f6";
