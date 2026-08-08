@@ -8,6 +8,7 @@ import {
   isLevelUnlocked,
   completeLevel,
   starsFor,
+  unlockedControls,
 } from "./levels.js";
 import type { GameState } from "./types.js";
 
@@ -129,5 +130,54 @@ describe("stars", () => {
     const st = runScript(1, "session", { who: "subagent", prompts: "identical", width: 8 }, true);
     const l1 = LEVEL_BY_ID.L1;
     if (l1.pass(st).pass) expect(starsFor(l1, st, 0)).toBe(1);
+  });
+});
+
+describe("G1: LevelDef disclosure/scenario/learn fields (GAME_PLAN.md Section C.1/D)", () => {
+  it("every level has a non-empty objective and introducedControls", () => {
+    for (const l of LEVELS) {
+      expect(l.objective.length).toBeGreaterThan(0);
+      expect(l.introducedControls.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("every level has a scenario id, a learn beat, reference/anti configs, and a failLesson", () => {
+    for (const l of LEVELS) {
+      expect(typeof l.scenario).toBe("string");
+      expect(l.learn).toBeDefined();
+      expect(l.learn.copy.length).toBeGreaterThan(0);
+      expect(typeof l.learn.chip).toBe("function");
+      expect(l.referenceCfg).toBeDefined();
+      expect(l.antiCfg).toBeDefined();
+      expect(l.failLesson).toBeDefined();
+      expect(l.failLesson.line.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("unlockedControls(L1) is exactly L1's introducedControls (Section C.2: L1 shows only RUN)", () => {
+    expect(unlockedControls("L1")).toEqual(["run"]);
+    expect(unlockedControls("L1")).toEqual(LEVEL_BY_ID.L1.introducedControls);
+  });
+
+  it("the unlocked control set grows by exactly the newly-introduced controls at each level", () => {
+    let prev: string[] = [];
+    for (const id of LEVEL_ORDER) {
+      const cur = unlockedControls(id);
+      const level = LEVEL_BY_ID[id];
+      // every previously-unlocked control is still present (nothing is ever revoked)
+      for (const c of prev) expect(cur).toContain(c);
+      // the new set is exactly prev + this level's introducedControls (order preserved)
+      expect(cur).toEqual([...prev, ...level.introducedControls]);
+      prev = cur;
+    }
+  });
+
+  it("LEVEL_ORDER is unchanged and the 13 level ids are unchanged", () => {
+    expect(LEVEL_ORDER).toEqual([
+      "L1", "L2", "L3", "L4", "L5", "L6",
+      "L7", "L8", "L9", "L10", "L11",
+      "L12", "L13",
+    ]);
+    expect(LEVELS.map((l) => l.id)).toEqual(LEVEL_ORDER);
   });
 });
