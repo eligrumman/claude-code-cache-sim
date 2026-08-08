@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { runScript, totalSpent } from "./step.js";
+import { runScript, runL1Reference, runL1Anti, totalSpent } from "./step.js";
 import {
   LEVELS,
   LEVEL_ORDER,
@@ -12,21 +12,10 @@ import {
 } from "./levels.js";
 import type { GameState } from "./types.js";
 
-// A minimal fixture matching L1's spec description ("3 warm main turns after a
-// cold start" - a scripted 4-request ledger, mostly reads) - the generic
-// SDLC pipeline (runScript) isn't the L1 scenario itself, so gate math here
-// is exercised directly against ledger rows shaped like the real signature.
+// L1's real scripted reference run (L1_REDESIGN Section 3/8): tasks 1-4 back
+// to back, one 20-min coffee, standup last - 1 cold main write, $0.416, 3 stars.
 function l1Fixture(): GameState {
-  const base = runScript(1, "session", { who: "subagent", prompts: "identical", width: 8 }, true);
-  return {
-    ...base,
-    ledger: [
-      { tMin: 0, unitId: "u0", unit: "DEV", agent: "main", model: "sonnet", cold: true, readTok: 0, inputTok: 6000, writeTok: 1500, writeTier: "1h", outTok: 500, usd: 0.1 },
-      { tMin: 1, unitId: "u0", unit: "DEV", agent: "main", model: "sonnet", cold: false, readTok: 5000, inputTok: 1, writeTok: 100, writeTier: "1h", outTok: 300, usd: 0.01 },
-      { tMin: 2, unitId: "u0", unit: "DEV", agent: "main", model: "sonnet", cold: false, readTok: 5100, inputTok: 1, writeTok: 100, writeTier: "1h", outTok: 300, usd: 0.01 },
-      { tMin: 3, unitId: "u0", unit: "DEV", agent: "main", model: "sonnet", cold: false, readTok: 5200, inputTok: 1, writeTok: 100, writeTier: "1h", outTok: 300, usd: 0.01 },
-    ],
-  };
+  return runL1Reference();
 }
 
 describe("campaign structure", () => {
@@ -61,7 +50,7 @@ describe("progression: only the frontier level's chain is unlocked", () => {
 
   it("completing L1 with a passing run unlocks L2 but nothing further", () => {
     let c = newCampaign();
-    // L1 gate: >=80% of ledger tokens are reads (3 warm turns after a cold start).
+    // L1 gate (L1_REDESIGN Section 3): all done, spent <= $0.55, <=1 cold main write.
     const st = l1Fixture();
     c = completeLevel(c, "L1", st, 0);
     expect(isLevelUnlocked(c, "L2")).toBe(true);
@@ -126,10 +115,24 @@ describe("stars", () => {
     if (!l2.pass(st).pass) expect(s).toBe(0);
   });
 
-  it("L1 (uncapped budget) awards 1 star on any pass, never blocked by margin math", () => {
-    const st = runScript(1, "session", { who: "subagent", prompts: "identical", width: 8 }, true);
+  it("L1's reference run passes the gate and earns 3 stars (L1_REDESIGN Section 3: $0.416, 1 cold write)", () => {
+    const st = runL1Reference();
     const l1 = LEVEL_BY_ID.L1;
-    if (l1.pass(st).pass) expect(starsFor(l1, st, 0)).toBe(1);
+    const gate = l1.pass(st);
+    expect(gate.pass).toBe(true);
+    expect(totalSpent(st)).toBeGreaterThanOrEqual(0.411);
+    expect(totalSpent(st)).toBeLessThanOrEqual(0.421);
+    expect(starsFor(l1, st, 0)).toBe(3);
+  });
+
+  it("L1's anti run (standup mid-work) fails the cold-write clause even though $0.52 < some naive reading of the budget", () => {
+    const st = runL1Anti();
+    const l1 = LEVEL_BY_ID.L1;
+    const gate = l1.pass(st);
+    expect(gate.pass).toBe(false);
+    expect(totalSpent(st)).toBeGreaterThanOrEqual(0.52);
+    expect(totalSpent(st)).toBeLessThanOrEqual(0.53);
+    expect(st.ledger.filter((r) => r.agent === "main" && r.cold).length).toBe(2);
   });
 });
 
@@ -154,8 +157,8 @@ describe("G1: LevelDef disclosure/scenario/learn fields (GAME_PLAN.md Section C.
     }
   });
 
-  it("unlockedControls(L1) is exactly L1's introducedControls (Section C.2: L1 shows only RUN)", () => {
-    expect(unlockedControls("L1")).toEqual(["run"]);
+  it("unlockedControls(L1) is exactly L1's introducedControls (run + advanceTime, L1_REDESIGN Section 8)", () => {
+    expect(unlockedControls("L1")).toEqual(["run", "advanceTime"]);
     expect(unlockedControls("L1")).toEqual(LEVEL_BY_ID.L1.introducedControls);
   });
 

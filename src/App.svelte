@@ -4,6 +4,7 @@
   import MapScreen from "./components/MapScreen.svelte";
   import LearnScreen from "./components/LearnScreen.svelte";
   import PlayScreen from "./components/PlayScreen.svelte";
+  import L1PlayScreen from "./components/L1PlayScreen.svelte";
   import ResultScreen from "./components/ResultScreen.svelte";
   import SessionStream from "./components/SessionStream.svelte";
   import {
@@ -32,7 +33,10 @@
     screen = toMap();
   }
   function goEnter(id: LevelId) {
-    screen = enterLevel(id);
+    // L1's intro cards are rendered inline by L1PlayScreen (Section 4 Beat 0
+    // + Section 7 gap #7 - LearnBeat's A/B replay doesn't fit token-basics
+    // teaching), so entering L1 goes straight to play.
+    screen = id === "L1" ? toPlay(id) : enterLevel(id);
   }
   function goPlay(id: LevelId) {
     screen = toPlay(id);
@@ -74,17 +78,27 @@
   {:else if screen.id === "play"}
     {@const def = LEVEL_BY_ID[screen.level]}
     <h1 style="margin:0 0 4px">{def.id} - {def.title}</h1>
-    <p class="sub" style="margin-top:0">{def.objective}</p>
-    <PlayScreen
-      level={screen.level}
-      seed={def.seed}
-      scope={def.scope}
-      cfgOverride={def.cfgOverride}
-      cfgLocked={def.cfgLocked || []}
-      clockCapMin={def.clockCapMin}
-      onfinish={(st, handCoded) => finishLevel(screen.level, st, handCoded)}
-      onabandon={goMap}
-    />
+    {#if screen.level !== "L1"}
+      <p class="sub" style="margin-top:0">{def.objective}</p>
+    {/if}
+    {#if screen.level === "L1"}
+      <L1PlayScreen
+        attempted={campaign.levels.L1.attempts > 0}
+        onfinish={(st, handCoded) => finishLevel(screen.level, st, handCoded)}
+        onabandon={goMap}
+      />
+    {:else}
+      <PlayScreen
+        level={screen.level}
+        seed={def.seed}
+        scope={def.scope}
+        cfgOverride={def.cfgOverride}
+        cfgLocked={def.cfgLocked || []}
+        clockCapMin={def.clockCapMin}
+        onfinish={(st, handCoded) => finishLevel(screen.level, st, handCoded)}
+        onabandon={goMap}
+      />
+    {/if}
   {:else if screen.id === "result"}
     <ResultScreen
       level={screen.level}

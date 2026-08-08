@@ -163,9 +163,12 @@ export function simulateRequest(
     }
   } else if (agent === "main") {
     // Warm inline main: re-read whole prefix, rewrite the growth tail (C29).
+    // growthTok lets a scenario (e.g. L1) override the default per-turn
+    // growth; omitted, this is INLINE_GROWTH exactly as before.
+    const growth = req.growthTok ?? INLINE_GROWTH;
     readTok = live.prefixTok;
-    writeTok = INLINE_GROWTH;
-    newPrefix = live.prefixTok + INLINE_GROWTH;
+    writeTok = growth;
+    newPrefix = live.prefixTok + growth;
   } else if (isVaried) {
     // Warm but varied still rewrites its one-word diff every time (C11).
     readTok = Math.round(VAR_R * scale);

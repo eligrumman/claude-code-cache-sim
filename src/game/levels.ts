@@ -8,7 +8,7 @@
 
 import type { Config, Model } from "../engine/types.js";
 import type { GameState, HiddenCosts, Scope } from "./types.js";
-import { runScript } from "./step.js";
+import { runScript, L1_CFG } from "./step.js";
 
 export type LevelId =
   | "L1" | "L2" | "L3" | "L4" | "L5" | "L6"
@@ -29,13 +29,15 @@ export type ControlId =
   | "keepWarm" | "keepWarmMin" | "stepAway"
   | "oneHourFlag"
   | "hook" | "skills" | "skillsMode" | "memoryFiles" | "mcp"
-  | "fleet" | "audit";
+  | "fleet" | "audit"
+  | "advanceTime"; // L1's WHEN-to-take-standup choice bar (task/coffee/standup)
 
 // GAME_PLAN.md Section D - the scenario ids each level runs under. The scenario
 // SYSTEM itself lands in slice G4; here it is just the plain string id per level.
 export type ScenarioId =
   | "default" | "dev-only" | "dev-marathon" | "fanout8" | "fanout8-slow"
-  | "gaps" | "two-halves" | "week7starts" | "spawn12" | "mcp-required";
+  | "gaps" | "two-halves" | "week7starts" | "spawn12" | "mcp-required"
+  | "l1-onboarding";
 
 // GAME_PLAN.md Section C.3 - the scripted LEARN replay (without-tool vs with-tool).
 export interface LearnBeat {
@@ -95,52 +97,64 @@ function coldBaseCount(st: GameState): number {
 // ---- TIER 1 - PERSONAL ----
 export const LEVELS: LevelDef[] = [
   {
+    // L1_REDESIGN.md - "The First Hour". Replaces the old read-share gate
+    // (GAME_PLAN D's L1 row, Section 8): goal banner, teaching cards+toasts,
+    // a real WHEN-to-take-standup choice, and a moving clock/TTL that expires
+    // the cache into a cold rebuild if you dawdle. Rendered by a dedicated
+    // L1PlayScreen/L1IntroCards pair (App.svelte), not the generic
+    // PlayScreen/LearnScreen - the mechanic (out-of-order standup, live
+    // dawdle drain) doesn't fit the config-strip/unit-board shape the other
+    // 12 levels share.
     id: "L1",
     tier: 1,
-    title: "Hello, Cache",
-    objective: "Run the ticket. Watch what blue (read, 0.1x) and red (write) cost.",
+    title: "The First Hour",
+    objective:
+      "Finish Bob's 4 tasks and his 90-minute standup for under $0.55 - the cache makes " +
+      "repeat work 10x cheaper, but it dies 60 minutes after you last use it.",
     unlocks: "run",
-    introducedControls: ["run"],
-    teaches: "read 0.1x vs write 20x rebuild penalty (C1, C5)",
+    introducedControls: ["run", "advanceTime"],
+    teaches: "token basics + read 0.1x vs write 20x rebuild penalty, TTL expiry (C1, C5)",
     scope: "session",
     seed: 1,
-    budgetUsd: Infinity, // "none (cannot fail)" per spec
-    // The scripted 11-unit L1 queue + its two idle gaps run ~705 real minutes
-    // (verified: buildQueue(cfg,1) hours=10.5 + gaps 35+40). The default
-    // session cap (DAY_LEN_MIN=300) would clock-loss the level mid-queue
-    // under interactive step-by-step play even though it always wins under
-    // runScript's end-of-run-only check. Cap raised so L1 is winnable start
-    // to finish by clicking through it, not just by headless scripting.
-    clockCapMin: 900,
-    cfgOverride: { who: "inline", hook: "static", skillsMode: "invoke", skills: 10, memoryFiles: 0 },
-    scenario: "default",
+    budgetUsd: 0.55,
+    clockCapMin: 300, // 09:00-14:00, DAY_LEN_MIN
+    cfgOverride: L1_CFG,
+    scenario: "l1-onboarding",
+    // Unused by L1PlayScreen (which renders IntroCards instead) - kept only
+    // so LevelDef's required `learn` field type-checks; App.svelte special-
+    // cases L1's "learn" screen before this is ever read.
     learn: {
       copy: [
-        "Watch the same 3 turns run cold, then warm.",
-        "Cold pays the full write price; warm turns are almost free reads.",
+        "L1 teaches with 3 intro cards + in-play toasts instead of an A/B replay (L1_REDESIGN Section 4).",
+        "Rendered by IntroCards.svelte, not this screen.",
       ],
       withoutCfg: {},
-      withCfg: { who: "inline", hook: "static", skillsMode: "invoke", skills: 10, memoryFiles: 0 },
+      withCfg: L1_CFG,
       scope: "session",
       seed: 1,
-      chip: (a, b) => `cold cost ~20x warm (C5: w1h 2x vs read 0.1x): $${spentUsd(a).toFixed(2)} vs $${spentUsd(b).toFixed(2)}`,
+      chip: () => "",
     },
-    referenceCfg: { who: "inline", hook: "static", skillsMode: "invoke", skills: 10, memoryFiles: 0 },
-    antiCfg: { who: "inline", hook: "dynamic", skillsMode: "eager", skills: 150, memoryFiles: 10 },
-    failLesson: { bucket: "none", cite: "C5", line: "reads are nearly free; the write stripe is the money" },
+    referenceCfg: L1_CFG,
+    antiCfg: L1_CFG, // anti-pattern here is a choice (standup timing), not a config
+    failLesson: {
+      bucket: "none",
+      cite: "L1_REDESIGN Section 3/5",
+      line: "the cache died mid-run and the next request rewrote everything at 2x",
+    },
+    star2: (st) => spentUsd(st) <= 0.47,
+    star3: (st) => {
+      const cold = st.ledger.filter((r) => r.agent === "main" && r.cold).length;
+      return spentUsd(st) <= 0.44 && cold === 1;
+    },
     pass: (st) => {
-      const reads = st.ledger.reduce((a, r) => a + r.readTok, 0);
-      const total = st.ledger.reduce((a, r) => a + r.readTok + r.writeTok, 0) || 1;
-      // NOTE (G2 vertical-slice fix): the scripted L1 queue carries two idle
-      // gaps (35m/40m, Section D's `idleBefore`) that exceed the default 5m
-      // TTL and force cold resets baked into the fixed scenario itself - no
-      // config choice on this level can change that. The reference config's
-      // achievable read share is ~52%, so the original 80% target was
-      // unreachable by design (verified: LEVELS.length>0 boot check below).
-      // 45% keeps the "reads are cheap, writes are the money" lesson intact
-      // (reads still outweigh writes) while being an honest, passable gate.
-      const ok = reads / total >= 0.45;
-      return { pass: ok, reason: `read share ${(reads / total * 100).toFixed(0)}% (need >=45%)` };
+      const allDone = st.idx >= st.units.length && (!st.standup || st.standup.status === "done");
+      const spent = spentUsd(st);
+      const coldMain = st.ledger.filter((r) => r.agent === "main" && r.cold).length;
+      const ok = allDone && spent <= 0.55 && coldMain <= 1;
+      return {
+        pass: ok,
+        reason: `spent $${spent.toFixed(2)} / $0.55, ${coldMain} cold main write${coldMain === 1 ? "" : "s"} (need <=1)${allDone ? "" : ", not all done"}`,
+      };
     },
   },
   {
@@ -581,6 +595,14 @@ export function newCampaign(): CampaignState {
 export function starsFor(level: LevelDef, st: GameState, handCoded: number): 0 | 1 | 2 | 3 {
   const g = level.pass(st);
   if (!g.pass) return 0;
+  // A level may override the star2/star3 predicates (e.g. L1's cold-write
+  // clause, L1_REDESIGN Section 3); fall back to the generic budget-margin
+  // default (Section 11.2) when it doesn't.
+  if (level.star2 || level.star3) {
+    if (level.star3 && level.star3(st)) return 3;
+    if (level.star2 && level.star2(st)) return 2;
+    return 1;
+  }
   if (level.budgetUsd === Infinity) return 1;
   const spent = spentUsd(st);
   const margin = 1 - spent / level.budgetUsd;

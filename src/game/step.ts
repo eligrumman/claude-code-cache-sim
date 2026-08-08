@@ -80,9 +80,48 @@ function unitDefs(): UnitDef[] {
   ];
 }
 
+// L1-onboarding scenario (L1_REDESIGN.md Section 3/7): 4 fixed-order TASK
+// units on the growing main session. The standup is NOT in this queue - it
+// lives on GameState.standup because it is playable at any point (gap #3).
+export function buildL1Tasks(): UnitInstance[] {
+  const tasks: UnitInstance[] = [];
+  for (let i = 0; i < 4; i++) {
+    tasks.push({
+      id: "task" + i,
+      kind: "TASK",
+      ticket: 1,
+      deps: [],
+      status: "queued",
+      cause: null,
+      hours: 0.5, // 30 min
+      workIn: 2000,
+      outTok: 3000,
+      growthTok: 3000,
+    });
+  }
+  return tasks;
+}
+
+export function buildL1Standup(): UnitInstance {
+  return {
+    id: "standup",
+    kind: "STANDUP",
+    ticket: 1,
+    deps: [],
+    status: "queued",
+    cause: null,
+    hours: 1.5, // 90 min
+    workIn: 0,
+    outTok: 0,
+    free: true, // no request emitted - absence, not work (Section 3)
+    anyOrder: true,
+  };
+}
+
 // Build the unit queue, expanding rework deterministically from model quality.
 // Ported exactly from the mock (including PRNG consumption order).
-export function buildQueue(cfg: Config, seed: number): UnitInstance[] {
+export function buildQueue(cfg: Config, seed: number, scenario?: string): UnitInstance[] {
+  if (scenario === "l1-onboarding") return buildL1Tasks();
   const pr = makePrng(seed ^ 0x5151);
   const q = 0.8 / (DEV_Q[cfg.devModel] * DEV_Q[cfg.devModel] * PLAN_Q[cfg.planModel]);
   const extraReview = Math.round(q + pr.next() * 0.6);
@@ -120,9 +159,10 @@ export function initGame(
   scope: Scope,
   cfgOverride: Partial<Config> = {},
   clockCapMin?: number,
+  scenario?: string,
 ): GameState {
   const cfg: Config = { ...DEFAULT_CFG, ...cfgOverride };
-  const budget = SCOPE_BUDGET[scope];
+  const budget = scenario === "l1-onboarding" ? 0.55 : SCOPE_BUDGET[scope];
   // LevelDef.clockCapMin (GAME_PLAN.md Section C.1) overrides the default
   // scope-day clock so a level's scripted queue (hours + idle gaps) has room
   // to actually finish under interactive step-by-step play, not just under
@@ -141,7 +181,7 @@ export function initGame(
     tedium: 0,
     cfg,
     cache: { entries: {} },
-    units: buildQueue(cfg, seed),
+    units: buildQueue(cfg, seed, scenario),
     idx: 0,
     bugsOpen: 0,
     ledger: [],
@@ -170,6 +210,7 @@ export function initGame(
     ratioNum: 0,
     ratioDen: 0,
     ended: null,
+    standup: scenario === "l1-onboarding" ? buildL1Standup() : undefined,
   };
 }
 
@@ -182,6 +223,10 @@ function modelFor(st: GameState, u: UnitInstance): Model {
 
 // Idle schedule: which unit indices are preceded by a gap (minutes). Mock idleBefore.
 function idleBefore(st: GameState, unitIndex: number): number {
+  // L1-onboarding has no scripted idle gaps (L1_REDESIGN Section 7, item 3):
+  // its only "gaps" are the player-chosen coffee/standup ADVANCE actions.
+  // `standup` is only ever set for this scenario, so it doubles as the flag.
+  if (st.standup) return 0;
   if (unitIndex === 3) return 35; // after DEV wave
   if (unitIndex === 7) return 40; // before QA
   if (st.scope !== "session") {
@@ -266,6 +311,7 @@ function emit(
   workIn: number,
   outTok: number,
   nowMin: number,
+  growthTok?: number,
 ): LedgerRow {
   const key = agent === "main" ? "main" : "sub:" + promptHash;
   const cold = !isLive(st, key, nowMin);
@@ -277,6 +323,7 @@ function emit(
     outTok,
     nowMin,
     unitId: u.id,
+    growthTok,
   });
   st.cache = cache;
   const led: LedgerRow = {
@@ -343,7 +390,7 @@ function runUnit(st: GameState, u: UnitInstance): void {
     }
   } else {
     // single requests run on the growing main session.
-    const r = emit(st, u, "main", 0, "main", model, workIn, outTok, st.clockMin);
+    const r = emit(st, u, "main", 0, "main", model, workIn, outTok, st.clockMin, u.growthTok);
     accrueInline(st, r);
     reqs.push(r);
   }
@@ -409,7 +456,7 @@ function lossFromHidden(st: GameState): string {
 
 // End-condition check (mock checkEnd). Sets state.ended.
 export function checkEnd(st: GameState): void {
-  const allDone = st.idx >= st.units.length;
+  const allDone = st.idx >= st.units.length && (!st.standup || st.standup.status === "done");
   if (st.tedium >= 100) {
     st.ended = { result: "loss", lossId: lossFromHidden(st) };
     return;
@@ -435,11 +482,26 @@ export function step(state: GameState, action: Action): GameState {
       break;
     case "RUN_UNIT": {
       if (st.ended) break;
+      // The standup lives outside units[] and is playable at any queue
+      // position (L1_REDESIGN Section 7, gap #3): no gap/idx bookkeeping,
+      // just a pure clock advance with no request emitted.
+      if (st.standup && action.unitId === st.standup.id && st.standup.status === "queued") {
+        st.clockMin += st.standup.hours * 60;
+        st.standup.status = "done";
+        st.lastRequests = [];
+        checkEnd(st);
+        break;
+      }
       const u = st.units[st.idx];
       if (u && (action.unitId === u.id || action.unitId === "")) {
         runUnit(st, u);
         checkEnd(st);
       }
+      break;
+    }
+    case "ADVANCE": {
+      if (st.ended) break;
+      st.clockMin += action.min;
       break;
     }
     case "HAND_CODE": {
@@ -486,6 +548,49 @@ export function runScript(
 // Total spent = budget drained from the wallet.
 export function totalSpent(st: GameState): number {
   return st.budget - st.wallet;
+}
+
+// ---- L1-onboarding fixed config + scripted reference/anti runs (L1_REDESIGN
+// Section 3/8) - used by levels.ts (referenceCfg/antiCfg) and boot-asserted in
+// assert.ts / step.test.ts. Numbers: reference $0.416 (3 stars), anti $0.525
+// (2 cold main writes -> fails the cold-write gate clause).
+export const L1_CFG: Partial<Config> = {
+  who: "inline",
+  hook: "static",
+  skillsMode: "invoke",
+  skills: 10,
+  memoryFiles: 0,
+  mcp: [true, true, true, true],
+};
+
+export function initL1(seed = 1): GameState {
+  return initGame(seed, "session", L1_CFG, DAY_LEN_MIN, "l1-onboarding");
+}
+
+// Tasks 1-4 back-to-back, one 20-min coffee anywhere, standup last: 1 cold
+// main write, $0.416, 3 stars.
+export function runL1Reference(seed = 1): GameState {
+  let st = initL1(seed);
+  st = step(st, { type: "RUN_UNIT", unitId: "task0" });
+  st = step(st, { type: "RUN_UNIT", unitId: "task1" });
+  st = step(st, { type: "ADVANCE", min: 20 }); // coffee, well under the 60-min TTL
+  st = step(st, { type: "RUN_UNIT", unitId: "task2" });
+  st = step(st, { type: "RUN_UNIT", unitId: "task3" });
+  st = step(st, { type: "RUN_UNIT", unitId: "standup" });
+  return st;
+}
+
+// Standup taken between tasks 2 and 3: the 90-min absence outlives the 60-min
+// TTL, so task 3 rebuilds cold. 2 cold main writes, ~$0.525 -> fails the
+// cold-write clause even though the dollar total alone would pass.
+export function runL1Anti(seed = 1): GameState {
+  let st = initL1(seed);
+  st = step(st, { type: "RUN_UNIT", unitId: "task0" });
+  st = step(st, { type: "RUN_UNIT", unitId: "task1" });
+  st = step(st, { type: "RUN_UNIT", unitId: "standup" });
+  st = step(st, { type: "RUN_UNIT", unitId: "task2" });
+  st = step(st, { type: "RUN_UNIT", unitId: "task3" });
+  return st;
 }
 
 // replay(save, init) -> final state. Deterministic given (seed, actions) alone

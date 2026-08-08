@@ -11,7 +11,7 @@ import {
   clearCampaign,
 } from "./shell.js";
 import { newCampaign, completeLevel, LEVEL_BY_ID } from "./levels.js";
-import { runScript } from "./step.js";
+import { runScript, runL1Reference } from "./step.js";
 
 describe("shell transitions (Section B.1)", () => {
   it("toMap / enterLevel / toPlay / toResult / toFreeplay / retryLevel", () => {
@@ -50,7 +50,7 @@ describe("shell persistence (Section B.2)", () => {
 
   it("round-trips a saved campaign", () => {
     let campaign = newCampaign();
-    const st = runScript(LEVEL_BY_ID.L1.seed, LEVEL_BY_ID.L1.scope, LEVEL_BY_ID.L1.referenceCfg, false);
+    const st = runL1Reference(LEVEL_BY_ID.L1.seed);
     campaign = completeLevel(campaign, "L1", st, st.counts.handCoded);
     saveCampaign(campaign);
     const loaded = loadCampaign();
@@ -78,7 +78,7 @@ describe("shell persistence (Section B.2)", () => {
   it("unlocks the next level on a passing completeLevel + save", () => {
     let campaign = newCampaign();
     expect(campaign.unlocked).toEqual(["run"]);
-    const st = runScript(LEVEL_BY_ID.L1.seed, LEVEL_BY_ID.L1.scope, LEVEL_BY_ID.L1.referenceCfg, false);
+    const st = runL1Reference(LEVEL_BY_ID.L1.seed);
     campaign = completeLevel(campaign, "L1", st, st.counts.handCoded);
     expect(campaign.unlocked).toContain(LEVEL_BY_ID.L2.unlocks);
     saveCampaign(campaign);

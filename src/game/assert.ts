@@ -6,7 +6,7 @@ import { priceTable, RATE } from "../engine/pricing.js";
 import { mainBaseTok, subBaseTok } from "../engine/ledgers.js";
 import { simulateRequest } from "../engine/simulate.js";
 import { DEFAULT_CFG } from "../engine/constants.js";
-import { runScript, totalSpent } from "./step.js";
+import { runScript, runL1Reference, runL1Anti, totalSpent } from "./step.js";
 import type { Config } from "../engine/types.js";
 
 const GOOD: Partial<Config> = {
@@ -56,6 +56,18 @@ export function bootAssert(): void {
     console.assert(totalSpent(bdGross) >= 135 && totalSpent(bdGross) <= 195, "BAD gross in band [135,195], got " + totalSpent(bdGross).toFixed(2));
     console.assert(g.counts.handCoded === 0, "GOOD ships 0 hand-coded");
     console.assert(bd.counts.handCoded >= 3, "BAD forces >=3 hand-coded, got " + bd.counts.handCoded);
+
+    // L1_REDESIGN.md Section 3/8: the scripted reference/anti runs.
+    const l1ref = runL1Reference();
+    const l1anti = runL1Anti();
+    const l1refSpent = totalSpent(l1ref);
+    const l1antiSpent = totalSpent(l1anti);
+    console.assert(l1refSpent >= 0.411 && l1refSpent <= 0.421, "L1 reference in [0.411,0.421], got " + l1refSpent.toFixed(4));
+    console.assert(l1antiSpent >= 0.52 && l1antiSpent <= 0.53, "L1 anti in [0.52,0.53], got " + l1antiSpent.toFixed(4));
+    const l1refCold = l1ref.ledger.filter((r) => r.agent === "main" && r.cold).length;
+    const l1antiCold = l1anti.ledger.filter((r) => r.agent === "main" && r.cold).length;
+    console.assert(l1refCold === 1, "L1 reference has exactly 1 cold main write, got " + l1refCold);
+    console.assert(l1antiCold === 2, "L1 anti has exactly 2 cold main writes, got " + l1antiCold);
 
     console.log(
       "%c[Simulator] boot assertions " + (ok ? "PASSED" : "FAILED"),

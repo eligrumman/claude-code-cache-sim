@@ -16,7 +16,9 @@ export type UnitKind =
   | "DEPLOY"
   | "POSTDEPLOY_BUG"
   | "DEBUG"
-  | "HOTFIX";
+  | "HOTFIX"
+  | "TASK" // L1-onboarding: one of Bob's 4 small coding tasks
+  | "STANDUP"; // L1-onboarding: the 90-min out-of-order absence unit
 
 export type UnitStatus = "queued" | "ready" | "done" | "handcoded";
 export type ReworkCause = "plan-quality" | "dev-quality" | "scripted";
@@ -40,6 +42,8 @@ export interface UnitInstance {
   rework?: ReworkTag; // increments the matching counter when run
   scripted?: boolean; // scripted incident (POSTDEPLOY_BUG)
   label?: string | null; // player-facing label for rework instances
+  growthTok?: number; // override for warm-inline-main growth-tail write (L1)
+  anyOrder?: boolean; // playable regardless of queue position (L1's standup)
 }
 
 export interface LedgerRow {
@@ -118,6 +122,10 @@ export interface GameState {
   ratioNum: number; // rebuild/base numerator (1h flag verdict)
   ratioDen: number;
   ended: GameEnd | null;
+  // L1-onboarding only: the standup lives outside the sequential units[]
+  // queue because it is playable at any point (L1_REDESIGN Section 7, gap
+  // #3). Undefined for every other scenario - fully backward compatible.
+  standup?: UnitInstance;
 }
 
 export type Action =
@@ -125,7 +133,14 @@ export type Action =
   | { type: "HAND_CODE"; unitId: string }
   | { type: "IDLE_RESOLVE"; choice: "die" | "nothing" }
   | { type: "SET_CFG"; patch: Partial<Config> }
-  | { type: "TICK_REPLAY" };
+  | { type: "TICK_REPLAY" }
+  // Advances the sim clock only (cache expiry is a pure function of clockMin
+  // via isLive, so nothing else needs to change). Used to commit both
+  // scripted coffee breaks (min: 20) and the choice-screen real-time dawdle
+  // drain, batched into whole sim-minutes right before the next user action -
+  // wall-clock time itself never touches the engine, so replay(seed, actions)
+  // stays byte-identical (L1_REDESIGN Section 5/7).
+  | { type: "ADVANCE"; min: number };
 
 // Save/replay format (Section 5.5): seed + action list only.
 export interface SaveFile {

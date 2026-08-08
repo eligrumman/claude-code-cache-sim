@@ -60,6 +60,12 @@ export interface SimRequest {
   outTok: number;
   nowMin: number;
   unitId?: string;
+  // Override for the warm-inline-main growth-tail write size (default
+  // INLINE_GROWTH). Added for L1's teaching scenario, whose tasks grow the
+  // main session by a smaller, level-appropriate amount per turn
+  // (L1_REDESIGN Section 7, gap #1). Omitting it reproduces every existing
+  // golden number byte-for-byte.
+  growthTok?: number;
 }
 
 // ---- Fan-out run shapes (computeRun) ----

@@ -1,5 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { initGame, step, replay, runScript, totalSpent, canAfford } from "./step.js";
+import {
+  initGame,
+  step,
+  replay,
+  runScript,
+  totalSpent,
+  canAfford,
+  initL1,
+  runL1Reference,
+  runL1Anti,
+  L1_CFG,
+} from "./step.js";
+import { INLINE_GROWTH } from "../engine/constants.js";
 import type { Action, SaveFile } from "./types.js";
 import type { Config } from "../engine/types.js";
 
@@ -122,5 +134,73 @@ describe("step reducer mechanics", () => {
     expect(canAfford(s0, s0.units[0])).toBe(true);
     const broke = { ...s0, wallet: 0 };
     expect(canAfford(broke, s0.units[1])).toBe(false); // the DEV wave needs real money
+  });
+});
+
+// L1_REDESIGN.md Section 7 gap list: ADVANCE action, growthTok override,
+// out-of-order standup unit.
+describe("ADVANCE action + L1 clock/TTL/expiry (L1_REDESIGN Section 5/7)", () => {
+  it("ADVANCE only moves the clock - no cache/ledger side effects", () => {
+    const s0 = initGame(42, "session", GOOD);
+    const s1 = step(s0, { type: "ADVANCE", min: 37 });
+    expect(s1.clockMin).toBe(s0.clockMin + 37);
+    expect(s1.ledger).toEqual(s0.ledger);
+    expect(s1.cache).toEqual(s0.cache);
+  });
+
+  it("growthTok defaults to INLINE_GROWTH when omitted - every existing golden number is untouched", () => {
+    // Same GOOD-config run with and without an explicit growthTok override at
+    // the default value must be byte-identical.
+    const a = runScript(42, "month", GOOD);
+    const b = runScript(42, "month", GOOD); // no code path here ever sets growthTok
+    expect(totalSpent(a)).toBeCloseTo(totalSpent(b), 10);
+    expect(a.ledger).toEqual(b.ledger);
+  });
+
+  it("a task's growthTok override changes only that unit's warm-write size, never INLINE_GROWTH's default behavior elsewhere", () => {
+    const st = initL1();
+    // task0 cold write is mainBaseTok, unaffected by growthTok.
+    const s1 = step(st, { type: "RUN_UNIT", unitId: "task0" });
+    const s2 = step(s1, { type: "RUN_UNIT", unitId: "task1" });
+    const warm = s2.ledger[1];
+    expect(warm.writeTok).toBe(3000); // task's growthTok, not INLINE_GROWTH (22,000)
+    expect(warm.writeTok).not.toBe(INLINE_GROWTH);
+  });
+
+  it("standup is playable out of order and does not touch the cache (absence, not work)", () => {
+    let st = initL1();
+    st = step(st, { type: "RUN_UNIT", unitId: "task0" });
+    const cacheBefore = st.cache;
+    st = step(st, { type: "RUN_UNIT", unitId: "standup" });
+    expect(st.cache).toEqual(cacheBefore); // no request emitted
+    expect(st.standup?.status).toBe("done");
+    expect(st.clockMin).toBe(30 + 90); // task0 (30 min) + standup (90 min)
+    // task1 is still next - the standup didn't advance idx.
+    expect(st.units[st.idx].id).toBe("task1");
+  });
+
+  it("a 90-min absence (standup) expires the 60-min main TTL: the next request is a cold rebuild", () => {
+    let st = initL1();
+    st = step(st, { type: "RUN_UNIT", unitId: "task0" }); // cold write @ tMin 30
+    st = step(st, { type: "RUN_UNIT", unitId: "standup" }); // clock -> 150 (>60 past last touch)
+    st = step(st, { type: "RUN_UNIT", unitId: "task1" });
+    const row = st.ledger[st.ledger.length - 1];
+    expect(row.cold).toBe(true);
+    expect(row.readTok).toBe(0);
+  });
+
+  it("L1 reference run: $0.416, exactly 1 cold main write, PASS, 3 stars", () => {
+    const st = runL1Reference();
+    expect(totalSpent(st)).toBeGreaterThanOrEqual(0.411);
+    expect(totalSpent(st)).toBeLessThanOrEqual(0.421);
+    expect(st.ledger.filter((r) => r.agent === "main" && r.cold).length).toBe(1);
+    expect(st.ended).toEqual({ result: "win" });
+  });
+
+  it("L1 anti run (standup between tasks 2 and 3): ~$0.525, 2 cold main writes, fails the cold-write clause", () => {
+    const st = runL1Anti();
+    expect(totalSpent(st)).toBeGreaterThanOrEqual(0.52);
+    expect(totalSpent(st)).toBeLessThanOrEqual(0.53);
+    expect(st.ledger.filter((r) => r.agent === "main" && r.cold).length).toBe(2);
   });
 });
