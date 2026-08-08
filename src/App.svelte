@@ -4,12 +4,30 @@
   import ConfigStrip from "./components/ConfigStrip.svelte";
   import UnitBoard from "./components/UnitBoard.svelte";
   import ReportModal from "./components/ReportModal.svelte";
+  import SessionStream from "./components/SessionStream.svelte";
   import { TapeRenderer } from "./render/tape.js";
   import { fmt } from "./game/report.js";
-  import { initGame, step, canAfford } from "./game/step.js";
+  import { initGame, step, canAfford, runScript, totalSpent } from "./game/step.js";
   import { DEFAULT_CFG, N_DEV } from "./engine/constants.js";
+  import { LEVELS, newCampaign, isLevelUnlocked, completeLevel } from "./game/levels.js";
+  import type { LevelId } from "./game/levels.js";
   import type { Config } from "./engine/types.js";
   import type { GameState, Scope, UnitInstance } from "./game/types.js";
+
+  let showSessionView = $state(false);
+  let showLevels = $state(false);
+  let campaign = $state(newCampaign());
+  let levelResult = $state<string | null>(null);
+
+  function playLevel(id: LevelId) {
+    const level = LEVELS.find((l) => l.id === id)!;
+    const runSt = runScript(level.seed, level.scope, { ...cfg, ...level.cfgOverride }, false);
+    const gate = level.pass(runSt);
+    campaign = completeLevel(campaign, id, runSt, runSt.counts.handCoded);
+    levelResult =
+      level.id + " " + level.title + ": " + (gate.pass ? "PASS" : "FAIL") + " - " + gate.reason +
+      " (spent $" + totalSpent(runSt).toFixed(2) + ")";
+  }
 
   let seed = $state(42);
   let scope = $state<Scope>("month");
@@ -130,6 +148,52 @@
   </p>
 
   <Hud {st} />
+
+  <div class="card">
+    <button class="btn ghost" onclick={() => (showSessionView = !showSessionView)}>
+      {showSessionView ? "Hide" : "Show"} session message-stream view
+    </button>
+    <button class="btn ghost" onclick={() => (showLevels = !showLevels)}>
+      {showLevels ? "Hide" : "Show"} campaign levels ({campaign.unlocked.length}/{LEVELS.length} unlocked)
+    </button>
+  </div>
+
+  {#if showSessionView}
+    <div class="card">
+      <h2>Session message stream (real-shape simulation)</h2>
+      <SessionStream {cfg} />
+    </div>
+  {/if}
+
+  {#if showLevels}
+    <div class="card">
+      <h2>Campaign (13 levels, Section 11)</h2>
+      <table class="ledtab">
+        <thead>
+          <tr><th>#</th><th>title</th><th>tier</th><th>unlocks</th><th>budget</th><th>stars</th><th>attempts</th><th></th></tr>
+        </thead>
+        <tbody>
+          {#each LEVELS as l}
+            <tr>
+              <td>{l.id}</td>
+              <td>{l.title}</td>
+              <td>{l.tier}</td>
+              <td>{l.unlocks}</td>
+              <td>{l.budgetUsd === Infinity ? "-" : "$" + l.budgetUsd.toFixed(2)}</td>
+              <td>{"*".repeat(campaign.levels[l.id].stars)}</td>
+              <td>{campaign.levels[l.id].attempts}</td>
+              <td>
+                <button class="btn" disabled={!isLevelUnlocked(campaign, l.id)} onclick={() => playLevel(l.id)}>
+                  Play (reference solution)
+                </button>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+      {#if levelResult}<div class="msg">{levelResult}</div>{/if}
+    </div>
+  {/if}
 
   <div class="main">
     <ConfigStrip {cfg} {scope} {seed} locked={st.idx > 0}
