@@ -3,7 +3,7 @@
 // caller keeps holding a reference and calling into it (the exact race the
 // L1 component/e2e suite hit: a component's onMount fires against a canvas
 // ref that's already gone because the component was torn down first).
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { TapeRenderer } from "./tape.js";
 import type { LedgerRow } from "../game/types.js";
 
@@ -58,5 +58,119 @@ describe("TapeRenderer tolerates a missing or detached canvas (no throw)", () =>
       t.play([ROW]);
       t.destroy();
     }).not.toThrow();
+  });
+});
+
+// Hover: the tape's tooltip must show the actual price calculation (not just
+// the total), the request's time, and - for cache writes - how long the
+// cache stays alive on the timeline.
+describe("TapeRenderer hover: price calc, time, and cache duration", () => {
+  // Force prefers-reduced-motion so play() cuts straight to the final,
+  // fully-revealed frame synchronously - these tests assert on hover
+  // geometry against settled bars, not an in-flight sweep animation that
+  // only advances via requestAnimationFrame.
+  beforeEach(() => {
+    (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = ((q: string) => ({
+      matches: true,
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as (q: string) => MediaQueryList;
+  });
+
+  const COLD_WRITE: LedgerRow = {
+    tMin: 30,
+    unitId: "task0",
+    unit: "TASK",
+    agent: "main",
+    model: "sonnet",
+    cold: true,
+    readTok: 0,
+    inputTok: 0,
+    writeTok: 22527,
+    writeTier: "1h",
+    outTok: 0,
+    usd: 22527 * 2 * (3 / 1e6),
+  };
+  const WARM_READ: LedgerRow = {
+    tMin: 60,
+    unitId: "task1",
+    unit: "TASK",
+    agent: "main",
+    model: "sonnet",
+    cold: false,
+    readTok: 22527,
+    inputTok: 0,
+    writeTok: 0,
+    writeTier: "1h",
+    outTok: 0,
+    usd: 22527 * 0.1 * (3 / 1e6),
+  };
+
+  it("no row is hovered before any pointer event (getHover returns null)", () => {
+    const canvas = document.createElement("canvas");
+    document.body.appendChild(canvas);
+    const t = new TapeRenderer(canvas);
+    t.play([COLD_WRITE, WARM_READ]);
+    expect(t.getHover()).toBeNull();
+    document.body.removeChild(canvas);
+  });
+
+  it("hovering a fully-revealed row surfaces its time, its price-calc lines (not just the total), and its cache-alive window", () => {
+    const canvas = document.createElement("canvas");
+    document.body.appendChild(canvas);
+    const t = new TapeRenderer(canvas);
+    t.play([COLD_WRITE, WARM_READ]); // reduced-motion (jsdom) cuts straight to the final frame
+
+    canvas.dispatchEvent(new MouseEvent("mousemove", { clientX: 100, clientY: 14 + 16 / 2 }));
+    const hover = t.getHover();
+    expect(hover).not.toBeNull();
+    expect(hover!.row.unitId).toBe("task0");
+
+    const text = hover!.lines.join("\n");
+    expect(text).toContain("t+30:00"); // the request's time on the timeline
+    // The price CALCULATION, not just the total - tok x mult x $/M = $usd.
+    expect(text).toMatch(/write: 22,527 tok x 2x x \$6\/M = \$0\.1352/);
+    expect(text).toContain("total: $0.1352");
+    // The cache write's duration on the timeline: alive 60 minutes, from
+    // t+30:00 (when it was written) to t+90:00 (when it expires).
+    expect(text).toContain("cache alive 60m: t+30:00 - t+90:00");
+
+    document.body.removeChild(canvas);
+  });
+
+  it("a read row (no write) reports its time and price calc but no cache-duration line", () => {
+    const canvas = document.createElement("canvas");
+    document.body.appendChild(canvas);
+    const t = new TapeRenderer(canvas);
+    t.play([COLD_WRITE, WARM_READ]);
+
+    canvas.dispatchEvent(new MouseEvent("mousemove", { clientX: 100, clientY: 14 + 16 + 8 + 16 / 2 }));
+    const hover = t.getHover();
+    expect(hover!.row.unitId).toBe("task1");
+    const text = hover!.lines.join("\n");
+    expect(text).toContain("t+60:00");
+    expect(text).toMatch(/read: 22,527 tok x 0\.1x x \$0\.3\/M = \$0\.0068/);
+    expect(text).not.toContain("cache alive");
+
+    document.body.removeChild(canvas);
+  });
+
+  it("mouseleave clears the hover", () => {
+    const canvas = document.createElement("canvas");
+    document.body.appendChild(canvas);
+    const t = new TapeRenderer(canvas);
+    t.play([COLD_WRITE]);
+    canvas.dispatchEvent(new MouseEvent("mousemove", { clientX: 100, clientY: 14 + 16 / 2 }));
+    expect(t.getHover()).not.toBeNull();
+    canvas.dispatchEvent(new MouseEvent("mouseleave"));
+    expect(t.getHover()).toBeNull();
+    document.body.removeChild(canvas);
+  });
+
+  it("getHover() is null on a dead/detached renderer (no throw)", () => {
+    const t = new TapeRenderer(null);
+    expect(() => t.getHover()).not.toThrow();
+    expect(t.getHover()).toBeNull();
   });
 });

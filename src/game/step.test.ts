@@ -204,3 +204,64 @@ describe("ADVANCE action + L1 clock/TTL/expiry (L1_REDESIGN Section 5/7)", () =>
     expect(st.ledger.filter((r) => r.agent === "main" && r.cold).length).toBe(2);
   });
 });
+
+// `st.lastRequests` is the exact render model TapeRenderer.play() consumes to
+// draw the "requests on the wire" panel (L1PlayScreen.svelte calls
+// `tape?.play(st.lastRequests)` after every action). These tests assert on
+// that array and its priced rows directly - the render model, not pixels -
+// so a regression like the empty-wire bug (TapeRenderer built against a
+// canvas ref that didn't exist yet) or the $0.0000 bug (a hardcoded `usd: 0`)
+// fails CI without needing a real browser.
+describe("st.lastRequests: the render model behind the requests-on-the-wire tape", () => {
+  it("RUN_UNIT populates lastRequests with at least one row carrying real tokens and cost", () => {
+    let st = initL1();
+    st = step(st, { type: "RUN_UNIT", unitId: "task0" });
+    expect(st.lastRequests.length).toBeGreaterThan(0);
+    for (const row of st.lastRequests) {
+      expect(row.readTok + row.inputTok + row.writeTok).toBeGreaterThan(0);
+      expect(row.usd).toBeGreaterThan(0);
+    }
+  });
+
+  it("a cold write and the following warm read price to different, non-zero amounts (20x apart)", () => {
+    let st = initL1();
+    st = step(st, { type: "RUN_UNIT", unitId: "task0" }); // cold write
+    const coldRow = st.lastRequests[st.lastRequests.length - 1];
+    st = step(st, { type: "RUN_UNIT", unitId: "task1" }); // warm read
+    const warmRow = st.lastRequests[st.lastRequests.length - 1];
+
+    expect(coldRow.usd).toBeGreaterThan(0);
+    expect(warmRow.usd).toBeGreaterThan(0);
+    expect(coldRow.usd).not.toBeCloseTo(warmRow.usd, 4);
+    // A formatted cost string this small must still show non-zero precision -
+    // toFixed(4) on either row must never collapse to "$0.0000".
+    expect(coldRow.usd.toFixed(4)).not.toBe("0.0000");
+    expect(warmRow.usd.toFixed(4)).not.toBe("0.0000");
+  });
+
+  it("RUN_UNIT on a free unit (or HAND_CODE) clears lastRequests to []; ADVANCE (Coffee) leaves the last tape untouched", () => {
+    let st = initL1();
+    st = step(st, { type: "RUN_UNIT", unitId: "task0" });
+    expect(st.lastRequests.length).toBeGreaterThan(0);
+    const priorRequests = st.lastRequests;
+
+    // ADVANCE (Coffee) is a pure clock advance with no request emitted - it
+    // must not stomp the wire panel's last-drawn tape.
+    st = step(st, { type: "ADVANCE", min: 20 });
+    expect(st.lastRequests).toEqual(priorRequests);
+
+    // The standup, by contrast, explicitly clears it (an absence, not work).
+    st = step(st, { type: "RUN_UNIT", unitId: "standup" });
+    expect(st.lastRequests).toEqual([]);
+  });
+
+  it("the full reference run's every request row has a non-zero, correctly formatted cost", () => {
+    const st = runL1Reference();
+    expect(st.ledger.length).toBeGreaterThan(0);
+    for (const row of st.ledger) {
+      expect(row.usd).toBeGreaterThan(0);
+      expect(row.usd.toFixed(4)).not.toBe("0.0000");
+    }
+    expect(totalSpent(st)).toBeCloseTo(0.416, 2);
+  });
+});

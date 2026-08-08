@@ -6,17 +6,19 @@
   import { onMount } from "svelte";
   import { TapeRenderer } from "../render/tape.js";
   import type { LedgerRow } from "../game/types.js";
-  import { priceTable } from "../engine/pricing.js";
+  import { priceTable, tokCost, RATE } from "../engine/pricing.js";
 
   let { attempted, onstart }: { attempted: boolean; onstart: () => void } = $props();
 
   let idx = $state(0); // 0..3 (3 = goal card)
   const P = priceTable("sonnet");
 
+  // usd for each demo row follows the same canonical formula as the real
+  // engine (engine/simulate.ts ~L185-186): tok * RATE.tier * $/M per token.
   const frames: LedgerRow[] = [
-    { tMin: 0, unitId: "demo1", unit: "TASK", agent: "main", model: "sonnet", cold: true, readTok: 0, inputTok: 0, writeTok: 22527, writeTier: "1h", outTok: 0, usd: 0 },
-    { tMin: 30, unitId: "demo2", unit: "TASK", agent: "main", model: "sonnet", cold: false, readTok: 22527, inputTok: 0, writeTok: 0, writeTier: "1h", outTok: 0, usd: 0 },
-    { tMin: 91, unitId: "demo3", unit: "TASK", agent: "main", model: "sonnet", cold: true, readTok: 0, inputTok: 0, writeTok: 22527, writeTier: "1h", outTok: 0, usd: 0 },
+    { tMin: 0, unitId: "demo1", unit: "TASK", agent: "main", model: "sonnet", cold: true, readTok: 0, inputTok: 0, writeTok: 22527, writeTier: "1h", outTok: 0, usd: tokCost(22527, RATE.w1h, "sonnet") },
+    { tMin: 30, unitId: "demo2", unit: "TASK", agent: "main", model: "sonnet", cold: false, readTok: 22527, inputTok: 0, writeTok: 0, writeTier: "1h", outTok: 0, usd: tokCost(22527, RATE.read, "sonnet") },
+    { tMin: 91, unitId: "demo3", unit: "TASK", agent: "main", model: "sonnet", cold: true, readTok: 0, inputTok: 0, writeTok: 22527, writeTier: "1h", outTok: 0, usd: tokCost(22527, RATE.w1h, "sonnet") },
   ];
 
   let canvas: HTMLCanvasElement | undefined = $state();

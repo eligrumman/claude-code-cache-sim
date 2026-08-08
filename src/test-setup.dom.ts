@@ -9,6 +9,17 @@
 // this suite already uses.
 import "@testing-library/jest-dom/vitest";
 
+// Every string any canvas 2D context's fillText() has drawn, across every
+// <canvas> in the current test - a canvas paints pixels, not DOM nodes, so
+// screen.getByText() can never see it. This is how component/e2e tests (in
+// app.dom.test.ts) assert on what the tape ACTUALLY rendered - e.g. that a
+// reference-cost bar drew "$0.1352" and never drew "$0.0000" - without a
+// real browser. Call resetCanvasFillTextCalls() between assertions/tests.
+export const canvasFillTextCalls: string[] = [];
+export function resetCanvasFillTextCalls(): void {
+  canvasFillTextCalls.length = 0;
+}
+
 function makeCtx2D() {
   const noop = () => {};
   return {
@@ -20,7 +31,9 @@ function makeCtx2D() {
     moveTo: noop,
     lineTo: noop,
     stroke: noop,
-    fillText: noop,
+    fillText: (text: unknown) => {
+      canvasFillTextCalls.push(String(text));
+    },
     measureText: () => ({ width: 0 }),
     save: noop,
     restore: noop,
@@ -36,8 +49,17 @@ function makeCtx2D() {
 }
 
 if (typeof HTMLCanvasElement !== "undefined") {
-  HTMLCanvasElement.prototype.getContext = function () {
-    return makeCtx2D();
+  // One ctx instance per canvas element (not a fresh object per call) so
+  // tests and app code observe the exact same context - matches how a real
+  // browser's canvas.getContext("2d") is idempotent per canvas.
+  const ctxByCanvas = new WeakMap<HTMLCanvasElement, CanvasRenderingContext2D>();
+  HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement) {
+    let ctx = ctxByCanvas.get(this);
+    if (!ctx) {
+      ctx = makeCtx2D();
+      ctxByCanvas.set(this, ctx);
+    }
+    return ctx;
   } as unknown as typeof HTMLCanvasElement.prototype.getContext;
 }
 

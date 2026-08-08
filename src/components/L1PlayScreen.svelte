@@ -39,8 +39,16 @@
   let canvas: HTMLCanvasElement | undefined = $state();
   let tape: TapeRenderer | null = null;
   onMount(() => {
-    tape = new TapeRenderer(canvas);
     return () => tape?.destroy();
+  });
+  // The canvas only exists in the DOM once phase flips to "play" (it's
+  // inside the {#if phase === "play"} branch below), so it isn't available
+  // yet when onMount fires at "intro". Build the renderer reactively once
+  // the bound element shows up, mirroring IntroCards.svelte's tape effect.
+  $effect(() => {
+    if (canvas && !tape) {
+      tape = new TapeRenderer(canvas);
+    }
   });
 
   const tasksLeft = $derived(st.units.filter((u) => u.status === "queued").length);

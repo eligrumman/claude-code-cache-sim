@@ -9,7 +9,9 @@
 
 import { getDpr } from "./dpr.js";
 import { easeInOut, reducedMotion } from "./tween.js";
+import { RATE, MODEL_IN } from "../engine/pricing.js";
 import type { LedgerRow } from "../game/types.js";
+import type { WriteTier } from "../engine/types.js";
 
 const ROW_H = 16;
 const ROW_GAP = 8;
@@ -17,6 +19,37 @@ const PAD_T = 14;
 const PAD_B = 10;
 const GUTTER = 64;
 const PAD_R = 64;
+
+// Cache lifetime in minutes for each write tier (SIMULATOR_SPEC.md C1): the
+// 1h main cache vs the cheaper, shorter-lived 5m cache introduced at L6.
+const TTL_MIN: Record<WriteTier, number> = { "1h": 60, "5m": 5 };
+
+function fmtMin(min: number): string {
+  const m = Math.floor(min);
+  const s = Math.round((min - m) * 60);
+  return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+}
+
+// One line per priced segment of a request, in the same "tok x mult x
+// $perM/M = $usd" shape as engine/session.ts's report lines - the hover
+// tooltip shows the actual calculation, not just the total.
+function calcLines(row: LedgerRow): string[] {
+  const perM = MODEL_IN[row.model];
+  const lines: string[] = [];
+  const seg = (label: string, tok: number, mult: number) => {
+    if (tok <= 0) return;
+    // Round for display only (perM * mult can land on a float artifact like
+    // 3 * 0.1 = 0.30000000000000004) - the priced `usd` below stays exact.
+    const rate = Number((perM * mult).toFixed(4));
+    const usd = tok * mult * (perM / 1e6);
+    lines.push(`${label}: ${tok.toLocaleString()} tok x ${mult}x x $${rate}/M = $${usd.toFixed(4)}`);
+  };
+  seg("read", row.readTok, RATE.read);
+  seg("input", row.inputTok, RATE.input);
+  seg("write", row.writeTok, row.writeTier === "1h" ? RATE.w1h : RATE.w5m);
+  seg("output", row.outTok, RATE.out);
+  return lines;
+}
 
 function cssVar(name: string): string {
   if (typeof document === "undefined") return "#888";
@@ -47,6 +80,13 @@ export class TapeRenderer {
   // inert, never throw. Constructing with a real, live canvas and later
   // calling destroy() through normal teardown remains fully functional.
   private dead = false;
+  // Index of the row currently under the pointer, or null. Exposed via
+  // getHover() for host components that want a DOM tooltip too, but
+  // TapeRenderer also draws its own in-canvas tooltip on hover so callers
+  // get "hover shows price calc, time, and cache duration" for free.
+  private hoverIndex: number | null = null;
+  private onMouseMove = (e: MouseEvent) => this.handleMove(e);
+  private onMouseLeave = () => this.setHover(null);
 
   constructor(canvas: HTMLCanvasElement | null | undefined) {
     this.canvas = canvas ?? null;
@@ -59,7 +99,48 @@ export class TapeRenderer {
       this.ro = new ResizeObserver(() => this.resize());
       this.ro.observe(this.canvas.parentElement);
     }
+    this.canvas.addEventListener("mousemove", this.onMouseMove);
+    this.canvas.addEventListener("mouseleave", this.onMouseLeave);
     this.resize();
+  }
+
+  private handleMove(e: MouseEvent): void {
+    if (this.dead || !this.canvas || !this.rows.length) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    let idx: number | null = null;
+    for (let r = 0; r < this.rows.length; r++) {
+      const rowTop = PAD_T + r * (ROW_H + ROW_GAP);
+      if (y >= rowTop - ROW_GAP / 2 && y <= rowTop + ROW_H + ROW_GAP / 2 && this.reveal >= r + 1) {
+        idx = r;
+        break;
+      }
+    }
+    this.setHover(idx);
+  }
+
+  private setHover(idx: number | null): void {
+    if (this.hoverIndex === idx) return;
+    this.hoverIndex = idx;
+    this.draw();
+  }
+
+  // Row + tooltip text currently hovered, for hosts that render their own
+  // DOM tooltip instead of (or in addition to) the in-canvas one.
+  getHover(): { row: LedgerRow; lines: string[] } | null {
+    if (this.hoverIndex === null) return null;
+    const row = this.rows[this.hoverIndex];
+    if (!row) return null;
+    return { row, lines: this.tooltipLines(row) };
+  }
+
+  private tooltipLines(row: LedgerRow): string[] {
+    const lines = [`t+${fmtMin(row.tMin)}`, ...calcLines(row), `total: $${row.usd.toFixed(4)}`];
+    if (row.writeTok > 0) {
+      const ttl = TTL_MIN[row.writeTier];
+      lines.push(`cache alive ${ttl}m: t+${fmtMin(row.tMin)} - t+${fmtMin(row.tMin + ttl)}`);
+    }
+    return lines;
   }
 
   destroy(): void {
@@ -69,6 +150,10 @@ export class TapeRenderer {
     this.rafId = null;
     if (this.ro) this.ro.disconnect();
     this.ro = null;
+    if (this.canvas) {
+      this.canvas.removeEventListener("mousemove", this.onMouseMove);
+      this.canvas.removeEventListener("mouseleave", this.onMouseLeave);
+    }
   }
 
   // Draw a fresh set of requests, sweeping them in (or cutting to final if reduced).
@@ -161,6 +246,7 @@ export class TapeRenderer {
     const barX = GUTTER;
     const barMaxW = W - GUTTER - PAD_R;
     const mIn = this.maxIn();
+    const geom: { y: number; rowW: number }[] = [];
     for (let r = 0; r < this.rows.length; r++) {
       const q = this.rows[r];
       const y = PAD_T + r * (ROW_H + ROW_GAP);
@@ -172,6 +258,7 @@ export class TapeRenderer {
       ctx.fillText(q.agent === "main" ? "main" : q.agent, 0, y + ROW_H / 2);
       const totTok = q.readTok + q.inputTok + q.writeTok;
       const rowW = barMaxW * (totTok / mIn);
+      geom[r] = { y, rowW };
       ctx.fillStyle = C.grey;
       ctx.fillRect(barX, y, Math.max(0, rowW), ROW_H);
       const segs: { tok: number; c: string }[] = [];
@@ -202,6 +289,55 @@ export class TapeRenderer {
         ctx.moveTo(px, y - 2);
         ctx.lineTo(px, y + ROW_H + 2);
         ctx.stroke();
+      }
+    }
+
+    // Hover: price-calc breakdown, request time, and (for cache writes) the
+    // TTL window drawn as a bracket under the bar - "hover shows price calc,
+    // time, and cache duration on the timeline".
+    if (this.hoverIndex !== null && this.reveal >= this.hoverIndex + 1) {
+      const q = this.rows[this.hoverIndex];
+      const g = geom[this.hoverIndex];
+      if (q && g) {
+        ctx.strokeStyle = C.ink;
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(barX - 1, g.y - 1, Math.max(0, g.rowW) + 2, ROW_H + 2);
+
+        if (q.writeTok > 0) {
+          const ttl = TTL_MIN[q.writeTier];
+          const by = g.y + ROW_H + 4;
+          ctx.strokeStyle = C.inkSoft;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(barX, by);
+          ctx.lineTo(barX + Math.max(4, g.rowW), by);
+          ctx.stroke();
+          ctx.fillStyle = C.inkSoft;
+          ctx.font = "9px ui-monospace,monospace";
+          ctx.textAlign = "left";
+          ctx.textBaseline = "top";
+          ctx.fillText(`cache alive ${ttl}m`, barX, by + 2);
+        }
+
+        const lines = this.tooltipLines(q);
+        ctx.font = "10px ui-monospace,monospace";
+        const padX = 6;
+        const lineH = 13;
+        const boxW = Math.max(...lines.map((l) => ctx.measureText(l).width)) + padX * 2;
+        const boxH = lines.length * lineH + 8;
+        let bx = barX + 4;
+        let by = g.y + ROW_H + 16;
+        if (by + boxH > H) by = Math.max(0, g.y - boxH - 4);
+        if (bx + boxW > W) bx = Math.max(0, W - boxW);
+        ctx.fillStyle = cssVar("--panel-2") || "#111";
+        ctx.strokeStyle = C.ink;
+        ctx.lineWidth = 1;
+        ctx.fillRect(bx, by, boxW, boxH);
+        ctx.strokeRect(bx, by, boxW, boxH);
+        ctx.fillStyle = C.ink;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        lines.forEach((l, i) => ctx.fillText(l, bx + padX, by + 4 + i * lineH));
       }
     }
   }

@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, cleanup, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { clearCampaign } from "./game/shell.js";
+import { canvasFillTextCalls, resetCanvasFillTextCalls } from "./test-setup.dom.js";
 
 function localStorageStub() {
   const store: Record<string, string> = {};
@@ -29,6 +30,19 @@ function localStorageStub() {
 beforeEach(() => {
   vi.stubGlobal("localStorage", localStorageStub());
   vi.useFakeTimers();
+  resetCanvasFillTextCalls();
+  // TapeRenderer reads prefers-reduced-motion once at construction time and,
+  // when reduced, cuts straight to the final revealed frame instead of
+  // animating in over rAF ticks. jsdom under fake timers never actually
+  // advances rAF, so without this the tape's bars/cost text never "finish"
+  // drawing and canvasFillTextCalls assertions below would hang at 0 reveal
+  // regardless of whether the underlying bug is fixed.
+  vi.stubGlobal("matchMedia", (q: string) => ({
+    matches: true,
+    media: q,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
 });
 afterEach(() => {
   cleanup();
@@ -223,5 +237,75 @@ describe("shell router + persistence", () => {
     expect(l1.className).toContain("unlocked");
     const l2 = screen.getByText("L2").closest("button")!;
     expect(l2.className).toContain("locked");
+  });
+});
+
+// Regression coverage for two real browser bugs jsdom's non-visual assertions
+// previously missed entirely: the "requests on the wire" tape staying empty
+// (TapeRenderer built from a not-yet-mounted canvas, see L1PlayScreen.svelte)
+// and reference costs displaying as "$0.0000" (IntroCards.svelte's demo tape
+// frames had `usd: 0` hardcoded instead of computed from the pricing table).
+// A <canvas> paints pixels, not DOM nodes - screen.getByText() can never see
+// what the tape drew - so these assert on canvas SIZING (a real DOM/element
+// property) and on `canvasFillTextCalls` (every string the mocked 2D context
+// actually had fillText() called with - see test-setup.dom.ts). That's the
+// render model, not pixels, and it runs in CI without a real browser.
+describe("L1 requests-on-the-wire tape actually binds to a live canvas", () => {
+  it("the play-screen canvas is resized off its untouched 300x150 default once the play phase mounts", async () => {
+    render(App);
+    await clickByText("L1");
+    await dismissIntro();
+
+    // A <canvas> nobody has ever called getContext-driven resize logic on
+    // keeps the browser's literal default backing store size, 300x150. If
+    // TapeRenderer was constructed against a canvas ref that didn't exist
+    // yet (the intro-phase bug), it stays dead forever and this canvas is
+    // still sitting at 300x150 even after the play screen is showing.
+    const canvas = document.querySelector("canvas") as HTMLCanvasElement;
+    expect(canvas).toBeTruthy();
+    expect(canvas.width === 300 && canvas.height === 150).toBe(false);
+  });
+
+  it("running a task feeds a non-empty request into the tape, which actually draws bars (not the empty-state placeholder)", async () => {
+    render(App);
+    await clickByText("L1");
+    await dismissIntro();
+    resetCanvasFillTextCalls();
+    await clickByText(/Do next task/);
+
+    // draw() only ever fillText()s "Run a unit to see its requests drawn to
+    // scale." when handed zero rows - so if the wire panel is truly wired
+    // up and got a real request, that placeholder must never be drawn, and
+    // the priced cost string must be.
+    expect(canvasFillTextCalls).not.toContain("Run a unit to see its requests drawn to scale.");
+    expect(canvasFillTextCalls.some((t) => /^\$0\.\d{4}$/.test(t))).toBe(true);
+  });
+});
+
+describe("L1 cost readouts never render as $0.0000", () => {
+  it("the goal banner's running spend is non-zero and non-empty after a task", async () => {
+    render(App);
+    await clickByText("L1");
+    await dismissIntro();
+    await clickByText(/Do next task/);
+
+    expect(screen.queryByText(/\$0\.0000/)).not.toBeInTheDocument();
+    expect(screen.getByText(/\$0\.\d\d spent/)).toBeInTheDocument();
+  });
+
+  it("the intro's 3 reference-tape demo rows (cold write / warm read / cold rebuild) price to real, distinct, non-zero dollars", async () => {
+    render(App);
+    await clickByText("L1");
+    resetCanvasFillTextCalls();
+    await clickByText("Next"); // card 0 -> 1
+    await clickByText("Next"); // card 1 -> 2 (the cache-lifecycle demo tape mounts + draws)
+
+    // Regression for the exact bug: these 3 rows used to carry a hardcoded
+    // `usd: 0`, which the tape formats as "$0.0000" (toFixed(4) of 0).
+    expect(canvasFillTextCalls).not.toContain("$0.0000");
+    // Same 22,527 tokens: a cold 1h write (2x) must cost 20x a warm read
+    // (0.1x) - the two cold writes are identical, the read is far cheaper.
+    expect(canvasFillTextCalls.filter((t) => t === "$0.1352")).toHaveLength(2); // both cold writes
+    expect(canvasFillTextCalls).toContain("$0.0068"); // the warm read
   });
 });
