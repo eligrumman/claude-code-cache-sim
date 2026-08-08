@@ -42,7 +42,12 @@
     screen = toPlay(id);
   }
   function goRetry(id: LevelId) {
-    screen = retryLevel(id);
+    // Mirror goEnter: L1's intro/play is a single dedicated screen
+    // (L1PlayScreen), it has no generic LearnScreen A/B replay to retry
+    // into. Without this, retryLevel(id) always routes to {id:"learn"},
+    // which for L1 rendered the generic LearnScreen instead of restarting
+    // the actual L1 flow - a dead end back into L1 after a failed attempt.
+    screen = id === "L1" ? toPlay(id) : retryLevel(id);
   }
   function goFreeplay() {
     // Section B.1: Free Play uses the current unlocked toolset. Use the
