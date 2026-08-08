@@ -183,6 +183,64 @@ describe("L1 reference path: win, 3 stars, unlocks L2", () => {
   });
 });
 
+// Regression test for a real bug the reference-path test above (which clicks
+// with zero elapsed real time between actions) could not catch: playing L1
+// at a normal HUMAN pace - reading the goal, reading a toast, deciding what
+// to click next - triggered ClockTtlBar's real-time TTL drain (a live
+// setInterval, "time runs while Bob decides") to silently expire the 60-min
+// cache mid-run even on the objectively correct click order, forcing an
+// extra cold rebuild that blew the $0.55 budget. A user reported "it's great
+// until I run Bob's tasks" - the level was winnable by a script that clicks
+// instantly but NOT by an actual person, because the drain burned through
+// the entire 60-minute TTL budget in about 60 real SECONDS of just looking
+// at the screen. Root cause: ClockTtlBar.svelte's drain advanced 1 sim-minute
+// per real second; fixed to 1/8 sim-minute per real second. This test uses
+// vi.advanceTimersByTime to fast-forward real time between clicks (exactly
+// what a human pausing to read does) while still driving the level entirely
+// through the real rendered buttons (fireEvent, not the reducer directly).
+describe("L1 stays winnable-by-clicking when a real human pauses to read between actions", () => {
+  it("a 55-second real-time pause after task0 (reading the cold-write toast) does not expire the cache or block the reference win", async () => {
+    render(App);
+    await clickByText("L1");
+    await dismissIntro();
+
+    await clickByText(/Do next task/); // task0 - cold write, cache goes warm
+    expect(screen.getByText(/warm - expires/)).toBeInTheDocument();
+
+    // A human reads the toast ("That red bar: 22,527 tokens written...") and
+    // thinks for a bit before clicking again - the exact real-time gap that
+    // used to burn through the whole 60-min TTL at the old 1-min/real-sec
+    // drain rate. ClockTtlBar's setInterval is a real timer, so fast-forward
+    // it the same way a human pausing 55 real seconds would.
+    await vi.advanceTimersByTimeAsync(55_000);
+
+    // The cache must still be warm - a 55-second human pause is not "walking
+    // away", and must not force a cold rebuild the objectively correct click
+    // order shouldn't pay for.
+    expect(screen.getByText(/warm - expires/)).toBeInTheDocument();
+    expect(screen.queryByText(/EXPIRED/)).not.toBeInTheDocument();
+
+    // Finish the level via the same reference click order as the fast-click
+    // test above, with more small pauses thrown in (deciding between
+    // buttons, reading each toast) - still driven entirely by clicking the
+    // real rendered controls, never the reducer directly.
+    await clickByText(/Do next task/); // task1 - warm read
+    await vi.advanceTimersByTimeAsync(8_000);
+    await clickByText(/Coffee/); // 20 min, well under TTL
+    await vi.advanceTimersByTimeAsync(8_000);
+    await clickByText(/Do next task/); // task2
+    await vi.advanceTimersByTimeAsync(8_000);
+    await clickByText(/Do next task/); // task3
+    await vi.advanceTimersByTimeAsync(8_000);
+    await clickByText(/Standup/); // standup last
+
+    // Reached RESULT=Passed with 3 stars through the DOM, not runScript/step().
+    expect(screen.getByText(/Passed/)).toBeInTheDocument();
+    expect(screen.getByText(/★★★/)).toBeInTheDocument();
+    expect(screen.getAllByText(/\$0\.4\d/).length).toBeGreaterThan(0); // ~$0.42, still under the $0.55 gate
+  });
+});
+
 describe("L1 anti path: fails the cold-write gate, retry resets to a fresh run", () => {
   it("standup mid-work costs more and fails even though it would clear the dollar budget alone", async () => {
     render(App);

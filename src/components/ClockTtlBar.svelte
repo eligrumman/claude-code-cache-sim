@@ -44,6 +44,19 @@
 
   let interval: ReturnType<typeof setInterval> | null = null;
 
+  // Real-time drain rate (L1_REDESIGN Section 5 "time runs while Bob
+  // decides"). BUG HISTORY: this used to be 1 sim-minute per real second -
+  // literally the entire 60-minute cache TTL evaporating in 60 real seconds
+  // of a player just reading the screen. That's less time than it takes to
+  // read the tutorial's own toasts ("That red bar: 22,527 tokens written...
+  // You only pay this once. Unless it expires."), so any real, human-paced
+  // playthrough silently expired the cache mid-level and blew the $0.55
+  // budget - even doing the objectively correct click order - while an
+  // instant scripted click-through never noticed. 1/8 keeps the lesson
+  // (walk away for real minutes and the cache dies) without punishing a
+  // normal few-seconds-to-a-minute pause between clicks.
+  const DRAIN_SIM_MIN_PER_TICK = 1 / 8;
+
   function startDrain() {
     stopDrain();
     interval = setInterval(() => {
@@ -53,7 +66,7 @@
         stopDrain();
         return;
       }
-      ondawdle(1);
+      ondawdle(DRAIN_SIM_MIN_PER_TICK);
     }, 1000);
   }
   function stopDrain() {
