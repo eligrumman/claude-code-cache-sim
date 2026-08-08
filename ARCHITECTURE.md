@@ -6,7 +6,7 @@ self-contained offline HTML** (`dist/index.html`, zero external requests).
 ## Build flow: many source files -> one HTML
 
 ```
-src/**  (Svelte components, JS engine, canvas renderers)
+src/**  (Svelte components, TS engine, canvas renderers)
   |  vite build
   |    + @sveltejs/vite-plugin-svelte  (compile .svelte)
   |    + vite-plugin-singlefile        (inline all JS/CSS)
@@ -14,6 +14,13 @@ src/**  (Svelte components, JS engine, canvas renderers)
   v
 dist/index.html   <- one file, no <link>/<script src=http>, works offline
 ```
+
+**Offline guarantee.** The built file has zero external-resource references
+(`http://`, `src="//"`, external `<link `, `@import url(` — all absent). The only
+`https://` literals in the bundle are Svelte's inert error-doc links
+(`https://svelte.dev/e/...`) baked into its runtime throw messages: they are
+string text, never fetched, and a strict CSP blocks network requests, not string
+literals. They are harmless and intentionally left as-is (no post-build strip).
 
 `npm run dev` = live Vite dev server. `npm run build` = the single file.
 `npm test` = vitest over the engine (`src/engine/*.test.ts`). `npm run check` =
