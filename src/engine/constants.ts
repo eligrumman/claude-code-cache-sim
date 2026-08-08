@@ -25,7 +25,11 @@ export const MANUAL_MULT = 6; // manualHours = unitHours * MANUAL_MULT [FICTION]
 export const TEDIUM_PER_UNIT_HOUR = 8; // tedium += 8 * unitHours per hand-coded unit
 
 // ---- Base-size decomposition (C6, C7, C24, C32) ----
-export const TOOLS_BASE = 16295; // tool definitions in every session/subagent (C24)
+// Main-session tool definitions: ~16,295 tok, 14-tool set (C24). Subagents carry
+// a REDUCED ~6,961-est/9-tool set, not this full base; the sim never applies
+// TOOLS_BASE to subagents - their base derives from the measured 26,237 (C10) via
+// SUB_SCALE in ledgers.ts, which already reflects the smaller subagent toolset.
+export const TOOLS_BASE = 16295; // main-session tool definitions (C24)
 export const SYSTEM_BASE = 2750; // system prompt (C6)
 export const CATALOG_FULL = 13083; // injected skills catalog block, 150 entries (C7)
 export const MESSAGES_BASE = 15693; // messages block (C6); catalog is 13,083 of it
