@@ -29,8 +29,8 @@ interface Anim {
 }
 
 export class TapeRenderer {
-  private canvas: HTMLCanvasElement;
-  private ctx: CanvasRenderingContext2D;
+  private canvas: HTMLCanvasElement | null;
+  private ctx: CanvasRenderingContext2D | null;
   private rows: LedgerRow[] = [];
   private cssW = 0;
   private cssH = 0;
@@ -39,18 +39,31 @@ export class TapeRenderer {
   private rafId: number | null = null;
   private ro: ResizeObserver | null = null;
   private reduced = reducedMotion().reduced;
+  // True once destroy() has run, or if the canvas/2D context was never
+  // available in the first place - a stale/detached ref from a component
+  // that unmounted before its onMount effect fired, a canvas with no 2D
+  // backend, etc. Every method below checks this first and no-ops instead
+  // of touching `this.ctx`: a renderer bound to a dead canvas should be
+  // inert, never throw. Constructing with a real, live canvas and later
+  // calling destroy() through normal teardown remains fully functional.
+  private dead = false;
 
-  constructor(canvas: HTMLCanvasElement) {
-    this.canvas = canvas;
-    this.ctx = canvas.getContext("2d")!;
-    if (typeof ResizeObserver !== "undefined" && canvas.parentElement) {
+  constructor(canvas: HTMLCanvasElement | null | undefined) {
+    this.canvas = canvas ?? null;
+    this.ctx = this.canvas ? this.canvas.getContext("2d") : null;
+    if (!this.canvas || !this.ctx) {
+      this.dead = true;
+      return;
+    }
+    if (typeof ResizeObserver !== "undefined" && this.canvas.parentElement) {
       this.ro = new ResizeObserver(() => this.resize());
-      this.ro.observe(canvas.parentElement);
+      this.ro.observe(this.canvas.parentElement);
     }
     this.resize();
   }
 
   destroy(): void {
+    this.dead = true;
     if (this.rafId != null && typeof cancelAnimationFrame !== "undefined")
       cancelAnimationFrame(this.rafId);
     this.rafId = null;
@@ -60,9 +73,10 @@ export class TapeRenderer {
 
   // Draw a fresh set of requests, sweeping them in (or cutting to final if reduced).
   play(rows: LedgerRow[]): void {
+    if (this.dead) return;
     this.rows = rows;
     this.resize();
-    if (!rows.length) return;
+    if (this.dead || !rows.length) return;
     if (this.reduced) {
       this.reveal = rows.length;
       this.draw();
@@ -74,6 +88,7 @@ export class TapeRenderer {
   }
 
   private resize(): void {
+    if (this.dead || !this.canvas || !this.ctx) return;
     const holder = this.canvas.parentElement;
     const w = holder ? holder.clientWidth : this.canvas.clientWidth || 320;
     const rows = Math.max(1, this.rows.length);
@@ -95,11 +110,13 @@ export class TapeRenderer {
   }
 
   private loop(): void {
+    if (this.dead) return;
     if (this.rafId == null && typeof requestAnimationFrame !== "undefined")
       this.rafId = requestAnimationFrame((t) => this.tick(t));
   }
 
   private tick(t: number): void {
+    if (this.dead) return;
     this.rafId = null;
     const a = this.anim;
     if (!a) {
@@ -119,6 +136,7 @@ export class TapeRenderer {
   }
 
   private draw(): void {
+    if (this.dead || !this.ctx) return;
     const ctx = this.ctx;
     const W = this.cssW;
     const H = this.cssH;

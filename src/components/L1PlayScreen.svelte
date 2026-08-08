@@ -39,7 +39,7 @@
   let canvas: HTMLCanvasElement | undefined = $state();
   let tape: TapeRenderer | null = null;
   onMount(() => {
-    tape = new TapeRenderer(canvas!);
+    tape = new TapeRenderer(canvas);
     return () => tape?.destroy();
   });
 
