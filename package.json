@@ -1,0 +1,24 @@
+{
+  "name": "claude-code-cache-sim",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The Claude Code Simulator - deterministic cache-economy engine + Svelte UI, builds to one self-contained offline HTML.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.1.1",
+    "svelte": "^5.39.5",
+    "vite": "^6.3.6",
+    "vite-plugin-singlefile": "^2.3.0",
+    "vitest": "^2.1.9"
+  },
+  "dependencies": {
+    "immer": "^10.1.3"
+  }
+}
