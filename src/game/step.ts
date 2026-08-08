@@ -115,10 +115,19 @@ export function buildQueue(cfg: Config, seed: number): UnitInstance[] {
 }
 
 // ---- game factory ----
-export function initGame(seed: number, scope: Scope, cfgOverride: Partial<Config> = {}): GameState {
+export function initGame(
+  seed: number,
+  scope: Scope,
+  cfgOverride: Partial<Config> = {},
+  clockCapMin?: number,
+): GameState {
   const cfg: Config = { ...DEFAULT_CFG, ...cfgOverride };
   const budget = SCOPE_BUDGET[scope];
-  const endMin = DAY_LEN_MIN * SCOPE_DAYS[scope];
+  // LevelDef.clockCapMin (GAME_PLAN.md Section C.1) overrides the default
+  // scope-day clock so a level's scripted queue (hours + idle gaps) has room
+  // to actually finish under interactive step-by-step play, not just under
+  // runScript's end-of-run-only checkEnd.
+  const endMin = clockCapMin ?? DAY_LEN_MIN * SCOPE_DAYS[scope];
   const prng = makePrng(seed);
   return {
     seed,
@@ -461,8 +470,9 @@ export function runScript(
   scope: Scope,
   cfgOverride: Partial<Config> = {},
   forceRun = false,
+  clockCapMin?: number,
 ): GameState {
-  const st = initGame(seed, scope, cfgOverride);
+  const st = initGame(seed, scope, cfgOverride, clockCapMin);
   let guard = 0;
   while (st.idx < st.units.length && guard++ < 500) {
     const u = st.units[st.idx];

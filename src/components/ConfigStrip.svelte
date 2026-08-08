@@ -1,12 +1,15 @@
 <script lang="ts">
   import type { Config } from "../engine/types.js";
   import type { Scope } from "../game/types.js";
+  import type { ControlId } from "../game/levels.js";
 
   let {
     cfg,
     scope,
     seed,
     locked = false,
+    controls,
+    showRunGroup,
     onpatch,
     onscope,
     onseed,
@@ -16,11 +19,24 @@
     scope: Scope;
     seed: number;
     locked?: boolean;
+    // GAME_PLAN.md Section C.2: when provided, only these ControlIds render -
+    // progressive disclosure. Undefined = show everything (freeplay/sandbox).
+    controls?: ControlId[];
+    showRunGroup?: boolean;
     onpatch: (patch: Partial<Config>) => void;
     onscope: (s: Scope) => void;
     onseed: (s: number) => void;
     onreroll: () => void;
   } = $props();
+
+  const runGroupVisible = $derived(showRunGroup ?? controls === undefined);
+  function shown(id: ControlId): boolean {
+    return controls === undefined || controls.includes(id);
+  }
+  const anyModels = $derived(shown("planModel") || shown("devModel") || shown("orchestratorModel"));
+  const anyExec = $derived(shown("who") || shown("prompts") || shown("width"));
+  const anyCache = $derived(shown("oneHourFlag") || shown("keepWarm") || shown("keepWarmMin"));
+  const anySession = $derived(shown("hook") || shown("skills") || shown("skillsMode") || shown("memoryFiles") || shown("mcp"));
 
   const models = ["sonnet", "opus", "fable"] as const;
   function toggleMcp(i: number) {
@@ -33,8 +49,10 @@
 <div class="card cfg">
   <h2>Config</h2>
 
+  {#if anyModels}
   <div class="grp">
     <p class="grp-h">Models</p>
+    {#if shown("planModel")}
     <div class="ctl">
       <label for="planModel">Plan</label>
       <select id="planModel" class="mini" value={cfg.planModel}
@@ -42,6 +60,8 @@
         {#each models as m}<option>{m}</option>{/each}
       </select>
     </div>
+    {/if}
+    {#if shown("devModel")}
     <div class="ctl">
       <label for="devModel">Dev</label>
       <select id="devModel" class="mini" value={cfg.devModel}
@@ -49,6 +69,8 @@
         {#each models as m}<option>{m}</option>{/each}
       </select>
     </div>
+    {/if}
+    {#if shown("orchestratorModel")}
     <div class="ctl">
       <label for="orch">Orchestrator</label>
       <select id="orch" class="mini" value={cfg.orchestratorModel}
@@ -56,10 +78,14 @@
         {#each models as m}<option>{m}</option>{/each}
       </select>
     </div>
+    {/if}
   </div>
+  {/if}
 
+  {#if anyExec}
   <div class="grp">
     <p class="grp-h">Execution</p>
+    {#if shown("who")}
     <div class="ctl">
       <span class="lbl">Subagents</span>
       <span class="seg">
@@ -67,6 +93,8 @@
         <button class={cfg.who === "subagent" ? "on" : ""} onclick={() => onpatch({ who: "subagent" })}>subagent</button>
       </span>
     </div>
+    {/if}
+    {#if shown("prompts")}
     <div class="ctl {cfg.who !== 'subagent' ? 'dis' : ''}">
       <label for="prompts">Prompts</label>
       <select id="prompts" class="mini" value={cfg.prompts}
@@ -74,6 +102,8 @@
         <option>identical</option><option>pointer</option><option>varied</option>
       </select>
     </div>
+    {/if}
+    {#if shown("width")}
     <div class="ctl {cfg.who !== 'subagent' ? 'dis' : ''}">
       <label for="width">Fan-out</label>
       <span class="rngrow">
@@ -82,20 +112,28 @@
         <span class="rngval">{cfg.width}</span>
       </span>
     </div>
+    {/if}
   </div>
+  {/if}
 
+  {#if anyCache}
   <div class="grp">
     <p class="grp-h">Cache</p>
+    {#if shown("oneHourFlag")}
     <div class="ctl">
       <label for="flag">1h flag</label>
       <input id="flag" type="checkbox" class="mini" checked={cfg.oneHourFlag}
         onchange={(e) => onpatch({ oneHourFlag: e.currentTarget.checked })} />
     </div>
+    {/if}
+    {#if shown("keepWarm")}
     <div class="ctl">
       <label for="kw">Keep-warm ping</label>
       <input id="kw" type="checkbox" class="mini" checked={cfg.keepWarm}
         onchange={(e) => onpatch({ keepWarm: e.currentTarget.checked })} />
     </div>
+    {/if}
+    {#if shown("keepWarmMin")}
     <div class="ctl {!cfg.keepWarm ? 'dis' : ''}">
       <label for="kwm">Interval</label>
       <span class="rngrow">
@@ -104,10 +142,14 @@
         <span class="rngval">{cfg.keepWarmMin}m</span>
       </span>
     </div>
+    {/if}
   </div>
+  {/if}
 
+  {#if anySession}
   <div class="grp">
     <p class="grp-h">Session base</p>
+    {#if shown("hook")}
     <div class="ctl">
       <label for="hook">SessionStart hook</label>
       <select id="hook" class="mini" value={cfg.hook}
@@ -115,6 +157,8 @@
         <option>none</option><option>static</option><option>dynamic</option>
       </select>
     </div>
+    {/if}
+    {#if shown("skills")}
     <div class="ctl">
       <label for="skills">Skills</label>
       <span class="rngrow">
@@ -123,6 +167,8 @@
         <span class="rngval">{cfg.skills}</span>
       </span>
     </div>
+    {/if}
+    {#if shown("skillsMode")}
     <div class="ctl">
       <span class="lbl">Skills mode</span>
       <span class="seg">
@@ -130,6 +176,8 @@
         <button class={cfg.skillsMode === "invoke" ? "on" : ""} onclick={() => onpatch({ skillsMode: "invoke" })}>invoke</button>
       </span>
     </div>
+    {/if}
+    {#if shown("memoryFiles")}
     <div class="ctl">
       <label for="mem">Memory files</label>
       <span class="rngrow">
@@ -138,6 +186,8 @@
         <span class="rngval">{cfg.memoryFiles}</span>
       </span>
     </div>
+    {/if}
+    {#if shown("mcp")}
     <div class="ctl" style="align-items:flex-start">
       <span class="lbl">MCP servers</span>
       <div style="flex:1;max-width:130px">
@@ -149,8 +199,11 @@
         {/each}
       </div>
     </div>
+    {/if}
   </div>
+  {/if}
 
+  {#if runGroupVisible}
   <div class="grp">
     <p class="grp-h">Run</p>
     <div class="ctl {locked ? 'dis' : ''}">
@@ -167,4 +220,5 @@
       </span>
     </div>
   </div>
+  {/if}
 </div>
