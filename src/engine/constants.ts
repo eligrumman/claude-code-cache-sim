@@ -81,5 +81,33 @@ export const DEFAULT_CFG: Config = {
 };
 
 // ---- Planning-quality / dev-quality multipliers (Section 3.4) [FICTION] ----
+// "Quality" (higher = better). Rework scales inversely (cheaper model => more rework).
 export const DEV_Q: Record<Model, number> = { sonnet: 1.5, opus: 1.0, fable: 0.7 };
 export const PLAN_Q: Record<Model, number> = { sonnet: 1.6, opus: 1.0, fable: 0.75 };
+
+// ---- Game-layer constants (ported verbatim from build/sim-mock.html) ----
+// Catalog-poisoning write per poisoned session start (C23).
+export const HOOK_POISON = 24300;
+// The mock's compact board runs N=3 dev tasks per DEV wave.
+export const N_DEV = 3;
+// Manual-coding multiplier: manualHours = unitHours * MANUAL_MULT (Section 3.1).
+export const MANUAL_MULT_GAME = 6;
+// Scope scale: one mock ticket stands in for the whole scope's volume so the
+// pro-rated wallet actually drains (mock SCOPE_SCALE).
+export const SCOPE_SCALE: Record<"session" | "week" | "month", number> = {
+  session: 1,
+  week: 3.9,
+  month: 14.2,
+};
+// Pro-rated budgets and month lengths per scope (mock newGame).
+export const SCOPE_BUDGET: Record<"session" | "week" | "month", number> = {
+  session: 12,
+  week: 30,
+  month: 90,
+};
+export const DAY_LEN_MIN = 300; // one ~5 h work block per day
+export const SCOPE_DAYS: Record<"session" | "week" | "month", number> = {
+  session: 1,
+  week: 5,
+  month: 22,
+};
