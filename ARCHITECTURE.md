@@ -30,9 +30,14 @@ dist/index.html   <- one file, no <link>/<script src=http>, works offline
     prototype) + `simulateRequest` (single request, Section 5.4) + keep-warm.
   - `*.test.js` — vitest invariants (price cells, ledgers, $5.58 / $22.49,
     global minimum, TTL expiry, 20x gap).
-- `src/render/` — canvas renderers. `tape.js` (blue read / red write tapes, TTL
-  drain bars) — **stub, port next from tape-prototype.html.**
-- `src/lib/` — compact ncase-style config controls (Section 8) — **stub.**
+- `src/render/` — canvas renderers.
+  - `dpr.js` — DPR-aware canvas sizing (`getDpr`/`sizeCanvas`/`tapeHeight`),
+    ported from tape-prototype `resize()`.
+  - `tween.js` — `lerp`/`easeInOut`/`progress`/`reducedMotion`, ported from the
+    prototype's tick/easeInOut/mq helpers. Pure + SSR-safe.
+  - `tape.js` — blue read / red write tapes + TTL drain bars — **stub, imports
+    dpr+tween; draw()/sweep loop ports next from tape-prototype.html.**
+- `src/components/` — compact ncase-style config controls (Section 8) — **stub.**
 - `src/widgets/` — per-article-section entrypoints S0-S6 (Section 9) — **stub.**
 - `src/game/` — the `step(state, action)` reducer over the SDLC unit graph
   (Section 5.3), rework/PRNG (3.4/5.5), win/lose (6), report (7) — **stub.**
