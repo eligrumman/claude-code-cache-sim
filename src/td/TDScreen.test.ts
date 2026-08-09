@@ -70,6 +70,18 @@ describe("Tokenloons live routing screen", () => {
     expect(screen.getByText(/\$1\/M input/)).toBeInTheDocument();
   });
 
+  it("shows both shared context levers and lazy loading re-prices the preview", async () => {
+    await openTD(); await clockIn();
+    const compact = screen.getByRole("checkbox", { name: /auto-compact/ });
+    const lazy = screen.getByRole("checkbox", { name: /lazy skills\/MCPs/ });
+    expect(compact).toBeChecked();
+    expect(lazy).toBeChecked();
+    const lazyRate = liveRateText();
+    await fireEvent.click(lazy);
+    expect(lazy).not.toBeChecked();
+    expect(liveRateText()).not.toBe(lazyRate);
+  });
+
   it("reveals inherited per-type routes and allows an explicit docs override", async () => {
     await openTD(); await clockIn();
     await fireEvent.click(screen.getByRole("checkbox", { name: /Use subagents/ }));

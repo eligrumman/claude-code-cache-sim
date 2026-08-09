@@ -1,5 +1,5 @@
 import type { Model } from "../engine/types.js";
-import { priceTokens } from "../sim/cost.js";
+import { applyContextLevers, priceCompaction, priceTokens } from "../sim/cost.js";
 import { simulateMessageLedger, type MessageLedgerEntry, type MessageLedgerOptions, type ScriptedMessage } from "../sim/ledger.js";
 import type { Scenario } from "../sim/scenarios.js";
 
@@ -19,6 +19,8 @@ export interface DispatchToggles {
   approval: "auto" | "manual";
   docsSkill: boolean;
   alwaysLoadedMcp: boolean;
+  autoCompact: boolean;
+  lazyLoadTools: boolean;
 }
 
 export interface FitRule {
@@ -49,6 +51,7 @@ export const MAIN_CONTEXT_TOKENS = 1_000_000;
 export const SCOPED_CONTEXT_CAP = 45_000;
 export const DEFAULT_TOGGLES: DispatchToggles = {
   keepWarm: false, ttl: "5m", approval: "manual", docsSkill: false, alwaysLoadedMcp: false,
+  autoCompact: true, lazyLoadTools: true,
 };
 export const MODELS: readonly Model[] = ["haiku", "sonnet", "opus", "fable"];
 export const EFFORTS: readonly Effort[] = ["low", "med", "high"];
@@ -77,6 +80,7 @@ export interface DispatchTask {
   urgent?: boolean;
   incidentId?: string;
   reworkDepth?: number;
+  usesTools?: boolean;
 }
 
 export interface DispatchWave { scenario: Scenario; name: string; lesson: string; tasks: DispatchTask[] }
@@ -90,6 +94,9 @@ export interface RouteResult {
   task: DispatchTask; monkey: Worker; route: ResolvedRoute; outcome: FitOutcome;
   usd: number; baselineUsd: number; wastedUsd: number; savingsUsd: number;
   rework: DispatchTask[]; ledgerOptions: MessageLedgerOptions;
+  nextConversationTok: number;
+  baselineNextConversationTok: number;
+  compactionUsd: number;
 }
 export interface MoabScore { actualUsd: number; panicDefaultUsd: number; deltaUsd: number; panicDefaulted: boolean; draggedStages: number; stagesResolved: number }
 
@@ -140,12 +147,15 @@ function typeFor(scenario: Scenario, index: number, message: ScriptedMessage): R
 export function scenarioToDispatchWave(scenario: Scenario): DispatchWave {
   return {
     scenario, name: scenario.title, lesson: `${scenario.blurb} ${scenario.stresses.join(" · ")}`,
-    tasks: scenario.script.map((message, index) => ({
-      id: `${scenario.id}-${message.id}`, type: typeFor(scenario, index, message), title: message.text,
+    tasks: scenario.script.map((message, index) => {
+      const type = typeFor(scenario, index, message);
+      return {
+      id: `${scenario.id}-${message.id}`, type, title: message.text,
       atMin: message.atMin, contextTok: message.contextTok ?? scenario.defaults.prefixTok,
       workInTok: message.workInTok ?? scenario.defaults.workInTok, outputTok: message.outputTok ?? scenario.defaults.outputTok,
       prefixKey: message.prefixKey ?? "main", origin: "scenario",
-    })),
+      usesTools: Boolean(message.subagent) || type === "debugging" || type === "testing" || type === "docs",
+    };}),
   };
 }
 
@@ -161,6 +171,7 @@ export function createMoab(atMin = 0, incidentId = `moab-${Math.round(atMin * 10
     id: `${incidentId}-${stage.type}`, type: stage.type, title: stage.title, atMin: atMin + index * 0.02,
     contextTok: 85_000, workInTok: stage.work, outputTok: stage.output,
     prefixKey: `${incidentId}:${stage.type}`, origin: "moab", urgent: true, incidentId,
+    usesTools: stage.type === "debugging" || stage.type === "testing",
   }));
 }
 
@@ -174,27 +185,41 @@ export function scenarioToTDWave(scenario: Scenario, overrides: Partial<MessageL
   return { scenario, options, name: scenario.title, lesson: `${scenario.blurb} ${scenario.stresses.join(" · ")}`, totalUsd: ledger.totalUsd, balloons: ledger.messages.map((entry, index) => ({ entry, delay: index * 0.5 })) };
 }
 
-function adjustedMessage(task: DispatchTask, worker: Worker, toggles: DispatchToggles, context: RouteContext): ScriptedMessage {
+function adjustedMessage(task: DispatchTask, worker: Worker, toggles: DispatchToggles, context: RouteContext, conversationTok: number) {
   const effort = EFFORT_TOKENS[worker.effort];
   const baseContext = context === "main-1m" ? MAIN_CONTEXT_TOKENS : Math.min(SCOPED_CONTEXT_CAP, task.contextTok);
-  const contextTok = Math.max(0, Math.round(baseContext * (toggles.docsSkill && task.type === "docs" ? 0.72 : 1) + (toggles.alwaysLoadedMcp ? 12_000 : 0)));
+  const adjustedBase = Math.max(0, Math.round(baseContext * (toggles.docsSkill && task.type === "docs" ? 0.72 : 1) + (toggles.alwaysLoadedMcp ? 12_000 : 0)));
   const approvalTok = toggles.approval === "manual" ? 320 : 0;
-  return {
+  const workInTok = Math.round(task.workInTok * effort.work) + approvalTok;
+  const outputTok = Math.round(task.outputTok * effort.output);
+  const contextTurn = applyContextLevers({ conversationTok }, {
+    basePrefixTok: adjustedBase,
+    growthTok: workInTok + outputTok,
+    usesTools: Boolean(task.usesTools),
+  }, { autoCompact: toggles.autoCompact, lazyLoadTools: toggles.lazyLoadTools });
+  const message: ScriptedMessage = {
     id: task.id, role: "user", text: task.title, atMin: task.atMin,
     prefixKey: context === "main-1m" ? "main-agent-1m" : `scoped:${routableType(task.type)}`,
-    contextTok, workInTok: Math.round(task.workInTok * effort.work) + approvalTok,
-    outputTok: Math.round(task.outputTok * effort.output),
+    contextTok: contextTurn.prefixTok, workInTok, outputTok,
   };
+  return { message, contextTurn };
 }
 
-export function priceRoutedTask(task: DispatchTask, worker: Worker, toggles: DispatchToggles, priorTouchMin?: number, context: RouteContext = "main-1m"): { usd: number; options: MessageLedgerOptions } {
-  const current = adjustedMessage(task, worker, toggles, context);
+export function priceRoutedTask(task: DispatchTask, worker: Worker, toggles: DispatchToggles, priorTouchMin?: number, context: RouteContext = "main-1m", conversationTok = 0) {
+  const adjusted = adjustedMessage(task, worker, toggles, context, conversationTok);
+  const current = adjusted.message;
   const options: MessageLedgerOptions = { model: worker.model, ttl: toggles.ttl, keepWarm: toggles.keepWarm, prefixTok: current.contextTok ?? 0, workInTok: current.workInTok ?? 0, outputTok: current.outputTok ?? 0 };
   const script: ScriptedMessage[] = priorTouchMin === undefined ? [current] : [
     { id: `${task.id}-prior`, role: "assistant", text: "prior cache touch", atMin: priorTouchMin, prefixKey: current.prefixKey, contextTok: 0, workInTok: 0, outputTok: 0 }, current,
   ];
   const ledger = simulateMessageLedger(script, options);
-  return { usd: ledger.messages[ledger.messages.length - 1]?.usd ?? 0, options };
+  const compactionUsd = priceCompaction(adjusted.contextTurn.compactionInputTok, adjusted.contextTurn.compactionOutputTok);
+  return {
+    usd: (ledger.messages[ledger.messages.length - 1]?.usd ?? 0) + compactionUsd,
+    options,
+    nextConversationTok: adjusted.contextTurn.nextState.conversationTok,
+    compactionUsd,
+  };
 }
 
 export function makeReworkTasks(task: DispatchTask): DispatchTask[] {
@@ -206,6 +231,7 @@ export function makeReworkTasks(task: DispatchTask): DispatchTask[] {
     workInTok: Math.round(task.workInTok * (type === "production-issue" ? 1.4 : 0.8)), outputTok: Math.round(task.outputTok * (type === "production-issue" ? 1.25 : 0.75)),
     prefixKey: `${task.prefixKey}:rework`, origin: "rework", urgent: type === "production-issue", incidentId: task.incidentId,
     reworkDepth: (task.reworkDepth ?? 0) + 1,
+    usesTools: task.usesTools || type === "bug" || type === "production-issue",
   }));
 }
 
@@ -216,9 +242,10 @@ export function routeTask(task: DispatchTask, worker: Worker, toggles: DispatchT
   const route: ResolvedRoute = { worker, context, inherited: false, label: context === "main-1m" ? "MAIN AGENT" : `${routableType(task.type)} subagent` };
   return priceResolvedRoute(task, route, toggles, priorTouchMin, baselinePriorTouchMin);
 }
-function priceResolvedRoute(task: DispatchTask, route: ResolvedRoute, toggles: DispatchToggles, priorTouchMin?: number, baselinePriorTouchMin?: number): RouteResult {
-  const priced = priceRoutedTask(task, route.worker, toggles, priorTouchMin, route.context);
-  const baseline = priceRoutedTask(task, DEFAULT_MAIN, DEFAULT_TOGGLES, baselinePriorTouchMin, "main-1m").usd;
+function priceResolvedRoute(task: DispatchTask, route: ResolvedRoute, toggles: DispatchToggles, priorTouchMin?: number, baselinePriorTouchMin?: number, conversationTok = 0, baselineConversationTok = 0): RouteResult {
+  const priced = priceRoutedTask(task, route.worker, toggles, priorTouchMin, route.context, conversationTok);
+  const baselinePrice = priceRoutedTask(task, DEFAULT_MAIN, DEFAULT_TOGGLES, baselinePriorTouchMin, "main-1m", baselineConversationTok);
+  const baseline = baselinePrice.usd;
   const outcome = evaluateFit(task.type, route.worker);
   const fair = idealCost(task, toggles);
   return {
@@ -226,10 +253,13 @@ function priceResolvedRoute(task: DispatchTask, route: ResolvedRoute, toggles: D
     wastedUsd: outcome === "overkill" ? Math.max(0, priced.usd - fair) : 0,
     savingsUsd: outcome === "good-fit" ? Math.max(0, baseline - priced.usd) : 0,
     rework: outcome === "bad-output" ? makeReworkTasks(task) : [], ledgerOptions: priced.options,
+    nextConversationTok: priced.nextConversationTok,
+    baselineNextConversationTok: baselinePrice.nextConversationTok,
+    compactionUsd: priced.compactionUsd,
   };
 }
-export function routeTaskWithControl(task: DispatchTask, control: RoutingControl, toggles: DispatchToggles, priorTouchMin?: number, baselinePriorTouchMin?: number): RouteResult {
-  return priceResolvedRoute(task, resolveRoute(task.type, control), toggles, priorTouchMin, baselinePriorTouchMin);
+export function routeTaskWithControl(task: DispatchTask, control: RoutingControl, toggles: DispatchToggles, priorTouchMin?: number, baselinePriorTouchMin?: number, conversationTok = 0, baselineConversationTok = 0): RouteResult {
+  return priceResolvedRoute(task, resolveRoute(task.type, control), toggles, priorTouchMin, baselinePriorTouchMin, conversationTok, baselineConversationTok);
 }
 export function liveSpendRate(task: DispatchTask, control: RoutingControl, toggles: DispatchToggles): number {
   return routeTaskWithControl(task, control, toggles).usd;

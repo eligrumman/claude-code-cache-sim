@@ -129,6 +129,37 @@ describe("Tokenloons routing economy", () => {
     expect(priceRoutedTask(docs, worker, { ...DEFAULT_TOGGLES, alwaysLoadedMcp: true }).usd).toBeGreaterThan(priceRoutedTask(docs, worker, DEFAULT_TOGGLES).usd);
   });
 
+  it("carries real conversation state through auto-compaction and lazy tools", () => {
+    const worker = { model: "sonnet", effort: "med" } as const;
+    const longTask = { ...task("plan"), workInTok: 2_000, outputTok: 2_000 };
+    const total = (autoCompact: boolean) => {
+      let conversationTok = 0;
+      let usd = 0;
+      let compactionUsd = 0;
+      for (let index = 0; index < 36; index += 1) {
+        const priced = priceRoutedTask(
+          { ...longTask, id: `long-${index}`, atMin: index }, worker,
+          { ...DEFAULT_TOGGLES, ttl: "1h", autoCompact }, index ? index - 1 : undefined,
+          "main-1m", conversationTok,
+        );
+        conversationTok = priced.nextConversationTok;
+        usd += priced.usd;
+        compactionUsd += priced.compactionUsd;
+      }
+      return { usd, compactionUsd };
+    };
+    const compact = total(true);
+    const balloon = total(false);
+    expect(compact.compactionUsd).toBeGreaterThan(0);
+    expect(compact.usd).toBeLessThan(balloon.usd);
+
+    const plain = { ...task("plan"), usesTools: false };
+    const eager = priceRoutedTask(plain, worker, { ...DEFAULT_TOGGLES, lazyLoadTools: false });
+    const lazy = priceRoutedTask(plain, worker, { ...DEFAULT_TOGGLES, lazyLoadTools: true });
+    expect(eager.options.prefixTok - lazy.options.prefixTok).toBe(14_000);
+    expect(lazy.usd).toBeLessThan(eager.usd);
+  });
+
   it("keeps challenge and sandbox boundary helpers exact", () => {
     expect(isGameOver(8.09, 6, 2.1)).toBe(false);
     expect(isGameOver(8.1, 6, 2.1)).toBe(true);

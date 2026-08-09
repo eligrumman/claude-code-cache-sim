@@ -35,12 +35,14 @@
     workInTok: activeScenario?.defaults.workInTok ?? persona.workInTok,
     outputTok: activeScenario?.defaults.outputTok ?? persona.outputTok,
     keepWarm: config.keepWarm,
+    contextLevers: { autoCompact: Boolean(config.autoCompact), lazyLoadTools: Boolean(config.lazyLoadTools) },
   });
 
-  const leverOrder: LeverId[] = ["subagents", "ttl", "context", "approval", "keepWarm", "model"];
+  const leverOrder: LeverId[] = ["subagents", "ttl", "context", "approval", "keepWarm", "autoCompact", "lazyLoadTools", "model"];
   const leverNames: Record<LeverId, string> = {
     subagents: "Subagent prompt", ttl: "Cache TTL", context: "Context size",
-    approval: "Approval mode", keepWarm: "Keep-warm", model: "Model",
+    approval: "Approval mode", keepWarm: "Keep-warm", autoCompact: "Auto-compact",
+    lazyLoadTools: "Skills + MCP schemas", model: "Model",
   };
   const prompts = [
     ["Find the flaky test and explain the failure.", "I traced it to shared timer state and isolated the fixture."],
@@ -54,34 +56,46 @@
   const personaConversation = $derived.by((): ScriptedMessage[] => {
     const items: ScriptedMessage[] = [];
     for (const session of result.sessions) {
-      const pair = prompts[session.index % prompts.length];
-      const assistantAt = Math.max(session.startMin + 1, session.endMin - 1);
-      items.push({ id: `s${session.index}-u`, role: "user", text: pair[0], atMin: session.startMin, prefixKey: "main" });
-      items.push({
-        id: `s${session.index}-a`, role: "assistant", text: pair[1], atMin: assistantAt,
-        prefixKey: config.subagents === "same" ? "main" : `helper-${session.index}`,
-      });
+      const turns = session.segments.filter((segment) => segment.bucket === "input" && segment.request >= 0);
+      for (const [requestIndex, segment] of turns.entries()) {
+        const pair = prompts[(session.index + requestIndex) % prompts.length];
+        const assistant = requestIndex % 2 === 1;
+        items.push({
+          id: `s${session.index}-${requestIndex}`, role: assistant ? "assistant" : "user",
+          text: pair[assistant ? 1 : 0], atMin: segment.atMin, prefixKey: "main",
+          usesTools: requestIndex % 4 === 2,
+        });
+      }
     }
     return items;
   });
   const conversationScript = $derived(activeScenario ? scenarioScript : personaConversation);
 
   function configForScenario(scenario: Scenario): SandboxConfig {
-    return { subagents: "same", ttl: scenario.defaults.ttl, context: 1, approval: "auto", keepWarm: Boolean(scenario.defaults.keepWarm), model: scenario.defaults.model };
+    return {
+      subagents: "same", ttl: scenario.defaults.ttl, context: 1, approval: "auto",
+      keepWarm: Boolean(scenario.defaults.keepWarm), model: scenario.defaults.model,
+      autoCompact: true, lazyLoadTools: true,
+    };
   }
   function scenarioOptions(scenario: Scenario, next: SandboxConfig) {
-    return { ...scenario.defaults, ttl: next.ttl, model: next.model, keepWarm: next.keepWarm, prefixTok: Math.round(scenario.defaults.prefixTok * next.context) };
+    return {
+      ...scenario.defaults, ttl: next.ttl, model: next.model, keepWarm: next.keepWarm,
+      prefixTok: Math.round(scenario.defaults.prefixTok * next.context),
+      contextLevers: { autoCompact: Boolean(next.autoCompact), lazyLoadTools: Boolean(next.lazyLoadTools) },
+    };
   }
   function adaptScenarioScript(scenario: Scenario, next: SandboxConfig): ScriptedMessage[] {
     return scenario.script.map((message, index) => ({
       ...message,
       atMin: message.atMin + (next.approval === "manual" ? index * 6 : 0),
       prefixKey: message.subagent && next.subagents === "different" ? `${message.prefixKey ?? "helper"}-${index}` : message.prefixKey,
+      usesTools: message.subagent || index % 4 === 2,
     }));
   }
   function bucketsFromLedger(ledger: MessageLedger): Record<BucketId, { tokens: number; usd: number }> {
     const buckets: Record<BucketId, { tokens: number; usd: number }> = {
-      input:{tokens:0,usd:0}, cacheWrite:{tokens:0,usd:0}, cacheRead:{tokens:0,usd:0}, output:{tokens:0,usd:0}, keepWarm:{tokens:0,usd:0},
+      input:{tokens:0,usd:0}, cacheWrite:{tokens:0,usd:0}, cacheRead:{tokens:0,usd:0}, output:{tokens:0,usd:0}, keepWarm:{tokens:0,usd:0}, compaction:{tokens:0,usd:0},
     };
     for (const message of ledger.messages) {
       const prefix = message.warm ? buckets.cacheRead : buckets.cacheWrite;
@@ -89,6 +103,7 @@
       buckets.input.tokens += message.buckets.workIn.tokens; buckets.input.usd += message.buckets.workIn.usd;
       buckets.output.tokens += message.buckets.output.tokens; buckets.output.usd += message.buckets.output.usd;
       buckets.keepWarm.tokens += message.buckets.keepWarm.tokens; buckets.keepWarm.usd += message.buckets.keepWarm.usd;
+      buckets.compaction.tokens += message.buckets.compaction.tokens; buckets.compaction.usd += message.buckets.compaction.usd;
     }
     return buckets;
   }
@@ -166,6 +181,10 @@
             <div class="choice"><button class:chosen={config.approval === "manual"} onclick={() => changeLever(lever, { approval: "manual" })}>manual</button><button class:chosen={config.approval === "auto"} onclick={() => changeLever(lever, { approval: "auto" })}>auto</button></div>
           {:else if lever === "keepWarm"}
             <div class="choice"><button class:chosen={!config.keepWarm} onclick={() => changeLever(lever, { keepWarm: false })}>off</button><button class:chosen={config.keepWarm} onclick={() => changeLever(lever, { keepWarm: true })}>on</button></div>
+          {:else if lever === "autoCompact"}
+            <div class="choice"><button class:chosen={!config.autoCompact} onclick={() => changeLever(lever, { autoCompact: false })}>disabled</button><button class:chosen={config.autoCompact} onclick={() => changeLever(lever, { autoCompact: true })}>enabled</button></div>
+          {:else if lever === "lazyLoadTools"}
+            <div class="choice"><button class:chosen={!config.lazyLoadTools} onclick={() => changeLever(lever, { lazyLoadTools: false })}>eager 14k</button><button class:chosen={config.lazyLoadTools} onclick={() => changeLever(lever, { lazyLoadTools: true })}>lazy</button></div>
           {:else}
             <div class="choice three">{#each ["sonnet", "opus", "fable"] as model}<button class:chosen={config.model === model} onclick={() => changeLever(lever, { model: model as Model })}>{model}</button>{/each}</div>
           {/if}

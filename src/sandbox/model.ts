@@ -1,4 +1,4 @@
-import { MODEL_IN, priceTokens } from "../sim/cost.js";
+import { applyContextLevers, MODEL_IN, priceCompaction, priceTokens } from "../sim/cost.js";
 import type { Model } from "../engine/types.js";
 export { simulateMessageLedger } from "../sim/ledger.js";
 export type {
@@ -9,8 +9,8 @@ import type { Ttl } from "../sim/ledger.js";
 export type PersonaId = "developer" | "pm" | "teamLead" | "oneManCompany";
 export type ApprovalMode = "manual" | "auto";
 export type SubagentPrompt = "same" | "different";
-export type BucketId = "input" | "cacheWrite" | "cacheRead" | "output" | "keepWarm";
-export type LeverId = "subagents" | "ttl" | "context" | "approval" | "keepWarm" | "model";
+export type BucketId = "input" | "cacheWrite" | "cacheRead" | "output" | "keepWarm" | "compaction";
+export type LeverId = "subagents" | "ttl" | "context" | "approval" | "keepWarm" | "autoCompact" | "lazyLoadTools" | "model";
 
 export interface SandboxConfig {
   subagents: SubagentPrompt;
@@ -19,6 +19,8 @@ export interface SandboxConfig {
   approval: ApprovalMode;
   keepWarm: boolean;
   model: Model;
+  autoCompact?: boolean;
+  lazyLoadTools?: boolean;
 }
 
 export interface PersonaProfile {
@@ -77,6 +79,8 @@ export interface DayResult {
 const base = {
   model: "sonnet" as Model,
   context: 1,
+  autoCompact: true,
+  lazyLoadTools: true,
 };
 
 export const PERSONAS: Record<PersonaId, PersonaProfile> = {
@@ -116,9 +120,11 @@ export const BUCKET_META: Record<BucketId, { label: string; why: string }> = {
   cacheRead: { label: "Warm cache read", why: "The prefix survived and was reused at the 0.1× read rate." },
   output: { label: "Output", why: "Claude's generated tokens are billed at the 5× output rate." },
   keepWarm: { label: "Keep-warm ping", why: "A cheap read resets the TTL before the prefix expires." },
+  compaction: { label: "Auto-compact", why: "Haiku reads old history once and writes a small working summary." },
 };
 
 export function bucketCost(tokens: number, bucket: BucketId, config: SandboxConfig): number {
+  if (bucket === "compaction") return priceCompaction(tokens, 0);
   return priceTokens(tokens, bucket, config);
 }
 
@@ -126,7 +132,7 @@ function emptyBuckets(): DayResult["buckets"] {
   return {
     input: { tokens: 0, usd: 0 }, cacheWrite: { tokens: 0, usd: 0 },
     cacheRead: { tokens: 0, usd: 0 }, output: { tokens: 0, usd: 0 },
-    keepWarm: { tokens: 0, usd: 0 },
+    keepWarm: { tokens: 0, usd: 0 }, compaction: { tokens: 0, usd: 0 },
   };
 }
 
@@ -144,13 +150,15 @@ export function simulateDay(persona: PersonaId | PersonaProfile, config: Sandbox
   let warmPrefixTok = 0;
   let rebuiltPrefixTok = 0;
   let serial = 0;
+  let currentPrefixTok = prefixTok;
+  let contextState = { conversationTok: 0 };
 
   const add = (session: number, request: number, bucket: BucketId, tokens: number, atMin: number,
-    extra: Partial<CostSegment> = {}) => {
+    extra: Partial<CostSegment> = {}, exactUsd?: number) => {
     const meta = BUCKET_META[bucket];
     const segment: CostSegment = {
       id: `${session}-${request}-${serial++}`, session, request, bucket, tokens, atMin,
-      usd: bucketCost(tokens, bucket, config), label: meta.label, why: meta.why, ...extra,
+      usd: exactUsd ?? bucketCost(tokens, bucket, config), label: meta.label, why: meta.why, ...extra,
     };
     buckets[bucket].tokens += tokens;
     buckets[bucket].usd += segment.usd;
@@ -164,7 +172,7 @@ export function simulateDay(persona: PersonaId | PersonaProfile, config: Sandbox
       // Ping immediately before each expiry. For extremely long gaps, repeated reads can
       // cost more than accepting one rebuild: that break-even is intentionally visible.
       while (lastTouch + pingEvery < target) {
-        add(session, -1, "keepWarm", prefixTok, lastTouch + pingEvery);
+        add(session, -1, "keepWarm", currentPrefixTok, lastTouch + pingEvery);
         lastTouch += pingEvery;
       }
     }
@@ -184,10 +192,25 @@ export function simulateDay(persona: PersonaId | PersonaProfile, config: Sandbox
         crossGap(naturalGap + (config.approval === "manual" ? 6 : 0), s);
       }
       const live = clock - lastTouch < ttlMin;
-      const prefixBucket: BucketId = live ? "cacheRead" : "cacheWrite";
-      add(s, r, prefixBucket, prefixTok, clock, { cold: !live });
-      if (live) warmPrefixTok += prefixTok;
-      else rebuiltPrefixTok += prefixTok;
+      const turn = applyContextLevers(contextState, {
+        basePrefixTok: prefixTok,
+        growthTok: profile.workInTok + profile.outputTok,
+        usesTools: r % 4 === 2,
+      }, { autoCompact: Boolean(config.autoCompact), lazyLoadTools: Boolean(config.lazyLoadTools) });
+      contextState = turn.nextState;
+      currentPrefixTok = turn.prefixTok;
+      if (turn.compactedTok) {
+        const compactionTokens = turn.compactionInputTok + turn.compactionOutputTok;
+        add(s, r, "compaction", compactionTokens, clock, {
+          label: "Auto-compact summary",
+          why: `Compressed ${turn.compactedTok.toLocaleString()} old tokens to an 8k working set; small context loss, cheaper later turns.`,
+        }, priceCompaction(turn.compactionInputTok, turn.compactionOutputTok));
+      }
+      const reusable = live;
+      const prefixBucket: BucketId = reusable ? "cacheRead" : "cacheWrite";
+      add(s, r, prefixBucket, currentPrefixTok, clock, { cold: !reusable });
+      if (reusable) warmPrefixTok += currentPrefixTok;
+      else rebuiltPrefixTok += currentPrefixTok;
       add(s, r, "input", profile.workInTok, clock);
       add(s, r, "output", profile.outputTok, clock);
       lastTouch = clock;
@@ -195,7 +218,7 @@ export function simulateDay(persona: PersonaId | PersonaProfile, config: Sandbox
       // Spread a persona's N helper-agent spawns across the early requests in a session.
       if (subagentSpawnsLeft > 0 && r < profile.subagentsPerSession) {
         const reuse = config.subagents === "same" && subagentWritten;
-        add(s, r, reuse ? "cacheRead" : "cacheWrite", prefixTok, clock + 0.1, {
+        add(s, r, reuse ? "cacheRead" : "cacheWrite", currentPrefixTok, clock + 0.1, {
           cold: !reuse, subagent: true,
           label: reuse ? "Reused subagent prompt" : "Subagent prompt write",
           why: reuse ? "Same helper prompt, so later spawns reuse the cached prefix."
@@ -203,8 +226,8 @@ export function simulateDay(persona: PersonaId | PersonaProfile, config: Sandbox
               ? "A different helper prompt cannot reuse the previous cached prefix."
               : "The first helper spawn writes this session's shared prompt once.",
         });
-        if (reuse) warmPrefixTok += prefixTok;
-        else rebuiltPrefixTok += prefixTok;
+        if (reuse) warmPrefixTok += currentPrefixTok;
+        else rebuiltPrefixTok += currentPrefixTok;
         subagentWritten = true;
         subagentSpawnsLeft -= 1;
       }
@@ -234,6 +257,8 @@ export function configForLever(baseConfig: SandboxConfig, lever: LeverId, useAlt
   if (lever === "context") next.context = next.context <= 1 ? 1.75 : 0.65;
   if (lever === "approval") next.approval = next.approval === "manual" ? "auto" : "manual";
   if (lever === "keepWarm") next.keepWarm = !next.keepWarm;
+  if (lever === "autoCompact") next.autoCompact = !next.autoCompact;
+  if (lever === "lazyLoadTools") next.lazyLoadTools = !next.lazyLoadTools;
   if (lever === "model") next.model = next.model === "sonnet" ? "opus" : "sonnet";
   return next;
 }

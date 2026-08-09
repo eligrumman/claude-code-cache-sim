@@ -59,6 +59,8 @@
   let raf = 0;
   let actualTouches = new Map<string, number>();
   let baselineTouches = new Map<string, number>();
+  let actualContexts = new Map<string, number>();
+  let baselineContexts = new Map<string, number>();
   let challengeCode = $state(`function cacheReadCost(tokens, dollarPerMTok) {\n  // TODO: warm reads use the 0.1× rate\n  return 0;\n}`);
   let testOutput = $state<string[]>([]);
   let challengePassed = $state(false);
@@ -66,7 +68,15 @@
   let selectedTask = $derived(live.find(task => task.id === selectedId));
   let activeWave = $derived(waves[waveIndex]);
   let previewTask = $derived(selectedTask ?? queue[0]?.task ?? activeWave?.tasks[0]);
-  let spendRate = $derived(previewTask ? liveSpendRate(previewTask, control, toggles) : 0);
+  let spendRate = $derived.by(() => {
+    spend;
+    if (!previewTask) return 0;
+    const key = touchKey(previewTask);
+    return routeTaskWithControl(
+      previewTask, control, toggles, undefined, undefined,
+      actualContexts.get(key) ?? 0, baselineContexts.get(`main-1m:${DEFAULT_MAIN.model}`) ?? 0,
+    ).usd;
+  });
   let delta = $derived(baseline - spend);
   let overdraft = $derived(overdraftLeft(spend, budget, allowance));
   let spentPct = $derived(sandboxMode ? 0 : Math.min(100, spend / budget * 100));
@@ -98,7 +108,7 @@
     live = []; queue = []; pops = []; moabResults = []; moabSeen = false; selectedId = null; running = false; speed = 1;
     toggles = { ...DEFAULT_TOGGLES };
     control = defaultRoutingControl();
-    actualTouches = new Map(); baselineTouches = new Map();
+    actualTouches = new Map(); baselineTouches = new Map(); actualContexts = new Map(); baselineContexts = new Map();
     phase = "playing";
     status = "MAIN AGENT is Opus · high with a real 1M-token prefix. Change model or effort live.";
   }
@@ -132,12 +142,20 @@
     const route = resolveRoute(task.type, control);
     const actualKey = touchKey(task, route);
     const baselineKey = `main-1m:${DEFAULT_MAIN.model}`;
-    const result = routeTaskWithControl(task, control, toggles, priorFor(actualTouches, task, actualKey), task.origin === "scenario" || task.origin === "moab" ? priorFor(baselineTouches, task, baselineKey) : undefined);
+    const result = routeTaskWithControl(
+      task, control, toggles,
+      priorFor(actualTouches, task, actualKey),
+      task.origin === "scenario" || task.origin === "moab" ? priorFor(baselineTouches, task, baselineKey) : undefined,
+      actualContexts.get(actualKey) ?? 0,
+      baselineContexts.get(baselineKey) ?? 0,
+    );
     spend += result.usd;
     remember(actualTouches, task, actualKey);
+    actualContexts.set(actualKey, result.nextConversationTok);
     if (task.origin !== "rework") {
       baseline += result.baselineUsd;
       remember(baselineTouches, task, baselineKey);
+      baselineContexts.set(baselineKey, result.baselineNextConversationTok);
     } else reworkSpend += result.usd;
     if (result.outcome === "good-fit") clean += 1;
     if (result.outcome === "bad-output") bad += 1;
@@ -154,7 +172,9 @@
     live = live.filter(item => item.id !== task.id);
     selectedId = selectedId === task.id ? null : selectedId;
     result.rework.forEach((rework, index) => { queue = [...queue, { task: rework, at: waveElapsed + 1.1 + index * 0.8 }]; });
-    status = `${automatic ? "AUTO · " : "NOW · "}${task.type} → ${who}: ${text.split(" · ")[0]}.`;
+    status = result.compactionUsd > 0
+      ? `${automatic ? "AUTO · " : "NOW · "}🗜️ compacted via Haiku (+${safeMoney(result.compactionUsd)}), then ${task.type} → ${who}.`
+      : `${automatic ? "AUTO · " : "NOW · "}${task.type} → ${who}: ${text.split(" · ")[0]}.`;
     if (!sandboxMode && isGameOver(spend, budget, allowance)) { phase = "dead"; running = false; challengePassed = false; testOutput = []; }
   }
 
@@ -254,7 +274,7 @@
     </div>
     <div class="wave-note"><b>{waveIndex + 1}/{waves.length} · {activeWave?.name}</b><span>{activeWave?.scenario.id === "debug-prod" ? "MOAB climax: hotfix + debugging + RCA + review + testing land together." : activeWave?.lesson}</span></div>
     {#if moabSeen}<div class="moab-score"><b>🐛 MOAB INCIDENT</b><span>{moabScore.stagesResolved}/5 stages · actual {safeMoney(moabScore.actualUsd)} vs panic-default {safeMoney(moabScore.panicDefaultUsd)} · {moabScore.draggedStages} dragged</span>{#if moabScore.stagesResolved === 5}<strong>{moabScore.panicDefaulted ? "You panic-defaulted every stage." : moabScore.deltaUsd >= 0 ? `${safeMoney(moabScore.deltaUsd)} survived` : `${safeMoney(-moabScore.deltaUsd)} over panic cost`}</strong>{/if}</div>{/if}
-    <div class="config-rail" aria-label="Free global configuration"><strong>FREE GLOBAL CONFIG →</strong><label><input type="checkbox" bind:checked={toggles.keepWarm}> ☕ keep-warm</label><div class="seg"><button class:active={toggles.ttl === "5m"} onclick={() => toggles.ttl = "5m"}>TTL 5m</button><button class:active={toggles.ttl === "1h"} onclick={() => toggles.ttl = "1h"}>TTL 1h</button></div><div class="seg"><button class:active={toggles.approval === "auto"} onclick={() => toggles.approval = "auto"}>auto-approve</button><button class:active={toggles.approval === "manual"} onclick={() => toggles.approval = "manual"}>manual</button></div><label><input type="checkbox" bind:checked={toggles.docsSkill}> 📚 docs skill</label><label class="mcp"><input type="checkbox" bind:checked={toggles.alwaysLoadedMcp}> 🔌 loaded MCP</label></div>
+    <div class="config-rail" aria-label="Free global configuration"><strong>FREE GLOBAL CONFIG →</strong><label><input type="checkbox" bind:checked={toggles.keepWarm}> ☕ keep-warm</label><div class="seg"><button class:active={toggles.ttl === "5m"} onclick={() => toggles.ttl = "5m"}>TTL 5m</button><button class:active={toggles.ttl === "1h"} onclick={() => toggles.ttl = "1h"}>TTL 1h</button></div><div class="seg"><button class:active={toggles.approval === "auto"} onclick={() => toggles.approval = "auto"}>auto-approve</button><button class:active={toggles.approval === "manual"} onclick={() => toggles.approval = "manual"}>manual</button></div><label title="Compress history over 32k to an 8k working set; Haiku summary is charged"><input type="checkbox" bind:checked={toggles.autoCompact}> 🗜️ auto-compact</label><label class="mcp" title="Load 14k tokens of skills and MCP schemas only on turns that invoke them"><input type="checkbox" bind:checked={toggles.lazyLoadTools}> 💤 lazy skills/MCPs</label><label><input type="checkbox" bind:checked={toggles.docsSkill}> 📚 docs skill</label><label class="mcp"><input type="checkbox" bind:checked={toggles.alwaysLoadedMcp}> 🔌 extra MCP</label></div>
 
     <div class="game-grid">
       <main class="board-wrap">

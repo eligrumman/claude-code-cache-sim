@@ -52,9 +52,24 @@ describe("sandbox screen", () => {
     expect(screen.getByRole("button", { name: "same prompt" })).toHaveClass("chosen");
     expect(screen.getByRole("button", { name: "1 hour" })).toHaveClass("chosen");
 
-    for (const label of ["Subagent prompt", "Cache TTL", "Context size", "Approval mode", "Keep-warm", "Model"]) {
+    for (const label of ["Subagent prompt", "Cache TTL", "Context size", "Approval mode", "Keep-warm", "Auto-compact", "Skills + MCP schemas", "Model"]) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     }
+    expect(screen.getByRole("button", { name: "enabled" })).toHaveClass("chosen");
+    expect(screen.getByRole("button", { name: "lazy" })).toHaveClass("chosen");
+  });
+
+  it("resets auto-compact and lazy tools with the rest of the persona defaults", async () => {
+    render(App);
+    await fireEvent.click(screen.getByRole("button", { name: /Sandbox/ }));
+    await fireEvent.click(screen.getByRole("button", { name: "disabled" }));
+    await fireEvent.click(screen.getByRole("button", { name: "eager 14k" }));
+    expect(screen.getByRole("button", { name: "disabled" })).toHaveClass("chosen");
+    expect(screen.getByRole("button", { name: "eager 14k" })).toHaveClass("chosen");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Reset to defaults" }));
+    expect(screen.getByRole("button", { name: "enabled" })).toHaveClass("chosen");
+    expect(screen.getByRole("button", { name: "lazy" })).toHaveClass("chosen");
   });
 
   it("opens a plain-English receipt from the shared conversation", async () => {
