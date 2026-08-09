@@ -5,7 +5,7 @@
 // NOT changed - request costs come from the canonical engine (simulateRequest),
 // and every calibration constant traces to engine/constants.ts.
 
-import { RATE, MODEL_IN } from "../engine/pricing.js";
+import { RATE, MODEL_IN, tokCost } from "../engine/pricing.js";
 import { mainBaseTok } from "../engine/ledgers.js";
 import { simulateRequest, ttlMin } from "../engine/simulate.js";
 import {
@@ -21,6 +21,11 @@ import {
   SCOPE_DAYS,
   DAY_LEN_MIN,
   MAIN_PREFIX_HEY,
+  SYSTEM_BASE,
+  TOOLS_BASE,
+  CATALOG_RESIDUE,
+  WORK_IN,
+  WORK_OUT,
 } from "../engine/constants.js";
 import type { Config, Model } from "../engine/types.js";
 import type {
@@ -31,6 +36,7 @@ import type {
   Scope,
   UnitInstance,
   UnitKind,
+  PrefixBlockState,
 } from "./types.js";
 
 // ---- xorshift-ish PRNG, byte-identical to the mock's makePRNG ----
@@ -171,9 +177,34 @@ export function buildL2Blocker(): UnitInstance {
   };
 }
 
+const L3_HISTORY_TOK = 13_083;
+const L3_PREFIX_TOK = SYSTEM_BASE + TOOLS_BASE + CATALOG_RESIDUE + L3_HISTORY_TOK;
+const L3_STABLE_BEFORE_HISTORY_TOK = SYSTEM_BASE + TOOLS_BASE + CATALOG_RESIDUE;
+
+export function buildL3MainPrefix(): PrefixBlockState[] {
+  return [
+    { id: "PB_SYSTEM_L3", kind: "system", label: "SYSTEM", tokenCount: SYSTEM_BASE, identityHash: "system-v1", cacheable: true },
+    { id: "PB_TOOLS_L3", kind: "tools", label: "TOOLS", tokenCount: TOOLS_BASE, identityHash: "tools-v1", cacheable: true },
+    { id: "PB_INSTRUCTIONS_L3", kind: "instructions", label: "INSTRUCTIONS", tokenCount: CATALOG_RESIDUE, identityHash: "instructions-v1", cacheable: true },
+    { id: "PB_HISTORY_L3", kind: "history", label: "HISTORY", tokenCount: L3_HISTORY_TOK, identityHash: "history-v1", cacheable: true },
+    { id: "PB_CURRENT_L3", kind: "current", label: "CURRENT", tokenCount: WORK_IN, identityHash: "current-primary", cacheable: false },
+  ];
+}
+
+export function buildL3HandoffPrefix(): PrefixBlockState[] {
+  return [
+    { id: "PB_SYSTEM_L3_HANDOFF", kind: "system", label: "SYSTEM", tokenCount: SYSTEM_BASE, identityHash: "system-v1", cacheable: true },
+    { id: "PB_TOOLS_L3_HANDOFF", kind: "tools", label: "TOOLS", tokenCount: TOOLS_BASE, identityHash: "tools-v1", cacheable: true },
+    { id: "PB_INSTRUCTIONS_L3_HANDOFF", kind: "instructions", label: "INSTRUCTIONS", tokenCount: CATALOG_RESIDUE, identityHash: "instructions-v1", cacheable: true },
+    { id: "PB_HISTORY_L3_HANDOFF", kind: "history", label: "HISTORY", tokenCount: L3_HISTORY_TOK, identityHash: "history-v1", cacheable: true },
+    { id: "PB_CURRENT_L3_VERIFY", kind: "current", label: "CURRENT", tokenCount: 100, identityHash: "current-verify", cacheable: false },
+  ];
+}
+
 // Build the unit queue, expanding rework deterministically from model quality.
 // Ported exactly from the mock (including PRNG consumption order).
 export function buildQueue(cfg: Config, seed: number, scenario?: string): UnitInstance[] {
+  if (scenario === "l3-prefix-builder") return [];
   if (scenario === "l2-beat-the-clock") return [buildL2Blocker()];
   if (scenario === "l1-red-or-blue") return buildL1RedBlueTasks();
   if (scenario === "l1-onboarding") return buildL1Tasks();
@@ -217,8 +248,10 @@ export function initGame(
   scenario?: string,
 ): GameState {
   const cfg: Config = { ...DEFAULT_CFG, ...cfgOverride };
-  const budget = scenario === "l2-beat-the-clock"
-    ? 0.65
+  const budget = scenario === "l3-prefix-builder"
+    ? 2.50
+    : scenario === "l2-beat-the-clock"
+      ? 0.65
     : scenario === "l1-red-or-blue"
       ? 0.30
       : scenario === "l1-onboarding"
@@ -280,6 +313,17 @@ export function initGame(
     l2PredictionCommitted: false,
     l2FollowupRevealed: false,
     l2ExplanationAcknowledged: false,
+    l3MainPrefix: scenario === "l3-prefix-builder" ? buildL3MainPrefix() : undefined,
+    l3HandoffPrefix: scenario === "l3-prefix-builder" ? buildL3HandoffPrefix() : undefined,
+    l3Placement: undefined,
+    l3PredictionCommitted: undefined,
+    l3FirstMismatchBlockId: null,
+    l3MatchedPrefixTok: 0,
+    l3InvalidatedSuffixTok: 0,
+    l3ExplanationAnswered: false,
+    l3ExplanationAcknowledged: false,
+    completedEventIds: [],
+    completedTransferIds: [],
   };
 }
 
@@ -529,6 +573,86 @@ function sendL2Check(st: GameState): void {
   st.lastRequests = [row];
 }
 
+// L3 needs partial-prefix rows, which the compact general simulator does not
+// model. Keep the matching decision in the scenario reducer, but price every
+// bucket through the canonical pricing engine.
+function sendL3Request(st: GameState): void {
+  const n = st.ledger.length;
+  let unitId: string;
+  let readTok: number;
+  let writeTok: number;
+  let inputTok: number;
+  let outTok: number;
+
+  if (n === 0) {
+    unitId = "R1_COLD";
+    readTok = 0;
+    writeTok = L3_PREFIX_TOK;
+    inputTok = WORK_IN;
+    outTok = WORK_OUT;
+  } else if (n === 1) {
+    unitId = "R2_IDENTICAL";
+    readTok = L3_PREFIX_TOK;
+    writeTok = 0;
+    inputTok = WORK_IN;
+    outTok = WORK_OUT;
+  } else if (n === 2 && st.l3Placement) {
+    const followup = st.l3Placement === "followup";
+    unitId = followup ? "R3_LATE_CHANGE" : "R3_EARLY_CHANGE";
+    readTok = followup ? L3_STABLE_BEFORE_HISTORY_TOK : 0;
+    writeTok = followup ? L3_HISTORY_TOK : L3_PREFIX_TOK;
+    inputTok = WORK_IN;
+    outTok = WORK_OUT;
+  } else if (n === 3 && st.l3Placement) {
+    unitId = st.l3Placement === "followup" ? "R4_HISTORY_REAPPLIED" : "R4_BOOT_PERSISTED";
+    readTok = L3_PREFIX_TOK;
+    writeTok = 0;
+    inputTok = 100;
+    outTok = 100;
+  } else {
+    return;
+  }
+
+  const usd =
+    tokCost(readTok, RATE.read, "sonnet") +
+    tokCost(writeTok, RATE.w1h, "sonnet") +
+    tokCost(inputTok, RATE.input, "sonnet") +
+    tokCost(outTok, RATE.out, "sonnet");
+  const row: LedgerRow = {
+    tMin: st.clockMin,
+    unitId,
+    unit: "TASK",
+    agent: "main",
+    model: "sonnet",
+    cold: readTok === 0,
+    readTok,
+    inputTok,
+    writeTok,
+    writeTier: "1h",
+    outTok,
+    usd,
+  };
+  st.ledger.push(row);
+  st.lastRequests = [row];
+  st.wallet -= usd;
+  st.cache.entries["l3-managed-policy-handoff"] = {
+    prefixTok: L3_PREFIX_TOK,
+    tier: "1h",
+    lastTouchMin: st.clockMin,
+    keyId: "l3-managed-policy-handoff",
+  };
+
+  if (n === 1) st.completedEventIds?.push("reveal-r2-identical");
+  if (n === 2) st.completedEventIds?.push("reveal-r3-placement");
+  if (n === 3) {
+    st.completedEventIds?.push("reveal-r4-policy-check");
+    st.completedTransferIds?.push(
+      st.l3Placement === "followup" ? "l3-history-reapplied-read" : "l3-persisted-policy-read",
+    );
+  }
+  st.l3PredictionCommitted = undefined;
+}
+
 // ---- HAND_CODE (mock handCode) ----
 function handCode(st: GameState, u: UnitInstance): void {
   st.clockMin += u.hours * 60 * MANUAL_MULT_GAME;
@@ -586,7 +710,9 @@ export function checkEnd(st: GameState): void {
   const lessonComplete =
     (st.scenario !== "l1-red-or-blue" || st.l1ExplanationAcknowledged) &&
     (st.scenario !== "l2-beat-the-clock" ||
-      (st.ledger.length === 2 && st.l2FollowupRevealed && st.l2ExplanationAcknowledged));
+      (st.ledger.length === 2 && st.l2FollowupRevealed && st.l2ExplanationAcknowledged)) &&
+    (st.scenario !== "l3-prefix-builder" ||
+      (st.ledger.length === 4 && st.completedEventIds?.includes("reveal-r4-policy-check")));
   if (allDone && lessonComplete) {
     st.ended = { result: "win" };
   }
@@ -640,6 +766,21 @@ export function step(state: GameState, action: Action): GameState {
     }
     case "ADVANCE": {
       if (st.ended) break;
+      if (st.scenario === "l3-prefix-builder") {
+        if (action.min === 50 && st.clockMin === 0 && st.ledger.length === 3 && st.l3ExplanationAnswered) {
+          st.clockMin = 50;
+          if (st.l3Placement === "boot") {
+            const system = st.l3HandoffPrefix?.find((block) => block.kind === "system");
+            if (system) system.identityHash = "system-v2-reminder";
+          }
+        } else if (
+          action.min === 8 && st.clockMin === 50 && st.l3Placement === "followup" &&
+          st.completedTransferIds?.includes("l3-reapplied-history")
+        ) {
+          st.clockMin = 58;
+        }
+        break;
+      }
       if (st.scenario === "l2-beat-the-clock") {
         if (st.l2Profile !== "coffee" || st.ledger.length !== 1 || st.clockMin !== 0 || action.min !== 20) break;
       }
@@ -701,6 +842,76 @@ export function step(state: GameState, action: Action): GameState {
       if (st.scenario === "l2-beat-the-clock" && st.l2FollowupRevealed && action.correct) {
         st.l2ExplanationAcknowledged = true;
         checkEnd(st);
+      }
+      break;
+    }
+    case "COMMIT_L3_PREDICTION": {
+      if (st.scenario !== "l3-prefix-builder" || st.ended) break;
+      const expected = st.ledger.length === 0
+        ? "cold"
+        : st.ledger.length === 1
+          ? "repeat"
+          : st.ledger.length === 2 && st.l3Placement
+            ? "change"
+            : st.ledger.length === 3 && st.clockMin >= 50 &&
+                (st.l3Placement === "boot" || st.completedTransferIds?.includes("l3-reapplied-history"))
+              ? "handoff"
+              : null;
+      if (action.stage === expected) st.l3PredictionCommitted = action.stage;
+      break;
+    }
+    case "SEND_L3_REQUEST": {
+      if (st.scenario !== "l3-prefix-builder" || st.ended) break;
+      const expected = st.ledger.length === 0
+        ? "cold"
+        : st.ledger.length === 1
+          ? "repeat"
+          : st.ledger.length === 2
+            ? "change"
+            : "handoff";
+      const handoffReady = st.ledger.length !== 3 ||
+        (st.clockMin < 60 &&
+          (st.l3Placement === "boot" || st.completedTransferIds?.includes("l3-reapplied-history")));
+      if (st.l3PredictionCommitted === expected && handoffReady) {
+        sendL3Request(st);
+        checkEnd(st);
+      }
+      break;
+    }
+    case "SET_PREFIX_BLOCK_CONTENT": {
+      if (st.scenario !== "l3-prefix-builder" || st.ended) break;
+      if (action.contextId === "l3-main" && st.ledger.length === 2 && !st.l3Placement) {
+        const isBoot = action.blockId === "PB_SYSTEM_L3" &&
+          action.identityHash === "system-v2-reminder" && action.tokenCount === SYSTEM_BASE;
+        const isFollowup = action.blockId === "PB_HISTORY_L3" &&
+          action.identityHash === "history-v2-reminder" && action.tokenCount === L3_HISTORY_TOK;
+        if (!isBoot && !isFollowup) break;
+        const block = st.l3MainPrefix?.find((item) => item.id === action.blockId);
+        if (!block) break;
+        block.identityHash = action.identityHash;
+        st.l3Placement = isBoot ? "boot" : "followup";
+        st.l3FirstMismatchBlockId = action.blockId;
+        st.l3MatchedPrefixTok = isBoot ? 0 : L3_STABLE_BEFORE_HISTORY_TOK;
+        st.l3InvalidatedSuffixTok = isBoot ? L3_PREFIX_TOK : L3_HISTORY_TOK;
+        st.completedTransferIds?.push(isBoot ? "l3-edit-system" : "l3-edit-history");
+        st.completedTransferIds?.push(isBoot ? "l3-first-edit-system" : "l3-first-edit-history");
+      } else if (
+        action.contextId === "l3-handoff" && st.ledger.length === 3 && st.clockMin === 50 &&
+        st.l3Placement === "followup" && action.blockId === "PB_HISTORY_L3_HANDOFF" &&
+        action.identityHash === "history-v2-reminder" && action.tokenCount === L3_HISTORY_TOK &&
+        !st.completedTransferIds?.includes("l3-reapplied-history")
+      ) {
+        const block = st.l3HandoffPrefix?.find((item) => item.id === action.blockId);
+        if (!block) break;
+        block.identityHash = action.identityHash;
+        st.completedTransferIds?.push("l3-reapplied-history");
+      }
+      break;
+    }
+    case "ACK_L3_EXPLANATION": {
+      if (st.scenario === "l3-prefix-builder" && st.ledger.length === 3) {
+        st.l3ExplanationAnswered = true;
+        if (action.correct) st.l3ExplanationAcknowledged = true;
       }
       break;
     }
@@ -822,6 +1033,62 @@ export function runL2Standup(seed = 2002): GameState {
   st = step(st, { type: "SEND_L2_CHECK" });
   st = step(st, { type: "REVEAL_L2_FOLLOWUP" });
   st = step(st, { type: "ACK_L2_EXPLANATION", correct: true });
+  return st;
+}
+
+export const L3_CFG: Partial<Config> = {
+  orchestratorModel: "sonnet",
+  planModel: "sonnet",
+  devModel: "sonnet",
+  who: "inline",
+  prompts: "identical",
+  oneHourFlag: true,
+  keepWarm: false,
+  hook: "static",
+};
+
+export function initL3(seed = 34_738): GameState {
+  return initGame(seed, "session", L3_CFG, 60, "l3-prefix-builder");
+}
+
+function runL3Prelude(placement: "boot" | "followup", seed: number): GameState {
+  let st = initL3(seed);
+  st = step(st, { type: "COMMIT_L3_PREDICTION", stage: "cold" });
+  st = step(st, { type: "SEND_L3_REQUEST" });
+  st = step(st, { type: "COMMIT_L3_PREDICTION", stage: "repeat" });
+  st = step(st, { type: "SEND_L3_REQUEST" });
+  st = step(st, placement === "boot"
+    ? {
+        type: "SET_PREFIX_BLOCK_CONTENT", contextId: "l3-main", blockId: "PB_SYSTEM_L3",
+        identityHash: "system-v2-reminder", tokenCount: SYSTEM_BASE,
+      }
+    : {
+        type: "SET_PREFIX_BLOCK_CONTENT", contextId: "l3-main", blockId: "PB_HISTORY_L3",
+        identityHash: "history-v2-reminder", tokenCount: L3_HISTORY_TOK,
+      });
+  st = step(st, { type: "COMMIT_L3_PREDICTION", stage: "change" });
+  st = step(st, { type: "SEND_L3_REQUEST" });
+  st = step(st, { type: "ACK_L3_EXPLANATION", correct: true });
+  st = step(st, { type: "ADVANCE", min: 50 });
+  return st;
+}
+
+export function runL3Followup(seed = 34_738): GameState {
+  let st = runL3Prelude("followup", seed);
+  st = step(st, {
+    type: "SET_PREFIX_BLOCK_CONTENT", contextId: "l3-handoff", blockId: "PB_HISTORY_L3_HANDOFF",
+    identityHash: "history-v2-reminder", tokenCount: L3_HISTORY_TOK,
+  });
+  st = step(st, { type: "ADVANCE", min: 8 });
+  st = step(st, { type: "COMMIT_L3_PREDICTION", stage: "handoff" });
+  st = step(st, { type: "SEND_L3_REQUEST" });
+  return st;
+}
+
+export function runL3Boot(seed = 34_738): GameState {
+  let st = runL3Prelude("boot", seed);
+  st = step(st, { type: "COMMIT_L3_PREDICTION", stage: "handoff" });
+  st = step(st, { type: "SEND_L3_REQUEST" });
   return st;
 }
 

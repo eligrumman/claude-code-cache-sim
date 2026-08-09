@@ -61,6 +61,17 @@ export interface LedgerRow {
   usd: number;
 }
 
+// L3 keeps the authored prefix visible in reducer state so the placement
+// choice changes the actual matched/read and invalidated/write token buckets.
+export interface PrefixBlockState {
+  id: string;
+  kind: "system" | "tools" | "instructions" | "history" | "current";
+  label: string;
+  tokenCount: number;
+  identityHash: string;
+  cacheable: boolean;
+}
+
 // Silently accrued counters, surfaced only in the post-run report.
 export interface Counts {
   reviewRounds: number;
@@ -138,6 +149,19 @@ export interface GameState {
   l2PredictionCommitted?: boolean;
   l2FollowupRevealed?: boolean;
   l2ExplanationAcknowledged?: boolean;
+  // Redesigned L3's prefix stacks and evidence-bearing flow. Undefined for
+  // every other level so the established campaign state remains compatible.
+  l3MainPrefix?: PrefixBlockState[];
+  l3HandoffPrefix?: PrefixBlockState[];
+  l3Placement?: "boot" | "followup";
+  l3PredictionCommitted?: "cold" | "repeat" | "change" | "handoff";
+  l3FirstMismatchBlockId?: string | null;
+  l3MatchedPrefixTok?: number;
+  l3InvalidatedSuffixTok?: number;
+  l3ExplanationAnswered?: boolean;
+  l3ExplanationAcknowledged?: boolean;
+  completedEventIds?: string[];
+  completedTransferIds?: string[];
 }
 
 export type Action =
@@ -160,7 +184,17 @@ export type Action =
   | { type: "CHOOSE_L2_PROFILE"; profile: "coffee" | "standup" }
   | { type: "COMMIT_L2_PREDICTION" }
   | { type: "REVEAL_L2_FOLLOWUP" }
-  | { type: "ACK_L2_EXPLANATION"; correct: boolean };
+  | { type: "ACK_L2_EXPLANATION"; correct: boolean }
+  | { type: "COMMIT_L3_PREDICTION"; stage: "cold" | "repeat" | "change" | "handoff" }
+  | { type: "SEND_L3_REQUEST" }
+  | {
+      type: "SET_PREFIX_BLOCK_CONTENT";
+      contextId: "l3-main" | "l3-handoff";
+      blockId: string;
+      identityHash: string;
+      tokenCount: number;
+    }
+  | { type: "ACK_L3_EXPLANATION"; correct: boolean };
 
 // Save/replay format (Section 5.5): seed + action list only.
 export interface SaveFile {

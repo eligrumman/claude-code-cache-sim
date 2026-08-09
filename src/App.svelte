@@ -6,6 +6,7 @@
   import PlayScreen from "./components/PlayScreen.svelte";
   import L1PlayScreen from "./components/L1PlayScreen.svelte";
   import L2PlayScreen from "./components/L2PlayScreen.svelte";
+  import L3PlayScreen from "./components/L3PlayScreen.svelte";
   import ResultScreen from "./components/ResultScreen.svelte";
   import SessionStream from "./components/SessionStream.svelte";
   import {
@@ -34,16 +35,16 @@
     screen = toMap();
   }
   function goEnter(id: LevelId) {
-    // Redesigned L1/L2 teach through live requests, so they bypass the generic
+    // Redesigned L1-L3 teach through live requests, so they bypass the generic
     // A/B learn screen and open on their first playable action.
-    screen = id === "L1" || id === "L2" ? toPlay(id) : enterLevel(id);
+    screen = id === "L1" || id === "L2" || id === "L3" ? toPlay(id) : enterLevel(id);
   }
   function goPlay(id: LevelId) {
     screen = toPlay(id);
   }
   function goRetry(id: LevelId) {
     // Mirror goEnter: retrying either redesign restarts its dedicated flow.
-    screen = id === "L1" || id === "L2" ? toPlay(id) : retryLevel(id);
+    screen = id === "L1" || id === "L2" || id === "L3" ? toPlay(id) : retryLevel(id);
   }
   function goFreeplay() {
     // Section B.1: Free Play uses the current unlocked toolset. Use the
@@ -75,41 +76,49 @@
   {#if screen.id === "map"}
     <MapScreen {campaign} onenter={goEnter} onfreeplay={goFreeplay} />
   {:else if screen.id === "learn"}
-    <LearnScreen level={screen.level} onplay={() => goPlay(screen.level)} onback={goMap} />
+    {@const level = screen.level}
+    <LearnScreen {level} onplay={() => goPlay(level)} onback={goMap} />
   {:else if screen.id === "play"}
-    {@const def = LEVEL_BY_ID[screen.level]}
+    {@const level = screen.level}
+    {@const def = LEVEL_BY_ID[level]}
     <h1 style="margin:0 0 4px">{def.id} - {def.title}</h1>
-    {#if screen.level !== "L1" && screen.level !== "L2"}
+    {#if level !== "L1" && level !== "L2" && level !== "L3"}
       <p class="sub" style="margin-top:0">{def.objective}</p>
     {/if}
-    {#if screen.level === "L1"}
+    {#if level === "L1"}
       <L1PlayScreen
-        onfinish={(st, handCoded) => finishLevel(screen.level, st, handCoded)}
+        onfinish={(st, handCoded) => finishLevel(level, st, handCoded)}
         onabandon={goMap}
       />
-    {:else if screen.level === "L2"}
+    {:else if level === "L2"}
       <L2PlayScreen
         onfinish={(st, handCoded) => finishLevel("L2", st, handCoded)}
         onabandon={goMap}
       />
+    {:else if level === "L3"}
+      <L3PlayScreen
+        onfinish={(st, handCoded) => finishLevel("L3", st, handCoded)}
+        onabandon={goMap}
+      />
     {:else}
       <PlayScreen
-        level={screen.level}
+        {level}
         seed={def.seed}
         scope={def.scope}
         cfgOverride={def.cfgOverride}
         cfgLocked={def.cfgLocked || []}
         clockCapMin={def.clockCapMin}
-        onfinish={(st, handCoded) => finishLevel(screen.level, st, handCoded)}
+        onfinish={(st, handCoded) => finishLevel(level, st, handCoded)}
         onabandon={goMap}
       />
     {/if}
   {:else if screen.id === "result"}
+    {@const level = screen.level}
     <ResultScreen
-      level={screen.level}
+      {level}
       outcome={screen.outcome}
       onnext={goMap}
-      onretry={() => goRetry(screen.level)}
+      onretry={() => goRetry(level)}
       onmap={goMap}
     />
   {:else if screen.id === "freeplay"}

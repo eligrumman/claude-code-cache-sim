@@ -6,7 +6,10 @@ import { priceTable, RATE } from "../engine/pricing.js";
 import { mainBaseTok, subBaseTok } from "../engine/ledgers.js";
 import { simulateRequest } from "../engine/simulate.js";
 import { DEFAULT_CFG } from "../engine/constants.js";
-import { runScript, runL1Reference, runL1Anti, runL2Coffee, runL2Standup, totalSpent } from "./step.js";
+import {
+  runScript, runL1Reference, runL1Anti, runL2Coffee, runL2Standup,
+  runL3Followup, runL3Boot, totalSpent,
+} from "./step.js";
 import type { Config } from "../engine/types.js";
 
 const GOOD: Partial<Config> = {
@@ -81,6 +84,18 @@ export function bootAssert(): void {
     console.assert(l2standup.clockMin === 90, "L2 Standup finishes 20 min early");
     console.assert(l2coffee.ledger[1]?.readTok === 34738, "L2 Coffee follow-up reads live context");
     console.assert(l2standup.ledger[1]?.writeTok === 34738, "L2 Standup follow-up rewrites expired context");
+
+    // Redesigned L3 prices partial-prefix reuse through canonical rates while
+    // preserving a real spend-versus-handoff-time choice.
+    const l3followup = runL3Followup();
+    const l3boot = runL3Boot();
+    eq(totalSpent(l3followup), 2.3500653, "L3 FOLLOW-UP spend");
+    eq(totalSpent(l3boot), 2.4734988, "L3 BOOT PATCH spend");
+    console.assert(l3followup.ledger[2]?.readTok === 21655, "L3 FOLLOW-UP keeps the stable front");
+    console.assert(l3followup.ledger[2]?.writeTok === 13083, "L3 FOLLOW-UP rewrites HISTORY");
+    console.assert(l3boot.ledger[2]?.writeTok === 34738, "L3 BOOT PATCH rewrites the cached front");
+    console.assert(l3followup.clockMin === 58, "L3 FOLLOW-UP completes at minute 58");
+    console.assert(l3boot.clockMin === 50, "L3 BOOT PATCH completes at minute 50");
 
     console.log(
       "%c[Simulator] boot assertions " + (ok ? "PASSED" : "FAILED"),

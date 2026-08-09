@@ -14,6 +14,9 @@ import {
   initL2,
   runL2Coffee,
   runL2Standup,
+  initL3,
+  runL3Followup,
+  runL3Boot,
 } from "./step.js";
 import type { Action, SaveFile } from "./types.js";
 import type { Config } from "../engine/types.js";
@@ -291,5 +294,90 @@ describe("redesigned L2: idle expiry schedule tradeoff", () => {
     expect(st.ended).toBeNull();
     st = step(st, { type: "ACK_L2_EXPLANATION", correct: true });
     expect(st.ended).toEqual({ result: "win" });
+  });
+});
+
+describe("redesigned L3: first-mismatch prefix tradeoff", () => {
+  it("seeds the canonical five-block stack and gates every request behind prediction", () => {
+    let st = initL3();
+    expect(st.l3MainPrefix?.map((block) => block.label)).toEqual([
+      "SYSTEM", "TOOLS", "INSTRUCTIONS", "HISTORY", "CURRENT",
+    ]);
+    expect(st.l3MainPrefix?.map((block) => block.tokenCount)).toEqual([
+      2_750, 16_295, 2_610, 13_083, 6_000,
+    ]);
+    st = step(st, { type: "SEND_L3_REQUEST" });
+    expect(st.ledger).toHaveLength(0);
+    const before = JSON.stringify({ wallet: st.wallet, clockMin: st.clockMin, ledger: st.ledger });
+    st = step(st, { type: "COMMIT_L3_PREDICTION", stage: "cold" });
+    expect(JSON.stringify({ wallet: st.wallet, clockMin: st.clockMin, ledger: st.ledger })).toBe(before);
+    st = step(st, { type: "SEND_L3_REQUEST" });
+    expect(st.ledger).toHaveLength(1);
+    expect(st.ledger[0]).toMatchObject({
+      unitId: "R1_COLD", readTok: 0, writeTok: 34_738, inputTok: 6_000, outTok: 44_000,
+    });
+    expect(st.ledger[0].usd).toBeCloseTo(0.886428, 12);
+  });
+
+  it("FOLLOW-UP preserves 21,655 tokens, spends least, and finishes at minute 58", () => {
+    const st = runL3Followup();
+    expect(st.l3Placement).toBe("followup");
+    expect(st.ledger).toHaveLength(4);
+    expect(st.ledger[1]).toMatchObject({
+      unitId: "R2_IDENTICAL", readTok: 34_738, writeTok: 0, inputTok: 6_000, outTok: 44_000,
+    });
+    expect(st.ledger[1].usd).toBeCloseTo(0.6884214, 12);
+    expect(st.ledger[2]).toMatchObject({
+      unitId: "R3_LATE_CHANGE", readTok: 21_655, writeTok: 13_083, inputTok: 6_000, outTok: 44_000,
+    });
+    expect(st.ledger[2].usd).toBeCloseTo(0.7629945, 12);
+    expect(st.ledger[3]).toMatchObject({
+      unitId: "R4_HISTORY_REAPPLIED", readTok: 34_738, writeTok: 0, inputTok: 100, outTok: 100,
+    });
+    expect(st.ledger[3].usd).toBeCloseTo(0.0122214, 12);
+    expect(totalSpent(st)).toBeCloseTo(2.3500653, 12);
+    expect(st.wallet).toBeCloseTo(0.1499347, 12);
+    expect(st.clockMin).toBe(58);
+    expect(st.completedTransferIds).toContain("l3-reapplied-history");
+    expect(st.ended).toEqual({ result: "win" });
+  });
+
+  it("BOOT PATCH rewrites the full cached front but persists into the minute-50 handoff", () => {
+    const st = runL3Boot();
+    expect(st.l3Placement).toBe("boot");
+    expect(st.ledger[2]).toMatchObject({
+      unitId: "R3_EARLY_CHANGE", readTok: 0, writeTok: 34_738, inputTok: 6_000, outTok: 44_000,
+    });
+    expect(st.ledger[2].usd).toBeCloseTo(0.886428, 12);
+    expect(st.ledger[3]).toMatchObject({
+      unitId: "R4_BOOT_PERSISTED", readTok: 34_738, writeTok: 0, inputTok: 100, outTok: 100,
+    });
+    expect(totalSpent(st)).toBeCloseTo(2.4734988, 12);
+    expect(st.wallet).toBeCloseTo(0.0265012, 12);
+    expect(st.clockMin).toBe(50);
+    expect(st.l3HandoffPrefix?.find((block) => block.kind === "system")?.identityHash)
+      .toBe("system-v2-reminder");
+    expect(st.completedTransferIds).toContain("l3-persisted-policy-read");
+    expect(st.ended).toEqual({ result: "win" });
+  });
+
+  it("records the real first mismatch and cannot switch placement after choosing", () => {
+    let st = initL3();
+    for (const stage of ["cold", "repeat"] as const) {
+      st = step(st, { type: "COMMIT_L3_PREDICTION", stage });
+      st = step(st, { type: "SEND_L3_REQUEST" });
+    }
+    st = step(st, {
+      type: "SET_PREFIX_BLOCK_CONTENT", contextId: "l3-main", blockId: "PB_HISTORY_L3",
+      identityHash: "history-v2-reminder", tokenCount: 13_083,
+    });
+    st = step(st, {
+      type: "SET_PREFIX_BLOCK_CONTENT", contextId: "l3-main", blockId: "PB_SYSTEM_L3",
+      identityHash: "system-v2-reminder", tokenCount: 2_750,
+    });
+    expect(st.l3Placement).toBe("followup");
+    expect(st.l3FirstMismatchBlockId).toBe("PB_HISTORY_L3");
+    expect(st.l3MatchedPrefixTok).toBe(21_655);
+    expect(st.l3InvalidatedSuffixTok).toBe(13_083);
   });
 });

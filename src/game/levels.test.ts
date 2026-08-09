@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { runScript, runL1Reference, runL1Anti, runL2Coffee, runL2Standup, totalSpent } from "./step.js";
+import {
+  runScript, runL1Reference, runL1Anti, runL2Coffee, runL2Standup,
+  runL3Followup, runL3Boot, totalSpent,
+} from "./step.js";
 import {
   LEVELS,
   LEVEL_ORDER,
@@ -81,6 +84,18 @@ describe("ledger-verified gates use real numbers, not cosmetics", () => {
     expect(totalSpent(standup)).toBeCloseTo(0.416856, 12);
   });
 
+  it("L3 gate accepts both consistent placement handoffs and rejects unrelated runs", () => {
+    const followup = runL3Followup();
+    const boot = runL3Boot();
+    const unrelated = runScript(3, "session", {}, true);
+    const l3 = LEVEL_BY_ID.L3;
+    expect(l3.pass(followup).pass).toBe(true);
+    expect(l3.pass(boot).pass).toBe(true);
+    expect(l3.pass(unrelated).pass).toBe(false);
+    expect(totalSpent(followup)).toBeCloseTo(2.3500653, 12);
+    expect(totalSpent(boot)).toBeCloseTo(2.4734988, 12);
+  });
+
   it("L5 gate checks subagent cache-write total against the 35,000 tok ceiling (C10/C11)", () => {
     const identical = runScript(5, "session", { who: "subagent", prompts: "identical", width: 8 }, true);
     const varied = runScript(5, "session", { who: "subagent", prompts: "varied", width: 8 }, true);
@@ -140,6 +155,12 @@ describe("stars", () => {
     const l2 = LEVEL_BY_ID.L2;
     expect(starsFor(l2, runL2Coffee(), 0)).toBe(3);
     expect(starsFor(l2, runL2Standup(), 0)).toBe(3);
+  });
+
+  it("both L3 placements earn three stars through spend or handoff-time benefit", () => {
+    const l3 = LEVEL_BY_ID.L3;
+    expect(starsFor(l3, runL3Followup(), 0)).toBe(3);
+    expect(starsFor(l3, runL3Boot(), 0)).toBe(3);
   });
 });
 

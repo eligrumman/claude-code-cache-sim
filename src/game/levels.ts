@@ -8,7 +8,7 @@
 
 import type { Config, Model } from "../engine/types.js";
 import type { GameState, HiddenCosts, Scope } from "./types.js";
-import { runScript, L1_CFG, L2_CFG } from "./step.js";
+import { runScript, L1_CFG, L2_CFG, L3_CFG } from "./step.js";
 
 export type LevelId =
   | "L1" | "L2" | "L3" | "L4" | "L5" | "L6"
@@ -16,14 +16,15 @@ export type LevelId =
   | "L12" | "L13";
 
 export type ToolId =
-  | "run" | "devModel" | "planModel" | "who" | "prompts" | "width"
+  | "run" | "devModel" | "prefix" | "planModel" | "who" | "prompts" | "width"
   | "oneHourFlag" | "keepWarm" | "hook" | "skills" | "mcp" | "fleet" | "audit";
 
 // GAME_PLAN.md Section F - stable config-strip control ids (superset of ToolId:
 // a few ToolIds fan out into multiple controls, e.g. L10 unlocks "skills" but
-// reveals skills+skillsMode+memoryFiles; L3 reveals planModel+orchestratorModel).
+// reveals skills+skillsMode+memoryFiles; L3 uses its dedicated prefix control).
 export type ControlId =
   | "run" | "handCode"
+  | "prefixBlocks"
   | "devModel" | "planModel" | "orchestratorModel"
   | "who" | "prompts" | "width"
   | "keepWarm" | "keepWarmMin" | "stepAway"
@@ -37,7 +38,7 @@ export type ControlId =
 export type ScenarioId =
   | "default" | "dev-only" | "dev-marathon" | "fanout8" | "fanout8-slow"
   | "gaps" | "two-halves" | "week7starts" | "spawn12" | "mcp-required"
-  | "l1-onboarding" | "l1-red-or-blue" | "l2-beat-the-clock";
+  | "l1-onboarding" | "l1-red-or-blue" | "l2-beat-the-clock" | "l3-prefix-builder";
 
 // GAME_PLAN.md Section C.3 - the scripted LEARN replay (without-tool vs with-tool).
 export interface LearnBeat {
@@ -211,33 +212,67 @@ export const LEVELS: LevelDef[] = [
   {
     id: "L3",
     tier: 1,
-    title: "The Planner's Paradox",
-    objective: "Pick the plan model that avoids costly review/CI rework.",
-    unlocks: "planModel",
-    introducedControls: ["planModel", "orchestratorModel"],
-    teaches: "cheap plan looks cheaper, costs more in rework (Section 3.4)",
+    title: "The Reminder",
+    objective: "Handle a reminder now and in one scheduled handoff.",
+    unlocks: "prefix",
+    introducedControls: ["prefixBlocks"],
+    teaches: "The cache reuses the unchanged prefix; the first changed block makes its cached suffix rewrite.",
     scope: "session",
-    seed: 3,
-    budgetUsd: 6.5,
-    cfgOverride: {},
-    scenario: "default",
+    seed: 34_738,
+    budgetUsd: 2.50,
+    clockCapMin: 60,
+    cfgOverride: L3_CFG,
+    cfgLocked: [
+      "orchestratorModel", "planModel", "devModel", "who", "prompts", "width",
+      "oneHourFlag", "keepWarm", "keepWarmMin", "hook", "skills", "skillsMode",
+      "memoryFiles", "mcp",
+    ],
+    scenario: "l3-prefix-builder",
     learn: {
       copy: [
-        "The plan bill looks small - but a weak plan means more review rounds.",
-        "Rework is where the real dollars hide.",
+        "L3 teaches through four live requests and one reminder-placement choice.",
       ],
-      withoutCfg: { planModel: "sonnet" },
-      withCfg: { planModel: "fable", devModel: "sonnet" },
+      withoutCfg: L3_CFG,
+      withCfg: L3_CFG,
       scope: "session",
-      seed: 3,
-      chip: (a, b) => `the cheap-looking plan bill hides rework: $${spentUsd(a).toFixed(2)} vs $${spentUsd(b).toFixed(2)}`,
+      seed: 34_738,
+      chip: () => "",
     },
-    referenceCfg: { planModel: "fable", devModel: "sonnet" },
-    antiCfg: { planModel: "sonnet" },
-    failLesson: { bucket: "reworkUsd", cite: "Section 3.4", line: "rework attributable to plan model" },
+    referenceCfg: L3_CFG,
+    antiCfg: L3_CFG,
+    failLesson: {
+      bucket: "none",
+      cite: "C8/C9",
+      line: "Both placements are valid: one spends less, while the other carries the instruction into the handoff without delay.",
+    },
+    star2: (st) => st.l3ExplanationAcknowledged === true,
+    star3: (st) => {
+      const spent = spentUsd(st);
+      return st.l3ExplanationAcknowledged === true &&
+        ((st.l3Placement === "followup" && spent <= 2.3500653 + 1e-12 && st.clockMin <= 58) ||
+          (st.l3Placement === "boot" && spent <= 2.4734988 + 1e-12 && st.clockMin <= 50));
+    },
     pass: (st) => {
-      const ok = spentUsd(st) <= 6.5 && st.counts.reviewRounds <= 1;
-      return { pass: ok, reason: `spent $${spentUsd(st).toFixed(2)} / $6.50, reviewRounds=${st.counts.reviewRounds} (need <=1)` };
+      const r3 = st.ledger[2];
+      const r4 = st.ledger[3];
+      const events = st.completedEventIds ?? [];
+      const transfers = st.completedTransferIds ?? [];
+      const boot = st.l3Placement === "boot" && transfers.includes("l3-edit-system") &&
+        transfers.includes("l3-persisted-policy-read") && r3?.unitId === "R3_EARLY_CHANGE" &&
+        r3.readTok === 0 && r3.writeTok === 34_738 && r4?.unitId === "R4_BOOT_PERSISTED";
+      const followup = st.l3Placement === "followup" && transfers.includes("l3-edit-history") &&
+        transfers.includes("l3-reapplied-history") && r3?.unitId === "R3_LATE_CHANGE" &&
+        r3.readTok === 21_655 && r3.writeTok === 13_083 && r4?.unitId === "R4_HISTORY_REAPPLIED";
+      const handoffExact = r4?.readTok === 34_738 && r4.writeTok === 0 &&
+        r4.inputTok === 100 && r4.outTok === 100;
+      const ok = events.includes("reveal-r2-identical") && events.includes("reveal-r3-placement") &&
+        events.includes("reveal-r4-policy-check") && handoffExact && (boot || followup);
+      return {
+        pass: ok,
+        reason: ok
+          ? "The selected placement produced its request boundary and completed the later-session handoff."
+          : "Complete one consistent placement profile and its handoff verification.",
+      };
     },
   },
   {

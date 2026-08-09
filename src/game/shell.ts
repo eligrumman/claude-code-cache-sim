@@ -3,7 +3,7 @@
 // shell never mutates GameState directly - it only calls into levels.ts /
 // step.ts (initGame, runScript, completeLevel) which already own that.
 
-import type { LevelId, ToolId } from "./levels.js";
+import type { ControlId, LevelId } from "./levels.js";
 import { newCampaign, type CampaignState } from "./levels.js";
 import type { GameState } from "./types.js";
 
@@ -12,7 +12,7 @@ export type Screen =
   | { id: "learn"; level: LevelId }
   | { id: "play"; level: LevelId }
   | { id: "result"; level: LevelId; outcome: LevelOutcome }
-  | { id: "freeplay"; toolset: ToolId[] };
+  | { id: "freeplay"; toolset: ControlId[] };
 
 export interface LevelOutcome {
   pass: boolean;
@@ -41,7 +41,7 @@ export function toResult(id: LevelId, outcome: LevelOutcome): Screen {
   return { id: "result", level: id, outcome };
 }
 
-export function toFreeplay(toolset: ToolId[]): Screen {
+export function toFreeplay(toolset: ControlId[]): Screen {
   return { id: "freeplay", toolset };
 }
 

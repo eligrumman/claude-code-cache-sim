@@ -38,6 +38,12 @@
           ? "Coffee finished at minute 110 and saved $0.1980066 versus Standup."
           : "Standup finished at minute 90 with 20 min of release-deadline slack."}
       </p>
+    {:else if level === "L3"}
+      <p class="msg chip">
+        {outcome.finalState.l3Placement === "followup"
+          ? "FOLLOW-UP spent $2.3500653 and completed at minute 58. BOOT PATCH would finish 8 minutes earlier."
+          : "BOOT PATCH spent $2.4734988 and completed at minute 50. FOLLOW-UP would save $0.1234335."}
+      </p>
     {/if}
     <p class="sub">{def.teaches}</p>
 

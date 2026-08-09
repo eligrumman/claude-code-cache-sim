@@ -173,3 +173,55 @@ describe("redesigned L2 live flow", () => {
     expect(screen.getByText(/20 min of release-deadline slack/)).toBeInTheDocument();
   });
 });
+
+async function enterUnlockedL3() {
+  await enterUnlockedL2();
+  await click("Run check");
+  await click("Standup · 90 min · blocker first");
+  await fireEvent.click(screen.getByLabelText("Red — write"));
+  await click("Lock prediction");
+  await click("Send identical check");
+  await click("Only the idle gap changed whether the saved entry was still live.");
+  await click("Back to map");
+  await click("L3");
+}
+
+describe("redesigned L3 live flow", () => {
+  it("opens on the canonical stack with token counts and prefix answers still hidden", async () => {
+    render(App);
+    await enterUnlockedL3();
+    expect(screen.getByText("Five blocks. One request.")).toBeInTheDocument();
+    expect(screen.getByText("Nothing has been sent yet.")).toBeInTheDocument();
+    expect(screen.getByText("SYSTEM")).toBeInTheDocument();
+    expect(screen.getByText("HISTORY")).toBeInTheDocument();
+    expect(screen.queryByText("34,738 tok")).not.toBeInTheDocument();
+    expect(screen.getByText(/What will the first send do/)).toBeInTheDocument();
+  });
+
+  it("FOLLOW-UP exposes the partial-prefix bill and completes the real minute-58 handoff", async () => {
+    render(App);
+    await enterUnlockedL3();
+    await fireEvent.click(screen.getByLabelText("Write them for later"));
+    await click("Lock prediction");
+    await click("Send request");
+    expect(screen.getAllByText("$0.8864280").length).toBeGreaterThan(0);
+    await fireEvent.click(screen.getByLabelText("Through HISTORY; CURRENT stays fresh"));
+    await click("Lock prediction");
+    await click("Send identical request");
+    expect(screen.getAllByText("$0.6884214").length).toBeGreaterThan(0);
+    await click("FOLLOW-UP");
+    await fireEvent.click(screen.getByLabelText("Reread the first three; rewrite HISTORY"));
+    await click("Lock prediction");
+    await click("Send request");
+    expect(screen.getByText(/21,655 reread · 13,083 rewritten · \$0\.7629945/)).toBeInTheDocument();
+    await click("The first changed block ended reuse; its cached tail was rewritten.");
+    await click("Open scheduled handoff · minute 50");
+    await click("Reapply FOLLOW-UP · 8 min");
+    expect(screen.getByText("Handoff ready · minute 58")).toBeInTheDocument();
+    await fireEvent.click(screen.getByLabelText("Reread the four front blocks; keep CURRENT fresh"));
+    await click("Lock prediction");
+    await click("Verify handoff");
+    expect(screen.getByText(/Passed - ★★★/)).toBeInTheDocument();
+    expect(screen.getByText(/spent \$2\.3500653 and completed at minute 58/)).toBeInTheDocument();
+  });
+});
