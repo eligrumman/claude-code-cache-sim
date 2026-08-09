@@ -5,11 +5,11 @@
 - **id:** `10-plan-once-pay-later`
 - **title:** Plan Once, Pay Later
 - **tier:** 2
-- **ONE concept:** Planning depth changes the amount of downstream review and CI rework.
-- **Prerequisites:** model/workload cost decomposition; pipeline causality.
-- **Objective copy:** “Ship the change. Choose how much planning time to buy before the pipeline starts.”
-- **Introduced control:** `CHOOSE_PLAN_DEPTH`.
-- All plan-quality effects and downstream branch counts are calibrated **[FICTION]**. Token prices remain exact under `PRICE_REQUEST`.
+- **ONE concept:** `plan-depth-downstream-cost` — planning depth trades a visible planning cost against ticket-dependent downstream rework.
+- **Prerequisite concept:** `workload-cost-mix`
+- **Objective copy:** “Ship the change. Choose how much planning to buy before the pipeline starts.”
+- **Introduced control:** `planDepth`, dispatching `CHOOSE_PLAN_DEPTH`.
+- Plan-output sizes and repair incidence are calibrated **[FICTION]**. Cache and token prices use `PRICE_REQUEST` and the canonical `C1`/`C3` rates.
 
 ## 2. Objects used
 
@@ -17,6 +17,7 @@
 - `ReducerState`
 - `Request`
 - `PricedRequest`
+- `CacheEntry`
 - `MAIN_SESSION_CONTEXT`
 - `PREFIX_STACK`
 - `LedgerRow`
@@ -24,19 +25,25 @@
 - `Wallet`
 - `Budget`
 - `Clock`
-- `TapeRenderer`
-- `PredictionPromptWidget`
+- `Checkpoint`
+- `PRICE_REQUEST`
+- `RESOLVE_PREFIX`
+- `UI_TAPE_RENDERER`
+- `UI_MAIN_CACHE_PANEL`
+- `UI_HOVER_PRICE_CALCULATOR`
+- `UI_PREDICTION_PROMPT`
+- `UI_COUNTERFACTUAL_OVERLAY`
 - `UI_REWIND_CONTROL`
 - `UI_RESULT_SCREEN`
-- `PRICE_REQUEST`
-- `PATTERN_PREDICT_BEFORE_REVEAL`
-- `PATTERN_FAIL_FREEZE_REWIND`
-- `PATTERN_COUNTERFACTUAL_AFTER_ATTEMPT`
-- `JUST_IN_TIME_TOAST`
+- `UI_TOAST_SYSTEM`
+- `predict-before-reveal`
+- `fail-freeze-rewind`
+- `counterfactual-after-attempt`
+- `just-in-time-toast`
 
 ## 3. Cold-open / narrative
 
-The screen initially shows one ticket and a closed pipeline. No future branch counts, reference totals, failure labels, or comparative hints appear.
+The opening shows one ticket, an empty ledger, the main-cache panel, and a closed pipeline. No repair count, branch label, total, preferred depth, reference result, or transfer answer is visible.
 
 Ticket copy:
 
@@ -46,79 +53,113 @@ Ticket copy:
 
 First interaction timing:
 
-- **0.0s:** Ticket drops onto the desk. Wallet reads **$5.00**.
-- **0.7s:** Three face-down plan cards fan out: **Quick sketch**, **Working plan**, **Deep plan**.
-- **1.2s:** Caption appears: “How much planning do you buy before anyone touches the code?”
-- **1.8s:** Cards become clickable.
-- **On hover:** Show only plan token volume and its own projected cost:
-  - Quick sketch — `6,000 input + 2,000 output` — **$0.080**
-  - Working plan — `6,000 input + 8,000 output` — **$0.230**
-  - Deep plan — `6,000 input + 14,000 output` — **$0.380**
-- **Never pre-play:** downstream unit counts, total estimates, “best” badge, quality score, or branch preview.
-- **On selection:** button copy becomes **Lock plan and run**.
+- **0.0s `[ESTIMATE]`:** Ticket lands. Wallet reads **$5.00 `[FICTION]`**.
+- **0.7s `[ESTIMATE]`:** Three face-down cards appear: **Quick sketch**, **Working plan**, **Exhaustive plan**.
+- **1.2s `[ESTIMATE]`:** Caption: “How much planning do you buy before anyone touches the code?”
+- **1.8s `[ESTIMATE]`:** Cards become clickable.
+- **On hover:** `UI_HOVER_PRICE_CALCULATOR` exposes only the selected plan request:
+  - Quick sketch — `6,000`-token 1h prefix write + `2,000` output — **$0.066**
+  - Working plan — `6,000`-token 1h prefix write + `8,000` output — **$0.156**
+  - Exhaustive plan — `6,000`-token 1h prefix write + `80,000` output — **$1.236**
+- **Never pre-play:** repair incidence, completed totals, “best” badges, downstream previews, or reference comparisons.
+- **After selection:** primary button reads **Lock plan and run**.
+
+The large visible exhaustive-plan price establishes the other side of the decision without revealing whether its additional planning will pay back on this ticket.
 
 ## 4. Exact event sequence
 
-All downstream branch counts below are deterministic calibrated **[FICTION]** attached to the selected plan depth.
+All selected-depth repair counts are deterministic calibrated **[FICTION]**. Every request uses the same Sonnet `MAIN_SESSION_CONTEXT`, cache namespace, and byte-identical `6,000`-token stable ticket/planning prefix (`WORK_IN`, `C28`). Requests occur at consecutive simulated minutes, so the 1h entry remains live; each read refreshes it under `C12`.
 
 1. **Enter level**  
-   Event: route opens level → `ENTER_LEVEL { levelId: "10-plan-once-pay-later" }` → initializes `ReducerState`, `Wallet`, `Budget`, `Clock`, empty ledger/tape, attempt `1`, and `Checkpoint` `cp-plan-choice` → wallet **$5.000**, clock **0m**.
+   Route opens → `ENTER_LEVEL { levelId: "10-plan-once-pay-later" }` → initializes `ReducerState`, `$5.00` `Wallet`/`Budget` `[FICTION]`, `Clock` at `0m`, empty ledger, empty cache, attempt `1`, and the level-start checkpoint.
 
-2. **Create decision boundary**  
-   Event: cards settle → `CREATE_CHECKPOINT { checkpointId: "cp-plan-choice", reason: "decision" }` → mutates `checkpoints` only → no cost.
+2. **Create the decision boundary**  
+   Cards settle → `CREATE_CHECKPOINT { checkpointId: "cp-plan-choice", reason: "decision" }` → appends `Checkpoint` only; no request or cost.
 
-3. **Choose hidden branch**  
-   Event: player selects a card → `CHOOSE_PLAN_DEPTH { depth }` → mutates selected scenario branch only → no request and no cost.
+3. **Choose a hidden branch**  
+   Card click → `CHOOSE_PLAN_DEPTH { depth }` → records `shallow`, `balanced`, or `deep`; no `Request`, `LedgerRow`, cache mutation, or wallet mutation.
 
-4. **Run planning request**  
-   Event: player clicks **Lock plan and run** → `RUN_UNIT { unitId: "plan" }` → appends one `LedgerRow`, deducts `Wallet`, advances pipeline:
-   - `shallow`: Opus, `6,000 input / 2,000 output`, **$0.080**
-   - `balanced`: Opus, `6,000 input / 8,000 output`, **$0.230**
-   - `deep`: Opus, `6,000 input / 14,000 output`, **$0.380**
+4. **Run the plan and create reusable state**  
+   **Lock plan and run** → `RUN_UNIT { unitId: "plan" }` → `RESOLVE_PREFIX` writes the stable `6,000`-token prefix to a 1h `CacheEntry`; the request has `readTok: 0`, `inputTok: 0`, `writeTok: 6_000`, and branch-specific `outTok`:
+   - `shallow`: `2,000` output → **$0.066**
+   - `balanced`: `8,000` output → **$0.156**
+   - `deep`: `80,000` output → **$1.236**
 
-5. **Run fixed build spine**  
-   Event: pipeline advances through three builds → three ordered actions:
+   The action appends one `LedgerRow`, deducts the exact price from `Wallet`, sets `lastRequests` to that row, and renders the write and output `WireSegment`s.
+
+5. **Run the fixed build spine through the cache**  
+   Three ordered actions execute:
    - `RUN_UNIT { unitId: "build-tax-core" }`
    - `RUN_UNIT { unitId: "build-refund-path" }`
-   - `RUN_UNIT { unitId: "build-region-tests" }`  
-   Each mutates ledger, tape, wallet, counts, `lastRequests`, and unit status with one Sonnet request of `6,000 input / 44,000 output`, **$0.678** each (`WORK_IN`, `WORK_OUT`, `C28`); fixed build subtotal **$2.034**.
+   - `RUN_UNIT { unitId: "build-region-tests" }`
 
-6. **Commit prediction before branches turn over**  
-   Event: pipeline reaches face-down **REVIEW** and **CI** nodes → `OPEN_PREDICTION { promptId: "p-branch-count" }` → phase becomes `predict`; reveal is blocked.  
-   Player choice → `SELECT_PREDICTION` → `COMMIT_PREDICTION`.
+   Each request has Sonnet `readTok: 6_000`, `inputTok: 6_000`, `writeTok: 0`, and `outTok: 44_000`. Each costs **$0.6798**; the three-build subtotal is **$2.0394**. Each read touches the live entry. Each action appends exactly one ledger/tape row and updates wallet, counts, unit status, cache liveness, and `lastRequests`.
 
-7. **Reveal branch count**  
-   Event: cards turn over → `REVEAL_PREDICTION { promptId: "p-branch-count", correctOptionId }` → records correctness and reveals only the selected branch:
-   - `shallow`: **2 review repairs + 2 CI repairs**
-   - `balanced`: **1 review repair**
-   - `deep`: **0 repairs**  
-   Each count is visibly labeled **“calibrated FICTION for this teaching scenario.”**
+6. **Commit a prediction before downstream revelation**  
+   After `build-region-tests`, REVIEW and CI remain face-down → `OPEN_PREDICTION { promptId: "p-branch-count" }`.  
+   Player selection → `SELECT_PREDICTION`; lock → `COMMIT_PREDICTION`.  
+   Correctness changes no score, stars, wallet, failure rule, or gate state.
 
-8. **Run each causal repair**  
-   Event: revealed repair node enters the runner → one `RUN_UNIT` per node → each adds exactly one Sonnet `LedgerRow` of `6,000 input / 44,000 output`, **$0.678** (`C28`):
+7. **Reveal only the chosen branch**  
+   `REVEAL_PREDICTION { promptId: "p-branch-count", correctOptionId }` reveals:
+   - `shallow`: two review repairs and two CI repairs;
+   - `balanced`: one review repair;
+   - `deep`: no repair requests.
+
+   The reveal carries: **“Repair incidence is calibrated FICTION for this ticket.”** Unchosen branch outcomes remain hidden.
+
+8. **Run each revealed causal repair**  
+   Each repair executes via one `RUN_UNIT`, producing one Sonnet request with the same authoritative `6,000` read, `6,000` fresh input, `44,000` output, and **$0.6798** cost:
    - `shallow`:
-     1. `review-tax-boundary` — cause label: **Quick sketch omitted tax ownership**
-     2. `review-refund-contract` — cause label: **Quick sketch omitted refund contract**
-     3. `ci-rounding-fixture` — cause label: **Review repair changed rounding behavior**
-     4. `ci-refund-regression` — cause label: **Review repair changed refund behavior**
+     1. `review-tax-boundary` — **Quick sketch omitted tax ownership**
+     2. `review-refund-contract` — **Quick sketch omitted the refund contract**
+     3. `ci-rounding-fixture` — **Review repair changed rounding behavior**
+     4. `ci-refund-regression` — **Review repair changed refund behavior**
    - `balanced`:
-     1. `review-rounding-clarification` — cause label: **Working plan left one rounding rule unresolved**
-   - `deep`: none.
+     1. `review-rounding-clarification` — **Working plan left one rounding rule unresolved**
+   - `deep`: no repair units.
 
-9. **Decisive fail-freeze on shallow path**  
-   Event: `ci-refund-regression` posts its ledger row → `FREEZE_FAILURE` with `failureId: "shallow-rework-chain"`, `causeCode: "PLAN_DEPTH_REWORK"`, checkpoint `cp-plan-choice` → freezes `Clock`, wallet, economic actions, and tape on the fourth repair at **$4.826 total**. The selected plan row and all four descendant repairs remain connected by a highlighted causal line.
+9. **Freeze the economically losing shallow route**  
+   When `ci-refund-regression` resolves, its row raises the selected route to **$4.8246** → `FREEZE_FAILURE` with:
+   - `failureId: "shallow-rework-chain"`
+   - `causeCode: "PLAN_DEPTH_REWORK"`
+   - `checkpointId: "cp-plan-choice"`
+   - `actualUsd: 4.8246`
+   - `validAlternativeUsd: 2.8752`
 
-10. **Second attempt on evidence**  
-    Event: player clicks **Try another plan** → `REWIND_TO_CHECKPOINT { checkpointId: "cp-plan-choice" }` → deterministic replay to the choice boundary, retains attempt count/history evidence, clears frozen state and attempt-local ledger rows. The previously chosen card shows its observed total; untried cards still reveal only their plan-line cost.
+   The visible repair subtotal is **$2.7192**, which is **2.32×** the largest exposed plan premium, **$1.1700**. The actual shallow route is **67.8% `[FICTION]`** more expensive than the valid balanced route. `Clock`, wallet, tape, and economic actions freeze on the decisive fourth repair.
 
-11. **Complete a non-shallow run**  
-    Event: balanced or deep branch finishes → `COMPLETE_ATTEMPT` → evaluates behavioral gate and stars, then unlocks result comparison.
+10. **Retry from retained evidence**  
+    **Try another plan** → `REWIND_TO_CHECKPOINT { checkpointId: "cp-plan-choice" }` → deterministic replay to the decision boundary. Frozen state and attempt-local ledger/cache rows clear; attempt count and observed evidence persist. The tried card shows its observed repair count and total. Untried downstream results remain hidden.
 
-12. **Post-attempt counterfactual**  
-    Event: player clicks **Compare all three** → `REQUEST_COUNTERFACTUAL { comparisonId: "plan-depth-bill" }`, then `REVEAL_COUNTERFACTUAL` → displays all three totals using the same seed and fixed build spine:
-    - Quick sketch: **$4.826**
-    - Working plan: **$2.942**
-    - Deep plan: **$2.414**
+11. **Complete a valid checkout attempt**  
+    A `balanced` or `deep` branch reaches the end → `COMPLETE_ATTEMPT`. The completed ledger persists. This unlocks, but does not reveal, the comparison.
+
+12. **Predict the comparison**  
+    `OPEN_PREDICTION { promptId: "p-largest-bill" }` opens before any alternate total appears. Selection and commitment use `SELECT_PREDICTION` and `COMMIT_PREDICTION`; correctness remains non-punitive.
+
+13. **Reveal the same-seed counterfactuals**  
+    Commitment enables `REQUEST_COUNTERFACTUAL { comparisonId: "plan-depth-bill" }`; the same seed and fixed build spine run off-screen. `REVEAL_COUNTERFACTUAL { comparisonId: "plan-depth-bill" }` then displays:
+    - Quick sketch: **$4.8246**
+    - Working plan: **$2.8752**
+    - Exhaustive plan: **$3.2754**
+
+    The reveal explains that working depth wins this ticket: exhaustive planning costs **$1.0800** more than working planning but avoids only one **$0.6798** repair, leaving it **$0.4002** more expensive overall.
+
+14. **Choose the post-evidence explanation**  
+    Player opens the causal trace and selects: **“Planning should stop when the next planning increment costs more than the rework it can avoid.”**  
+    Correct selection → `ACK_EXPLANATION { explanationId: "plan-depth-is-ticket-dependent" }`. Incorrect explanation choices have no penalty and may be revised.
+
+15. **Apply the rule to a new ticket**  
+    `BEGIN_TRANSFER { challengeId: "prototype-no-review" }` reveals:
+
+    > **Prototype spike**  
+    > One fixed build. Review and CI are disabled, and the artifact will be discarded after the demo.
+
+    The same three plan-line costs remain visible. Player dispatches `CHOOSE_PLAN_DEPTH` for the transfer. `shallow` is the demonstrated-understanding action because no downstream request can repay deeper planning. A different choice causes no freeze or score deduction; the transfer remains editable until `shallow` is selected.
+
+16. **Evaluate pass and stars**  
+    A correct post-evidence transfer choice → `COMPLETE_ATTEMPT` → evaluates the behavioral gate and star predicates. Neither prediction selection nor prediction correctness is read by `pass(st)`.
 
 ## 5. Level data
 
@@ -127,26 +168,28 @@ All downstream branch counts below are deterministic calibrated **[FICTION]** at
   id: "10-plan-once-pay-later",
   tier: 2,
   title: "Plan Once, Pay Later",
-  objective: "Ship the change. Choose how much planning time to buy before the pipeline starts.",
+  objective: "Ship the change. Choose how much planning to buy before the pipeline starts.",
   concept: {
-    id: "planning-depth-rework",
-    label: "Planning depth changes downstream rework"
+    id: "plan-depth-downstream-cost",
+    privateDesignerSummary:
+      "Planning depth trades plan-generation cost against ticket-dependent downstream rework.",
+    postRevealRule:
+      "Buy another layer of planning only when it costs less than the rework it is expected to avoid."
   },
-  prerequisiteConceptIds: [
-    "workload-cost-decomposition",
-    "pipeline-causality"
-  ],
+  prerequisiteConceptIds: ["workload-cost-mix"],
 
   unlocks: "planDepth",
   introducedControls: ["planDepth"],
   cfgLocked: [
     "orchestratorModel",
+    "planModel",
     "devModel",
     "who",
     "prompts",
     "width",
     "oneHourFlag",
     "keepWarm",
+    "keepWarmMin",
     "hook",
     "skills",
     "skillsMode",
@@ -159,107 +202,299 @@ All downstream branch counts below are deterministic calibrated **[FICTION]** at
   budgetUsd: 5.00,
   clockCapMin: 300,
   cfgOverride: {
-    planModel: "opus",
+    planModel: "sonnet",
     devModel: "sonnet",
     who: "inline",
     oneHourFlag: true
   },
   scenario: "default",
+
   scenarioData: {
-    ticketId: "checkout-regional-tax",
-    planDepthBranches: {
-      shallow: {
-        planInputTok: 6000,
-        planOutputTok: 2000,
-        repairUnitIds: [
+    contexts: [{
+      kind: "main",
+      id: "checkout-main",
+      sessionId: "checkout-session",
+      cacheNamespace: "checkout-plan-cache",
+      initialPrefixStackId: "checkout-pipeline-prefix"
+    }],
+    prefixStacks: ["checkout-pipeline-prefix"],
+    units: [
+      "plan",
+      "build-tax-core",
+      "build-refund-path",
+      "build-region-tests",
+      "review-tax-boundary",
+      "review-refund-contract",
+      "ci-rounding-fixture",
+      "ci-refund-regression",
+      "review-rounding-clarification"
+    ],
+    workloads: [
+      {
+        id: "plan-shallow",
+        role: "plan",
+        unitIds: ["plan"],
+        inputTok: 6000,
+        outTok: 2000,
+        allowedModels: ["sonnet"]
+      },
+      {
+        id: "plan-balanced",
+        role: "plan",
+        unitIds: ["plan"],
+        inputTok: 6000,
+        outTok: 8000,
+        allowedModels: ["sonnet"]
+      },
+      {
+        id: "plan-deep",
+        role: "plan",
+        unitIds: ["plan"],
+        inputTok: 6000,
+        outTok: 80000,
+        allowedModels: ["sonnet"]
+      },
+      {
+        id: "pipeline-work",
+        role: "dev",
+        unitIds: [
+          "build-tax-core",
+          "build-refund-path",
+          "build-region-tests",
           "review-tax-boundary",
           "review-refund-contract",
           "ci-rounding-fixture",
-          "ci-refund-regression"
-        ]
-      },
-      balanced: {
-        planInputTok: 6000,
-        planOutputTok: 8000,
-        repairUnitIds: ["review-rounding-clarification"]
-      },
-      deep: {
-        planInputTok: 6000,
-        planOutputTok: 14000,
-        repairUnitIds: []
+          "ci-refund-regression",
+          "review-rounding-clarification"
+        ],
+        inputTok: 6000,
+        outTok: 44000,
+        allowedModels: ["sonnet"]
       }
-    },
-    calibratedFiction: true
-  },
-
-  gate: {
-    behavioralRequirements: [
-      "commit p-branch-count before branch reveal",
-      "complete a balanced or deep attempt",
-      "inspect the causal trace from plan choice to every repair unit"
+    ],
+    estimates: [
+      { label: "initial wallet", value: 5.00, tag: "[FICTION]" },
+      { label: "quick plan output tokens", value: 2000, tag: "[FICTION]" },
+      { label: "working plan output tokens", value: 8000, tag: "[FICTION]" },
+      { label: "exhaustive plan output tokens", value: 80000, tag: "[FICTION]" },
+      { label: "quick repair requests", value: 4, tag: "[FICTION]" },
+      { label: "working repair requests", value: 1, tag: "[FICTION]" },
+      { label: "exhaustive repair requests", value: 0, tag: "[FICTION]" }
     ]
   },
-  star2: {
-    label: "Evidence-based retry",
-    predicate: "attempt >= 2 && completedDepth !== 'shallow'",
-    reason: "Used observed pipeline evidence to revise the plan choice."
+
+  interactionPatterns: [
+    "predict-before-reveal",
+    "fail-freeze-rewind",
+    "counterfactual-after-attempt",
+    "just-in-time-toast"
+  ],
+
+  checkpoints: [{
+    id: "cp-plan-choice",
+    createBeforeEventId: "plan-depth-chosen",
+    reason: "decision",
+    resumeLabel: "Try another plan"
+  }],
+
+  failLesson: {
+    bucket: "reworkUsd",
+    cite: "C1,C3,C28",
+    line: "A cheap plan can become expensive when its omissions create additional priced requests."
   },
-  star3: {
-    label: "Plan once",
-    predicate: "completedDepth === 'deep' && repairUnitCount === 0",
-    reason: "Completed the fixed build spine with no downstream repair units."
+  failureRules: [{
+    id: "shallow-rework-chain",
+    decisiveEventId: "ci-refund-regression-resolved",
+    causeCode: "PLAN_DEPTH_REWORK",
+    message:
+      "The $0.066 quick plan led to four $0.6798 repair requests.",
+    checkpointId: "cp-plan-choice",
+    highlightObjectIds: [
+      "plan",
+      "review-tax-boundary",
+      "review-refund-contract",
+      "ci-rounding-fixture",
+      "ci-refund-regression"
+    ],
+    actualUsd: 4.8246,
+    validAlternativeUsd: 2.8752
+  }],
+
+  gate: {
+    predicateId: "apply-plan-depth-rule-after-evidence",
+    evidenceRevealEventIds: [
+      "branch-revealed",
+      "counterfactual-revealed"
+    ],
+    postEvidenceActionRequirements: [
+      {
+        id: "ack-ticket-dependent-rule",
+        kind: "action-observed",
+        actionType: "ACK_EXPLANATION",
+        afterEventId: "counterfactual-revealed",
+        match: { explanationId: "plan-depth-is-ticket-dependent" }
+      },
+      {
+        id: "right-size-prototype",
+        kind: "action-observed",
+        actionType: "CHOOSE_PLAN_DEPTH",
+        afterEventId: "transfer-opened",
+        match: { depth: "shallow" }
+      }
+    ],
+    behavioralRequirements: [
+      {
+        id: "checkout-completed-validly",
+        kind: "any",
+        predicates: [
+          {
+            id: "balanced-completed",
+            kind: "compare",
+            path: "attemptResult.completedDepth",
+            op: "eq",
+            value: "balanced"
+          },
+          {
+            id: "deep-completed",
+            kind: "compare",
+            path: "attemptResult.completedDepth",
+            op: "eq",
+            value: "deep"
+          }
+        ]
+      },
+      {
+        id: "causal-trace-inspected",
+        kind: "includes",
+        path: "acknowledgedExplanationIds",
+        value: "plan-depth-is-ticket-dependent",
+        observedAfterEventId: "counterfactual-revealed"
+      }
+    ],
+    explanationRequirement: {
+      id: "rule-acknowledged",
+      kind: "includes",
+      path: "acknowledgedExplanationIds",
+      value: "plan-depth-is-ticket-dependent",
+      observedAfterEventId: "counterfactual-revealed"
+    },
+    transferRequirement: {
+      id: "prototype-transfer-completed",
+      kind: "includes",
+      path: "completedTransferIds",
+      value: "prototype-no-review",
+      observedAfterEventId: "transfer-opened"
+    }
   },
 
-  referenceCfg: { planModel: "opus", devModel: "sonnet" },
-  antiCfg: { planModel: "opus", devModel: "sonnet" }
+  star2: {
+    label: "Right-sized checkout",
+    predicate: {
+      id: "balanced-checkout",
+      kind: "compare",
+      path: "attemptResult.completedDepth",
+      op: "eq",
+      value: "balanced"
+    },
+    reason: "Completed the checkout ticket with its lowest-cost planning depth."
+  },
+
+  star3: {
+    label: "Evidence-based planner",
+    predicate: {
+      id: "balanced-after-evidence",
+      kind: "all",
+      predicates: [
+        {
+          id: "balanced-total",
+          kind: "compare",
+          path: "attemptResult.spentUsd",
+          op: "lte",
+          value: 2.8752
+        },
+        {
+          id: "balanced-reselection",
+          kind: "action-observed",
+          actionType: "CHOOSE_PLAN_DEPTH",
+          afterEventId: "branch-revealed",
+          match: { depth: "balanced" }
+        },
+        {
+          id: "prototype-shallow-transfer",
+          kind: "action-observed",
+          actionType: "CHOOSE_PLAN_DEPTH",
+          afterEventId: "transfer-opened",
+          match: { depth: "shallow" }
+        }
+      ]
+    },
+    reason:
+      "Used observed evidence to choose working depth for checkout and quick depth for the no-review prototype."
+  },
+
+  referenceCfg: {
+    planModel: "sonnet",
+    devModel: "sonnet",
+    who: "inline",
+    oneHourFlag: true
+  },
+  antiCfg: {
+    planModel: "sonnet",
+    devModel: "sonnet",
+    who: "inline",
+    oneHourFlag: true
+  }
 }
 ```
 
-`referenceCfg` selects the `deep` scenario branch; `antiCfg` selects `shallow`. Branch selection remains `scenarioData`, because `Config` carries model choice while `CHOOSE_PLAN_DEPTH` carries planning depth.
+`referenceCfg` and `antiCfg` intentionally share the fixed configuration. Their `CounterfactualDef.scenarioPatch` values activate different deterministic unit subsets:
+
+- reference: working plan plus `review-rounding-clarification`;
+- anti-pattern: quick plan plus all four shallow repair units;
+- alternate choice: exhaustive plan with no repair units.
+
+Planning depth is selected by `CHOOSE_PLAN_DEPTH`, not smuggled into `Config`.
 
 ## 6. Pricing walkthrough
 
-All requests bypass reusable prefix economics for this closed pipeline fixture: `readTok = 0`, `writeTok = 0`; the listed `inputTok` and `outTok` are priced by `PRICE_REQUEST`. Plan and repair incidence is **[FICTION]**. The three base build requests use calibrated `WORK_IN = 6,000` and `WORK_OUT = 44,000` (`C28`).
+The authoritative Sonnet rates are cache read **$0.30/M**, fresh input **$3/M**, 1h write **$6/M**, and output **$15/M** (`C1`, `C3`). The shared prefix and each pipeline unit’s fresh work use `WORK_IN = 6,000`; pipeline output uses `WORK_OUT = 44,000` (`C28`). Plan outputs and repair counts are calibrated **[FICTION]**.
 
-Rates:
+| Row or completed branch | Buckets and calculation | Authoritative cost |
+|---|---|---:|
+| Quick plan request | `6000×$6/M write + 2000×$15/M output` | **$0.0660** |
+| Working plan request | `6000×$6/M write + 8000×$15/M output` | **$0.1560** |
+| Exhaustive plan request | `6000×$6/M write + 80000×$15/M output` | **$1.2360** |
+| Any build/repair request | `6000×$0.30/M read + 6000×$3/M input + 44000×$15/M output` | **$0.6798** |
+| Quick branch | `$0.0660 + 7×$0.6798`; `8` rows | **$4.8246** |
+| Working branch — reference | `$0.1560 + 4×$0.6798`; `5` rows | **$2.8752** |
+| Exhaustive branch | `$1.2360 + 3×$0.6798`; `4` rows | **$3.2754** |
 
-- Opus input **$5/M**, output **$25/M** (`C2`; output multiplier `5x`, `C1`).
-- Sonnet input **$3/M**, output **$15/M** (`C3`; output multiplier `5x`, `C1`).
+Derived post-attempt evidence:
 
-| Request kind | Model | Input | Output | Calculation | Cost |
-|---|---:|---:|---:|---|---:|
-| Quick plan | Opus | 6,000 | 2,000 | `6000×5/1M + 2000×25/1M` | $0.080 |
-| Working plan | Opus | 6,000 | 8,000 | `6000×5/1M + 8000×25/1M` | $0.230 |
-| Deep plan | Opus | 6,000 | 14,000 | `6000×5/1M + 14000×25/1M` | $0.380 |
-| Build/repair unit | Sonnet | 6,000 | 44,000 | `6000×3/1M + 44000×15/1M` | $0.678 |
+- Quick saves **$0.0900** on its plan line versus working, then creates three additional repair requests costing **$2.0394**; its total is **$1.9494** higher.
+- Exhaustive spends **$1.0800** more on planning than working and avoids one **$0.6798** repair; its total is therefore **$0.4002** higher.
+- The working branch is the ticket-specific minimum. The transfer ticket demonstrates that this is not a universal “always choose working” answer.
 
-Totals:
+The wallet remains positive on every completed branch:
 
-| Branch | Plan | Fixed builds | Repairs | Total |
-|---|---:|---:|---:|---:|
-| `shallow` anti-pattern | $0.080 | `3×$0.678 = $2.034` | `4×$0.678 = $2.712` | **$4.826** |
-| `balanced` | $0.230 | $2.034 | `1×$0.678 = $0.678` | **$2.942** |
-| `deep` 3-star reference | $0.380 | $2.034 | $0.000 | **$2.414** |
+- quick: **$0.1754**
+- working: **$2.1248**
+- exhaustive: **$1.7246**
 
-Post-attempt result copy:
-
-> You saved **$0.300** on the visible plan line, then bought **$2.712** of repairs.  
-> Branch counts are calibrated **FICTION**; token prices use the real rate table.
-
-The `$0.300` comparison is `deep plan $0.380 − shallow plan $0.080`. The shallow total exceeds the deep reference by **$2.412**.
+The shallow freeze is therefore caused by demonstrated rework economics, not bankruptcy.
 
 ## 7. Tape sequence
 
-`TapeRenderer` uses `rowSource: "ledger"` and renders exactly one row per request.
+`UI_TAPE_RENDERER` uses `rowSource: "ledger"` and renders one row per priced request.
 
-Common ordered rows:
+Common order:
 
 1. `plan`
 2. `build-tax-core`
 3. `build-refund-path`
 4. `build-region-tests`
 
-Branch suffixes:
+Selected branch suffix:
 
 - `shallow`:
   5. `review-tax-boundary`
@@ -270,139 +505,166 @@ Branch suffixes:
   5. `review-rounding-clarification`
 - `deep`: no suffix.
 
-Every row renders its input and output `WireSegment`s. Review and CI rows use distinct row labels but identical authoritative pricing.
+The plan row shows a red 1h-write segment and violet output segment. Every downstream row shows blue cache-read, red fresh-input, and violet output segments.
 
-The aha frame is `ci-refund-regression` on the shallow path. Freeze with:
+Tape geometry uses the canonical authoritative-cost model from `OBJECT_MODEL.md`: every non-zero bucket contributes to row width, including `outTok` priced at `5x`; each `WireSegment.widthRatio` is its USD share of the row. Thus the `44,000` output-token charge remains the dominant visible weight instead of being hidden behind the much smaller input buckets.
 
-- the tiny **$0.080 PLAN** row pinned at the top;
-- four repair rows stacked below;
-- one continuous causal connector labeled **“spawned by omissions in this plan — calibrated FICTION”**;
-- wallet settled at **$0.174**;
-- subtotal badges **PLAN $0.080** and **DOWNSTREAM $4.746**.
+The shallow fail frame pins:
 
-No alternate branch or answer is visible before this frame.
+- **PLAN $0.0660**
+- **FIXED BUILD $2.0394**
+- **REPAIRS $2.7192**
+- **TOTAL $4.8246**
+- the live cache entry and seven read touches;
+- a continuous causal connector from the selected plan to all four repair rows, labeled **“ticket-specific repair incidence · calibrated FICTION.”**
+
+The post-attempt comparison is the tradeoff-confirmation frame: the exhaustive row is visibly much larger than the working row, while the working branch contains one additional repair.
 
 ## 8. Prediction prompts
 
 ### `p-branch-count`
 
-Shown after the fixed third build and before review/CI nodes turn over.
+Shown after `build-region-tests` and before REVIEW or CI reveals.
 
 > **The build is done. What happens when review and CI inspect this plan?**
 
-Options depend on the committed depth but do not expose correctness:
-
 - `no-repairs` — “It passes straight through.”
-- `one-repair` — “One repair branch opens.”
-- `several-repairs` — “Several repair branches open.”
+- `one-repair` — “One repair request opens.”
+- `several-repairs` — “Several repair requests open.”
 
-Correct option:
+Branch-specific correct result:
 
-- shallow → `several-repairs`
-- balanced → `one-repair`
-- deep → `no-repairs`
+- quick → `several-repairs`
+- working → `one-repair`
+- exhaustive → `no-repairs`
 
-Button copy: **Lock prediction**.
+Button: **Lock prediction**.
 
 ### `p-largest-bill`
 
-Shown before post-attempt comparison is revealed.
+Shown after a valid attempt completes and before alternate totals are requested.
 
-> **Across the same ticket, which choice do you think produced the largest total bill?**
+> **For this same checkout ticket, which plan produced the largest total bill?**
 
-- `shallow-total` — “Quick sketch”
-- `balanced-total` — “Working plan”
-- `deep-total` — “Deep plan”
+- `quick-total` — “Quick sketch”
+- `working-total` — “Working plan”
+- `exhaustive-total` — “Exhaustive plan”
 
-Correct option: `shallow-total`.
+Correct result: `quick-total`.
 
-`REVEAL_COUNTERFACTUAL` remains blocked until this prediction is committed.
+Button: **Lock prediction and compare**.
+
+Both prompts satisfy `predict-before-reveal`. A wrong answer changes only revealed evidence; it never affects wallet, gate, failure, or stars.
 
 ## 9. Fail-state
 
-Decisive event: completion of `ci-refund-regression` on the shallow branch.
+Decisive event: `ci-refund-regression` posts the fourth shallow repair row.
 
-Freeze message:
+Freeze copy:
 
-> **The $0.08 plan spawned four $0.678 repairs.** Every branch shown here traces to an omitted plan decision — calibrated **FICTION**.
+> **The $0.066 quick plan led to four $0.6798 repair requests.**
 
 Supporting copy:
 
-> The pricing is real. The simulated relationship between plan depth and repair count is not a universal quality guarantee.
+> Repairs now cost **$2.7192**—more than twice the largest planning premium you were offered. Repair incidence is calibrated **FICTION**; every displayed token price is real.
+
+The failure is economically true:
+
+- frozen shallow total: **$4.8246**
+- valid working alternative: **$2.8752**
+- visible difference: **$1.9494**
+- shallow penalty: **67.8% `[FICTION]`**
 
 Rewind behavior:
 
-- **Try another plan** dispatches `REWIND_TO_CHECKPOINT("cp-plan-choice")`.
-- It skips the cold-open and returns directly to the three plan cards.
-- The shallow card retains an evidence chip: **Observed: 4 repairs · $4.826 total**.
-- Untested cards retain hidden downstream outcomes.
-- Attempt count increments; prior evidence remains available in a collapsed **Previous run** drawer.
-- No economic action is possible while frozen.
+- **Try another plan** dispatches `REWIND_TO_CHECKPOINT { checkpointId: "cp-plan-choice" }`.
+- The cold-open is skipped.
+- The previous ledger and causal trace remain in a collapsed **Previous run** drawer.
+- The tried card retains its observed repair count and total.
+- Untried branch outcomes remain hidden.
+- Attempt count persists.
+- Attempt-local ledger rows and cache state are reconstructed from the checkpoint on the new branch.
+- No economic action is enabled while frozen.
 
 ## 10. Gate & stars
 
 Pass requires all of:
 
-- at least one committed `p-branch-count` prediction before its reveal;
-- completion using `balanced` or `deep`;
-- opening the causal trace and inspecting every repair node produced by the completed or prior shallow attempt.
+- complete the checkout using `balanced` or `deep`;
+- reveal the same-seed comparison after an attempt;
+- after that evidence, acknowledge `plan-depth-is-ticket-dependent`;
+- begin `prototype-no-review`;
+- choose `shallow` for that transfer ticket after its constraints are visible.
 
-Budget alone cannot pass the level.
+Prediction commitment is only a reveal precondition. Prediction option and correctness are forbidden gate/star evidence.
 
 Stars:
 
-- **1 star — Pipeline reader:** satisfy the behavioral gate.
-- **2 stars — Evidence-based retry:** finish on `balanced` or `deep` after observing a previous attempt.
-- **3 stars — Plan once:** choose `deep`, complete all three fixed builds, and produce **0** repair units; exact total **$2.414**.
+- **1 star — Ticket reader:** satisfy the behavioral gate.
+- **2 stars — Right-sized checkout:** satisfy the gate and complete checkout with `balanced` at **$2.8752**.
+- **3 stars — Evidence-based planner:** after observing an earlier branch reveal, choose `balanced`, finish at or below **$2.8752**, and then choose `shallow` for `prototype-no-review`.
 
-The deep branch is always winnable from the initial **$5.00** wallet. The shallow branch deliberately remains above zero at **$0.174**, ensuring failure is causal rather than an arbitrary bankrupt screen.
+Consequences:
+
+- A first-attempt exhaustive run can pass after the transfer but earns exactly **1 star**.
+- A first-attempt working run can earn **2 stars**, because its checkout choice preceded evidence.
+- A working run chosen after observed branch evidence can earn **3 stars**.
+- A shallow-only run cannot pass because it remains frozen until rewind.
+- Budget alone cannot pass the level.
 
 ## 11. Toasts
 
 | Trigger | Exact copy |
 |---|---|
-| Plan row lands | “Plan locked. The rest of the pipeline can now react to it.” |
-| First fixed build lands | “BUILD · 6,000 input + 44,000 output · $0.678” |
-| Prediction opens | “Review and CI are still face-down. Predict before they turn over.” |
-| First repair appears | “This is a new priced request, not a warning icon.” |
-| Hover a repair connector | “Cause: **{causeLabel}** · calibrated FICTION.” |
-| Shallow freeze | “$0.300 saved on planning; $2.712 added in repairs.” |
-| Rewind completes | “Evidence kept. Future branches hidden again.” |
-| Deep run clears CI | “No repair request was created.” |
-| Counterfactual reveals | “Smallest plan line. Largest total bill.” |
-| Fiction label first becomes relevant | “Repair counts are teaching calibration, not a claim that longer plans always win.” |
+| Plan row lands | “PLAN wrote 6,000 stable tokens to the 1h cache.” |
+| First build reads | “BUILD read the plan prefix at 0.1x, then paid for fresh work and output.” |
+| First fixed build lands | “6,000 read + 6,000 fresh + 44,000 output · $0.6798.” |
+| Branch prediction opens | “Review and CI are still face-down. Predict before they turn over.” |
+| First repair appears | “This branch is a new priced request, not a warning icon.” |
+| Repair connector receives focus | “Cause: {causeLabel} · calibrated FICTION.” |
+| Shallow freeze | “$0.066 planned; $2.7192 repaired.” |
+| Rewind completes | “Evidence kept. Untried outcomes hidden again.” |
+| Exhaustive branch clears CI | “Zero repairs—but the plan itself cost $1.2360.” |
+| Counterfactual reveals | “Working wins this ticket. Exhaustive planning did not repay its premium.” |
+| Transfer opens | “New ticket, new stopping point: no review or CI can repay extra planning.” |
+| Output segment first receives focus | “Output is priced at 5x and contributes its full cost to tape width.” |
 
 ## 12. QA gate
 
 Real-browser click-through assertions:
 
-1. Initial screen exposes plan-line costs but no branch count, repair label, total, preferred choice, or reference comparison.
-2. Clicking a plan card dispatches exactly one `CHOOSE_PLAN_DEPTH`; it creates no `LedgerRow`.
-3. **Lock plan and run** produces exactly one plan row followed by exactly three fixed build rows.
-4. Review/CI cards cannot reveal before `COMMIT_PREDICTION("p-branch-count")`.
-5. Deterministic branch row counts are:
-   - shallow: `8` total ledger/tape rows;
-   - balanced: `5`;
-   - deep: `4`.
-6. `TapeRenderer` row count equals priced-request count at every animation frame.
-7. Every ledger row has `usd > 0`; no positive amount renders as `$0.0000`.
-8. Exact totals, using unrounded state:
-   - shallow `4.826`;
-   - balanced `2.942`;
-   - deep `2.414`.
-9. Each repair node has one visible parent cause; no repair cost is aggregated without its own request and `LedgerRow`.
-10. The words **calibrated FICTION** appear beside downstream branch causality, in the fail-freeze, and in the comparison.
-11. On shallow failure, economic actions are blocked until rewind.
-12. Rewind returns to `cp-plan-choice`, preserves prior evidence and attempt count, and hides untried outcomes.
-13. A first-attempt deep run passes and is winnable from `$5.00`.
-14. A shallow-only run cannot pass even though its wallet remains positive.
-15. Star predicates award:
-    - deep first attempt: 1 star unless the evidence-based transfer requirements are completed;
-    - balanced/deep after an observed retry: at least 2 stars;
-    - deep with zero repairs and all gate evidence: 3 stars.
-16. Counterfactual totals remain inaccessible until an attempt completes and `p-largest-bill` is committed.
-17. Refresh/replay with seed `1010` produces byte-identical action history, ledger order, totals, and branch labels.
+1. Initial UI exposes only ticket copy, plan token volumes, plan-line costs, wallet, and closed pipeline.
+2. No branch count, completed total, preferred depth, or comparison appears before play.
+3. Card click dispatches exactly one `CHOOSE_PLAN_DEPTH` and creates no `LedgerRow`.
+4. **Lock plan and run** creates one plan row with `writeTok: 6000`, `readTok: 0`, and the selected authoritative output count.
+5. The plan creates one live 1h `CacheEntry`; every subsequent build/repair reads exactly `6,000` tokens and refreshes it.
+6. Each build/repair row has `readTok: 6000`, `inputTok: 6000`, `writeTok: 0`, `outTok: 44000`, and exact cost `0.6798`.
+7. REVIEW and CI cannot reveal before `COMMIT_PREDICTION("p-branch-count")`.
+8. Wrong predictions change no wallet value, failure rule, gate predicate, or star predicate.
+9. Exact ledger/tape row counts are quick `8`, working `5`, and exhaustive `4`.
+10. `UI_TAPE_RENDERER` row count equals priced-request count at every frame.
+11. Every non-zero output bucket contributes its authoritative USD share to tape geometry.
+12. Every request yields exactly one `LedgerRow`; every row has `usd > 0`.
+13. No positive amount displays as `$0.0000`.
+14. Exact unrounded totals are quick `4.8246`, working `2.8752`, and exhaustive `3.2754`.
+15. The shallow freeze records `actualUsd: 4.8246` and `validAlternativeUsd: 2.8752`; it cannot fire before `ci-refund-regression`.
+16. Shallow freezes with a positive wallet of `0.1754`, proving bankruptcy is not the cause.
+17. Rewind returns to `cp-plan-choice`, preserves prior evidence/attempt count, clears attempt-local economics, and conceals untried outcomes.
+18. Counterfactual totals remain inaccessible until a checkout attempt completes and `p-largest-bill` is committed.
+19. The comparison uses the same seed, context, stable prefix, build spine, and pricing function for all depths.
+20. Gate passage requires `ACK_EXPLANATION` and a `CHOOSE_PLAN_DEPTH { depth: "shallow" }` action after the transfer opens.
+21. Neither `p-branch-count` nor `p-largest-bill` correctness appears in `pass(st)`, `star2`, or `star3`.
+22. A first-attempt exhaustive completion earns exactly `1` star after satisfying the transfer gate.
+23. A first-attempt working completion earns `2` stars, not `3`.
+24. A working choice made after earlier branch evidence, followed by the correct transfer, earns `3` stars at spend `<= 2.8752`.
+25. All three primary branches remain winnable from the `$5.00` wallet; only the economically inferior shallow branch invokes the teaching freeze.
+26. Keyboard focus exposes the same plan prices, segment calculations, causal labels, and prediction controls as pointer hover.
+27. Refresh/replay with seed `1010` produces byte-identical action order, prefix resolution, cache touches, ledger rows, totals, branch labels, and star result.
 
 ## 13. Reference-bar justification
 
-The screen begins with one tactile, consequential choice and withholds the system response. The player first optimizes the only visible number, commits a prediction, and then watches the pipeline physically grow from that choice. Failure freezes on the exact final repair rather than on a detached result modal; rewind returns directly to the decision with evidence preserved and future outcomes concealed. Only after play does the counterfactual expose all totals. That rhythm—choice, commitment, surprising causal motion, local failure, immediate retry, then concise confirmation—meets the discovery standard without stating the lesson in advance.
+The first screen offers a genuine tradeoff: deeper planning has an unmistakable immediate price, while its downstream payoff remains unknown. The player commits, watches the plan create reusable cache state, predicts the closed pipeline, and then sees ticket-specific repair requests grow causally from the choice. The shallow failure freezes on a visibly expensive repair chain and rewinds directly to the decision.
+
+Only after a completed attempt does the comparison reveal the second surprise: exhaustive planning avoids all repair but still loses to working depth because its premium is larger than the repair it avoids. The final no-review prototype prevents “working” from becoming another hidden universal answer and gates completion on a post-evidence transfer choice. The rhythm remains tactile and discovery-led: choose, cache, predict, reveal, trace, retry, compare, then transfer.
+
+Authoring tradeoff: the exhaustive plan uses an intentionally large `80,000`-token output **[FICTION]** so its real Sonnet output charge is large enough to break deep-plan dominance; the screen explicitly limits that calibration to this ticket and teaches a marginal-cost rule rather than “shorter” or “longer” as a universal policy.

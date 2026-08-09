@@ -2,16 +2,16 @@
 
 ## 1. Identity
 
-- `id`: `L8`
+- `id`: `"08-growing-pains"`
 - `title`: `Growing Pains`
 - `tier`: `2`
 - `objective`: “Six tickets just landed. Route each one before the session gets crowded.”
-- One concept: inline work carries a growing main-session history; fresh subagents use an isolated bounded base.
-- Prerequisites: prefix structure and subagent-cache behavior.
-- `concept.id`: `context-routing`
-- `concept.privateDesignerSummary`: “Inline requests reread growing history; subagents pay an isolated `26,237`-token base, with identical parallel spawns sharing its warm prefix.”
-- `concept.postRevealRule`: “Keep small follow-ups inline; isolate parallel independent work once growing history costs more than the bounded spawn base.”
-- `prerequisiteConceptIds`: `["prefix-structure", "subagent-cache"]`
+- `concept.id`: `"inline-vs-subagent-routing"`
+- `concept.privateDesignerSummary`: “Dependent follow-ups benefit from the live main prefix; independent parallel work avoids an enlarged main history by using an isolated, bounded shared spawn prefix.”
+- `concept.postRevealRule`: “Keep work that needs this conversation here; route independent parallel work away when carried history costs more than the bounded spawn base.”
+- `prerequisiteConceptIds`: `["prefix-reuse", "shared-subagent-window"]`
+
+The central choice is a real tradeoff: the main route is cheaper for the two dependent follow-ups, while the shared subagent route is cheaper for the four independent jobs.
 
 ## 2. Objects used
 
@@ -23,9 +23,13 @@
 - `Request`
 - `CacheEntry`
 - `LedgerRow`
+- `WireSegment`
 - `Wallet`
 - `Budget`
 - `Checkpoint`
+- `FailureRuleDef`
+- `GateDef`
+- `CounterfactualDef`
 - `PRICE_REQUEST`
 - `RESOLVE_PREFIX`
 - `UI_PREFIX_STACK_VISUALIZER`
@@ -35,121 +39,190 @@
 - `UI_PREDICTION_PROMPT`
 - `UI_TOAST_SYSTEM`
 - `UI_REWIND_CONTROL`
-- `ResultScreen`
-- `CounterfactualOverlay`
-- `PATTERN_PREDICT_BEFORE_REVEAL`
-- `PATTERN_FAIL_FREEZE_REWIND`
-- `PATTERN_JUST_IN_TIME_TOAST`
-- `PATTERN_EXPLAIN_THEN_TRANSFER`
-- `PATTERN_COUNTERFACTUAL_AFTER_ATTEMPT`
+- `UI_RESULT_SCREEN`
+- `UI_COUNTERFACTUAL_OVERLAY`
+- `"predict-before-reveal"`
+- `"fail-freeze-rewind"`
+- `"just-in-time-toast"`
+- `"counterfactual-after-attempt"`
+
+The explain-and-transfer phase uses the composition recipe in `OBJECT_MODEL.md`; it is not an additional `InteractionPatternId`.
 
 ## 3. Cold-open / narrative
 
-`maxInstructionCards: 0`; `firstInteractiveBySec: 2` `[ESTIMATE]`.
+`maxInstructionCards: 0`; `firstInteractiveBySec: 2` `[ESTIMATE]`. All beat timings below are `[ESTIMATE]`.
 
 | Time | Beat |
 |---:|---|
 | `0.0s` | Six ticket cards slap onto the desk. Copy: **“Release train leaves in ten minutes.”** |
-| `0.6s` | The first card opens: **“Rename the helper you just added.”** The existing `PREFIX_STACK` is visible but its price is hidden. |
-| `1.2s` | Two unlabeled route targets slide in: **“Keep here”** and **“Send out”**. |
+| `0.6s` | The first card opens: **“Rename the helper you just added.”** Its existing `PREFIX_STACK` is visible, but no route price or recommendation is shown. |
+| `1.2s` | Two neutral route targets slide in: **“Keep here”** and **“Send out.”** |
 | `2.0s` | Both targets accept pointer, touch, and keyboard placement. Copy: **“Where should this ticket run?”** |
 
-No pre-play copy names the preferred route, bounded base, growing-history penalty, or final rule.
+No pre-play copy names the preferred route, the bounded spawn base, the enlarged-history penalty, or the post-reveal rule.
 
 ## 4. Exact event sequence
 
-All requests use Sonnet (`C3`). Scenario timing keeps every relevant `CacheEntry` live; no expiry decision is introduced.
+All requests use Sonnet (`C3`). The six fixture requests complete within the live five-minute shared-subagent window (`C1`, `C27`). Request buckets and authoritative prices are defined once in §6.
 
-1. **Enter the level.**  
-   Event → level mount.  
-   Action → `ENTER_LEVEL { levelId: "L8" }`.  
-   Mutations → initializes `ReducerState`, `Wallet($3.10)`, `MAIN_SESSION_CONTEXT`, empty subagent pool, six units, and the level-start `Checkpoint`. The visible main `PREFIX_STACK` begins with `34,000` carried tokens (`C29`).
+1. **Enter the level — `ev-enter`.**  
+   Trigger → level mount.  
+   Action → `ENTER_LEVEL { levelId: "08-growing-pains" }`.  
+   Mutations → initializes `ReducerState`, the level-start `Checkpoint`, `Wallet` with `GP_BUDGET_USD`, `MAIN_SESSION_CONTEXT`, the six `UnitSeed` instances, and the context seeds in §5. The first main request sees the `34,000`-token inline fixture (`C29`).
 
-2. **Predict ticket 1.**  
-   Event → player selects a route for **“Rename the helper you just added”**.  
-   Actions → `CREATE_CHECKPOINT { checkpointId: "cp-route-1", reason: "decision" }`; `OPEN_PREDICTION { promptId: "p-route-1" }`; `SELECT_PREDICTION`; `COMMIT_PREDICTION`.  
-   Mutations → `prediction` becomes committed; no request, price, or correctness is revealed.
+2. **Predict the first follow-up — `ev-predict-rename`.**  
+   Trigger → the player opens **“Rename the helper you just added.”**  
+   Actions → `CREATE_CHECKPOINT { checkpointId: "cp-route-rename", reason: "decision" }`; `OPEN_PREDICTION { promptId: "p-rename-cost" }`; `SELECT_PREDICTION`; `COMMIT_PREDICTION`.  
+   Mutations → the prediction becomes committed. No route is selected, no request runs, and no correctness, price, or preferred target is revealed.
 
-3. **Run ticket 1.**  
-   Event → player confirms **Keep here** or **Send out**.  
-   Actions → `ROUTE_UNIT { unitId: "followup-rename", contextKind }`; `RUN_UNIT { unitId: "followup-rename" }`; `REVEAL_PREDICTION { promptId: "p-route-1", correctOptionId: "main" }`.  
-   Reference mutation → `MAIN_SESSION_CONTEXT`, its `PREFIX_STACK`, `LedgerRow`, `Wallet`, and `lastRequests` change. Request `r-followup-rename-main`: `34,000 readTok` (`C29`), `2,000 inputTok` `[FICTION]`, `4,000 outTok` `[FICTION]`; cost `$0.0762`.  
-   Post-reveal copy: **“That follow-up reused the conversation already holding its answer.”**
+3. **Route and run the first follow-up — `ev-reveal-rename`.**  
+   Trigger → after prediction commitment, the player independently chooses **Keep here** or **Send out**.  
+   Actions → `ROUTE_UNIT { unitId: "followup-rename", contextKind }`; `RUN_UNIT { unitId: "followup-rename" }`; `REVEAL_PREDICTION { promptId: "p-rename-cost", correctOptionId: "main-costs-less" }`.  
+   Mutations → exactly one of `r-followup-rename-main` or `r-followup-rename-sub` appends as a `LedgerRow`; `Wallet`, `lastRequests`, the chosen `ExecutionContext`, and its `PREFIX_STACK` update.  
+   Reveal copy → **“Keeping it here reused the conversation that already held the change.”**  
+   A wrong prediction changes none of the route, request, wallet, failure, gate, or star rules.
 
-4. **Run ticket 2 as a transfer.**  
-   Event → card: **“Update the assertion for that rename.”**  
-   Actions → `CREATE_CHECKPOINT { checkpointId: "cp-route-2", reason: "decision" }`; prediction actions for `p-route-2`; `ROUTE_UNIT`; `RUN_UNIT`; `REVEAL_PREDICTION { correctOptionId: "main" }`.  
-   Reference request `r-followup-assert-main`: `56,000 readTok` (`34,000 + 22,000`, `C29`), `1,000 inputTok` `[FICTION]`, `2,000 outTok` `[FICTION]`; cost `$0.0498`.  
-   Mutations → main `PREFIX_STACK` visibly lengthens; `LedgerRow`, `Wallet`, and `lastRequests` update.
+4. **Predict, route, and run the dependent assertion — `ev-reveal-assert`.**  
+   Trigger → card: **“Update the assertion for that rename.”**  
+   Actions → create `cp-route-assert`; run the complete prediction cycle for `p-assert-cost`; then dispatch `ROUTE_UNIT`, `RUN_UNIT`, and `REVEAL_PREDICTION { correctOptionId: "main-costs-less" }`.  
+   Mutations → exactly one of `r-followup-assert-main` or `r-followup-assert-sub` appends. On the reference route, the main request reads `56,000` cached history tokens, derived from the `34,000` base plus one `22,000` growth step (`C29`).  
+   Reveal copy → **“This task depended on the rename, so sending it out would have copied that context into another room.”**
 
-5. **Expose the first independent job without its answer.**  
-   Event → four cards fan out: **“Audit auth imports”**, **“Generate migration”**, **“Check API callers”**, **“Review dependency licenses.”** A bracket labels them **“No shared edits”**.  
-   Actions → `CREATE_CHECKPOINT { checkpointId: "cp-parallel-route", reason: "decision" }`; `OPEN_PREDICTION { promptId: "p-parallel" }`.  
-   Mutations → prediction phase opens; route controls remain neutral. The main stack shows `92,000` carried history `[FICTION]`, including `C29`-anchored growth and scenario traffic.
+5. **Expose the independent batch without revealing its route — `ev-open-batch`.**  
+   Trigger → four cards fan out: **“Audit auth imports,” “Check API callers,” “Review dependency licenses,”** and **“Scan package exports.”** A neutral bracket says **“Can run together.”**  
+   Actions → `SET_PREFIX_BLOCK_CONTENT` sets the main batch-phase `PB_HISTORY` fixture to `600,000` tokens `[FICTION]`; `CREATE_CHECKPOINT { checkpointId: "cp-parallel-route", reason: "decision" }`; `OPEN_PREDICTION { promptId: "p-batch-cost" }`.  
+   Mutations → `UI_PREFIX_STACK_VISUALIZER` shows the enlarged main stack without price, good/bad styling, or a route recommendation. The four route cards remain unplaced.
 
-6. **Decisive inline failure.**  
-   Event → player commits **Keep here** for **“Audit auth imports”**.  
-   Actions → `COMMIT_PREDICTION`; `ROUTE_UNIT { unitId: "audit-imports", contextKind: "main" }`; `RUN_UNIT { unitId: "audit-imports" }`.  
-   Mutations → request `r-audit-main` appends with `92,000 readTok` `[FICTION]`, `6,000 inputTok` and `44,000 outTok` (`C28`); `Wallet` drops by `$0.7056`; `UI_TAPE_RENDERER` stops on the `92,000`-token blue segment while `PB_CURRENT` highlights `6,000`.  
-   Action → `FREEZE_FAILURE { failureId: "f-92k", causeCode: "INLINE_HISTORY_OVERREAD", message: "This task reread 92k history to use 6k relevant input.", checkpointId: "cp-parallel-route" }`.  
-   Mutations → `clock.frozen=true`; route and run controls lock; `frozenFailure` is set.
+6. **Commit the batch prediction, then choose a route — `ev-route-batch`.**  
+   Trigger → the player commits `p-batch-cost`.  
+   Actions → `COMMIT_PREDICTION { promptId: "p-batch-cost" }`; the neutral route targets unlock; the player then dispatches four `ROUTE_UNIT` actions with either `contextKind: "main"` or `contextKind: "subagent"`.  
+   Mutations → prediction state and route state remain separate. Changing the prediction option cannot select a route or alter economics.
 
-7. **Rewind the local failure.**  
-   Event → player activates **“Route the audit again”**.  
+7. **Resolve an inline mistake — `ev-inline-audit-failure`.**  
+   Preconditions → `audit-imports` is routed to `MAIN_SESSION_CONTEXT`.  
+   Action → `RUN_UNIT { unitId: "audit-imports" }`.  
+   Mutations → `r-audit-main` appends, charging `GP_AUDIT_INLINE_USD`; `Wallet` remains above zero, proving that the lesson is not budget exhaustion.  
+   After the complete row renders, the failure frame displays:
+   - the charged `r-audit-main` ledger row;
+   - its `600,000`-token `PB_HISTORY` span;
+   - its `6,000`-token `PB_CURRENT` span (`C28`);
+   - an authored, uncharged alternative quote with the exact buckets and `GP_AUDIT_SUB_USD`;
+   - `GP_AUDIT_ROUTE_PENALTY_USD`.
+
+   Action → `FREEZE_FAILURE` with failure `f-inline-audit`.  
+   Mutations → `clock.frozen = true`; economic controls lock; the comparison proves `actualUsd > validAlternativeUsd`. Prediction correctness is not inspected.
+
+8. **Rewind locally — `ev-rewind-audit`.**  
+   Trigger → player activates **“Route the batch again.”**  
    Action → `REWIND_TO_CHECKPOINT { checkpointId: "cp-parallel-route" }`.  
-   Mutations → deterministic replay restores the unopened parallel-route decision, `$2.9740` remaining after tickets 1–2, no `r-audit-main`, and the committed earlier follow-up evidence.
+   Mutations → deterministic replay removes `r-audit-main`, restores wallet, cache, routes, and batch prediction state to the checkpoint, and preserves both completed follow-up rows and reveals.
 
-8. **Route the parallel batch.**  
-   Event → player commits **Send out** and places the four independent cards on fresh subagents.  
-   Actions → `COMMIT_PREDICTION { promptId: "p-parallel" }`; four `ROUTE_UNIT { contextKind: "subagent" }`; four `RUN_UNIT`; `REVEAL_PREDICTION { promptId: "p-parallel", correctOptionId: "subagent-batch" }`.  
+9. **Resolve the shared subagent batch — `ev-reveal-batch`.**  
+   Preconditions → the four independent cards are routed to `SUBAGENT_CONTEXT`s and `p-batch-cost` is committed.  
+   Actions → four `RUN_UNIT` actions; then `REVEAL_PREDICTION { promptId: "p-batch-cost", correctOptionId: "subagent-batch-costs-less" }`.  
    Mutations:
-   - `r-audit-sub`: new `SUBAGENT_CONTEXT`; `26,237 writeTok` (`C10`) at `CACHE_TIER_5M`, `6,000 inputTok`, `44,000 outTok` (`C28`); `$0.77638875`.
-   - `r-migration-sub`: fresh `SUBAGENT_CONTEXT` using the live identical `sharedPrefixPoolId`; `26,237 readTok` (`C10`), `18,000 inputTok` `[FICTION]`, `44,000 outTok` (`C28`); `$0.7218711`.
-   - `r-callers-sub`: `26,237 readTok`, `6,000 inputTok`, `44,000 outTok`; `$0.6858711`.
-   - `r-licenses-sub`: `26,237 readTok`, `6,000 inputTok`, `44,000 outTok`; `$0.6858711`.
-   - Four isolated `PREFIX_STACK` records and four `LedgerRow`s append; the shared subagent `CacheEntry` is written once and touched three times. The main `PB_HISTORY` does not absorb these jobs.
-   
-   `ahaFrame: true` on `r-callers-sub`: four short equal blue bases align beneath the frozen ghost outline of the `92,000`-token inline row. Copy appears only now: **“Fresh rooms, one bounded base. The independent jobs did not drag the main conversation behind them.”**
+   - `r-audit-sub` writes the measured `26,237`-token identical spawn prefix at `CACHE_TIER_5M` (`C10`);
+   - `r-callers-sub`, `r-licenses-sub`, and `r-exports-sub` each read that live `26,237`-token prefix (`C10`, `C12`);
+   - four isolated `PREFIX_STACK` records and four `LedgerRow`s append;
+   - the shared subagent `CacheEntry` is written once and touched three times;
+   - main and subagent cache namespaces remain isolated;
+   - the main `PB_HISTORY` does not absorb the four jobs.
 
-9. **Explain, then transfer.**  
-   Event → player answers `p-rule`, then receives two unseen cards: **“Change the error string you just reviewed”** and **“Scan an unrelated package tree.”**  
-   Actions → `ACK_EXPLANATION { explanationId: "routing-rule" }`; `BEGIN_TRANSFER { challengeId: "route-transfer-pair" }`; two prediction cycles; two `ROUTE_UNIT` actions.  
-   Required choices → error-string follow-up routes to `main`; package scan routes to `subagent`.  
-   Mutations → transfer evidence is stored for the gate. Incorrect routing rewinds only to `cp-transfer`.
+   `ahaFrame: true` attaches to `r-callers-sub`. Only now show: **“Four fresh rooms reused one bounded base instead of carrying the whole conversation.”**
 
-10. **Complete and compare.**  
-    Event → both transfer choices are correct.  
-    Actions → `COMPLETE_ATTEMPT`; then, on player request, `REQUEST_COUNTERFACTUAL { comparisonId: "all-inline" }`; `REVEAL_COUNTERFACTUAL { comparisonId: "all-inline" }`.  
-    Mutations → `ResultScreen` evaluates gate/stars. Only after completion, `CounterfactualOverlay` reveals the all-inline tape and `$0.02799795` `[FICTION]` routing delta for the six-ticket fixture.
+10. **Explain after evidence — `ev-explain-routing`.**  
+    Trigger → after `ev-reveal-batch`, the player chooses one causal explanation.  
+    Action → `ACK_EXPLANATION { explanationId }`.  
+    Required explanation → `"relationship-and-carried-context"`.  
+    Mutations → the selected explanation is stored in `acknowledgedExplanationIds`. This is post-evidence gate evidence, not a prediction.
+
+11. **Apply the rule to unseen work — `ev-transfer-routing`.**  
+    Actions → `CREATE_CHECKPOINT { checkpointId: "cp-transfer", reason: "decision" }`; `BEGIN_TRANSFER { challengeId: "route-transfer-pair" }`.  
+    Cards:
+    - **“Change the error string you just reviewed.”**
+    - **“Scan an unrelated package tree.”**
+
+    Required post-evidence actions:
+    - `ROUTE_UNIT { unitId: "transfer-error-string", contextKind: "main" }`;
+    - `ROUTE_UNIT { unitId: "transfer-package-scan", contextKind: "subagent" }`.
+
+    These transfer cards test routing only and create no `Request`, `LedgerRow`, or wallet mutation. An incorrect pair returns to `cp-transfer` without invoking `FREEZE_FAILURE`.
+
+12. **Complete and compare — `ev-complete`.**  
+    Trigger → the explanation and transfer pair satisfy the gate.  
+    Actions → `COMPLETE_ATTEMPT`; on player request, `REQUEST_COUNTERFACTUAL { comparisonId: "all-inline" }`; then `REVEAL_COUNTERFACTUAL { comparisonId: "all-inline" }`.  
+    Mutations → `UI_RESULT_SCREEN` evaluates the post-evidence gate and stars. Only after completion, `UI_COUNTERFACTUAL_OVERLAY` reveals `GP_ALL_INLINE_USD`, `GP_REFERENCE_USD`, `GP_ROUTE_DELTA_USD`, and the derived percentage reduction.
 
 ## 5. Level data
 
+Level-specific calibrated values:
+
 ```ts
-const level8: LevelDef = {
-  id: "L8",
+const GP_BUDGET_USD = 1.00;               // [FICTION]
+const GP_BATCH_HISTORY_TOK = 600_000;      // [FICTION]
+const GP_INDEPENDENT_OUT_TOK = 4_000;      // [FICTION]
+```
+
+`GP_BATCH_HISTORY_TOK` is followed by the canonical `22,000`-token inline growth step from `C29`, producing the four main-route history sizes priced in §6. Lowering these review/scan tasks to `GP_INDEPENDENT_OUT_TOK` keeps output present and fully priced while allowing routing—not generated-code volume—to drive this level’s decision.
+
+The six fixture `UnitSeed` values are:
+
+| `id` | `kind` | `deps` | `workIn` | `outTok` | Notes |
+|---|---|---|---:|---:|---|
+| `followup-rename` | `TASK` | `[]` | `2,000` `[FICTION]` | `4,000` `[FICTION]` | Depends on pre-level conversation content. |
+| `followup-assert` | `TASK` | `["followup-rename"]` | `1,000` `[FICTION]` | `2,000` `[FICTION]` | Depends on the preceding rename. |
+| `audit-imports` | `TASK` | `[]` | `6,000` (`C28`) | `GP_INDEPENDENT_OUT_TOK` | Independent batch leader. |
+| `check-callers` | `TASK` | `[]` | `6,000` (`C28`) | `GP_INDEPENDENT_OUT_TOK` | Independent. |
+| `review-licenses` | `TASK` | `[]` | `6,000` (`C28`) | `GP_INDEPENDENT_OUT_TOK` | Independent. |
+| `scan-exports` | `TASK` | `[]` | `6,000` (`C28`) | `GP_INDEPENDENT_OUT_TOK` | Independent. |
+
+All six use ticket `1`, Sonnet, and an authored `1`-hour unit duration `[FICTION]`; those hours do not set simulated request spacing. The four independent requests are scheduled inside the five-minute live shared-prefix window (`C1`, `C27`).
+
+Context seeds instantiate:
+
+- one `MAIN_SESSION_CONTEXT`;
+- two ad-hoc dependent-work `SUBAGENT_CONTEXT`s without a `sharedPrefixPoolId`, so copied dependency context cannot cross namespaces;
+- four independent-work `SUBAGENT_CONTEXT`s sharing `sharedPrefixPoolId: "gp-independent-pool"` while retaining distinct execution contexts;
+- corresponding `PrefixStackSeed` values using canonical `PrefixBlock` kinds.
+
+```ts
+const growingPains: LevelDef = {
+  id: "08-growing-pains",
   tier: 2,
   title: "Growing Pains",
-  objective: "Six tickets just landed. Route each one before the session gets crowded.",
+  objective:
+    "Six tickets just landed. Route each one before the session gets crowded.",
+
   concept: {
-    id: "context-routing",
+    id: "inline-vs-subagent-routing",
     privateDesignerSummary:
-      "Inline requests reread growing history; subagents use an isolated bounded base.",
+      "Dependent follow-ups benefit from the live main prefix; independent parallel work avoids enlarged main history through a bounded shared spawn prefix.",
     postRevealRule:
-      "Keep small follow-ups inline; isolate parallel independent work once growing history costs more than the bounded spawn base."
+      "Keep work that needs this conversation here; route independent parallel work away when carried history costs more than the bounded spawn base."
   },
-  prerequisiteConceptIds: ["prefix-structure", "subagent-cache"],
+  prerequisiteConceptIds: ["prefix-reuse", "shared-subagent-window"],
 
   unlocks: "route",
   introducedControls: ["route"],
   cfgLocked: [
-    "orchestratorModel", "planModel", "devModel", "prompts", "width",
-    "oneHourFlag", "keepWarm", "hook", "skills", "skillsMode",
-    "memoryFiles", "mcp"
+    "orchestratorModel",
+    "planModel",
+    "devModel",
+    "prompts",
+    "width",
+    "oneHourFlag",
+    "keepWarm",
+    "keepWarmMin",
+    "hook",
+    "skills",
+    "skillsMode",
+    "memoryFiles",
+    "mcp"
   ],
 
   scope: "session",
-  seed: 8292,
-  budgetUsd: 3.10, // [FICTION]
+  seed: 8292, // [FICTION] deterministic identifier
+  budgetUsd: GP_BUDGET_USD,
   clockCapMin: 5, // C1
   cfgOverride: {
     devModel: "sonnet",
@@ -160,253 +233,493 @@ const level8: LevelDef = {
   },
   scenario: "mixed-routing",
   scenarioData: {
-    workloads: [
-      { id: "followup-rename", inputTok: 2000, outputTok: 4000, relation: "follow-up" },
-      { id: "followup-assert", inputTok: 1000, outputTok: 2000, relation: "follow-up" },
-      { id: "audit-imports", inputTok: 6000, outputTok: 44000, relation: "independent" },
-      { id: "migration", inputTok: 18000, outputTok: 44000, relation: "independent" },
-      { id: "callers", inputTok: 6000, outputTok: 44000, relation: "independent" },
-      { id: "licenses", inputTok: 6000, outputTok: 44000, relation: "independent" }
-    ],
+    units: GP_UNIT_SEEDS,
+    contexts: GP_CONTEXT_SEEDS,
+    prefixStacks: GP_PREFIX_STACK_SEEDS,
+    workloads: GP_WORKLOAD_SEEDS,
     allowedCfg: { who: ["inline", "subagent"] },
     estimates: [
-      { label: "budgetUsd", value: 3.10, tag: "[FICTION]" },
-      { label: "followup-rename input", value: 2000, tag: "[FICTION]" },
-      { label: "followup-rename output", value: 4000, tag: "[FICTION]" },
-      { label: "followup-assert input", value: 1000, tag: "[FICTION]" },
-      { label: "followup-assert output", value: 2000, tag: "[FICTION]" },
-      { label: "migration input", value: 18000, tag: "[FICTION]" },
-      { label: "failure-frame main history", value: 92000, tag: "[FICTION]" },
-      { label: "all-inline comparison delta", value: 0.02799795, tag: "[FICTION]" }
+      { label: "budgetUsd", value: GP_BUDGET_USD, tag: "[FICTION]" },
+      {
+        label: "independent-phase main history",
+        value: GP_BATCH_HISTORY_TOK,
+        tag: "[FICTION]"
+      },
+      {
+        label: "independent review output per request",
+        value: GP_INDEPENDENT_OUT_TOK,
+        tag: "[FICTION]"
+      },
+      {
+        label: "followup rename input",
+        value: 2000,
+        tag: "[FICTION]"
+      },
+      {
+        label: "followup rename output",
+        value: 4000,
+        tag: "[FICTION]"
+      },
+      {
+        label: "followup assertion input",
+        value: 1000,
+        tag: "[FICTION]"
+      },
+      {
+        label: "followup assertion output",
+        value: 2000,
+        tag: "[FICTION]"
+      }
     ]
   },
 
+  coldOpen: GP_COLD_OPEN_FROM_SECTION_3,
+  sequence: GP_EVENTS_FROM_SECTION_4,
+  predictions: GP_PREDICTIONS_FROM_SECTION_8,
+  toasts: GP_TOASTS_FROM_SECTION_11,
+  interactionPatterns: [
+    "predict-before-reveal",
+    "fail-freeze-rewind",
+    "just-in-time-toast",
+    "counterfactual-after-attempt"
+  ],
+
+  failLesson: {
+    bucket: "inlineRereadUsd",
+    cite: "C29",
+    line:
+      "The independent audit carried a 600,000-token main history when a bounded spawn base was cheaper."
+  },
+  failureRules: [
+    {
+      id: "f-inline-audit",
+      predicate: GP_INLINE_AUDIT_PREDICATE,
+      decisiveEventId: "ev-inline-audit-failure",
+      causeCode: "INLINE_HISTORY_OVERREAD",
+      message:
+        "The audit carried 600k history. The bounded spawn route costs $0.08161125 less.",
+      checkpointId: "cp-parallel-route",
+      highlightObjectIds: [
+        "main-history-600k",
+        "r-audit-main",
+        "audit-sub-route-quote"
+      ],
+      actualUsd: GP_AUDIT_INLINE_USD,
+      validAlternativeUsd: GP_AUDIT_SUB_USD
+    }
+  ],
+  checkpoints: [
+    {
+      id: "cp-route-rename",
+      createBeforeEventId: "ev-reveal-rename",
+      reason: "decision",
+      resumeLabel: "Route the rename again"
+    },
+    {
+      id: "cp-route-assert",
+      createBeforeEventId: "ev-reveal-assert",
+      reason: "decision",
+      resumeLabel: "Route the assertion again"
+    },
+    {
+      id: "cp-parallel-route",
+      createBeforeEventId: "ev-route-batch",
+      reason: "decision",
+      resumeLabel: "Route the batch again"
+    },
+    {
+      id: "cp-transfer",
+      createBeforeEventId: "ev-transfer-routing",
+      reason: "decision",
+      resumeLabel: "Try the transfer pair again"
+    }
+  ],
+
   gate: {
-    predicateId: "mixed-routing-transfer",
-    behavioralRequirements: [
-      "initial two dependent follow-ups routed to main",
-      "four-card independent batch routed to subagent contexts"
+    predicateId: "post-evidence-routing-transfer",
+    evidenceRevealEventIds: ["ev-reveal-batch"],
+    postEvidenceActionRequirements: [
+      {
+        id: "explain-after-batch",
+        kind: "action-observed",
+        actionType: "ACK_EXPLANATION",
+        afterEventId: "ev-reveal-batch",
+        match: { explanationId: "relationship-and-carried-context" }
+      },
+      {
+        id: "route-dependent-transfer-main",
+        kind: "action-observed",
+        actionType: "ROUTE_UNIT",
+        afterEventId: "ev-reveal-batch",
+        match: {
+          unitId: "transfer-error-string",
+          contextKind: "main"
+        }
+      },
+      {
+        id: "route-independent-transfer-subagent",
+        kind: "action-observed",
+        actionType: "ROUTE_UNIT",
+        afterEventId: "ev-reveal-batch",
+        match: {
+          unitId: "transfer-package-scan",
+          contextKind: "subagent"
+        }
+      }
     ],
-    explanationRequirement:
-      "p-rule == relationship-and-carried-context",
-    transferRequirement:
-      "transfer follow-up == main && transfer independent scan == subagent"
+    behavioralRequirements: [
+      GP_ACKNOWLEDGED_CAUSAL_EXPLANATION,
+      GP_COMPLETED_TRANSFER_PAIR
+    ],
+    explanationRequirement: GP_ACKNOWLEDGED_CAUSAL_EXPLANATION,
+    transferRequirement: GP_COMPLETED_TRANSFER_PAIR
+  },
+
+  pass(st) {
+    return GP_PURE_PASS_EVALUATOR(st);
   },
 
   star2: {
-    label: "Read the relationships",
-    predicate:
-      "gate passes and at least five of six fixture routes match reference",
-    reason: "You separated dependent follow-ups from independent work."
+    label: "Route the relationship",
+    predicate: GP_GATE_PASSED_WITH_NO_HAND_CODE,
+    reason:
+      "You applied the revealed rule to both unseen tasks without hand-coding."
   },
   star3: {
     label: "Clean split",
-    predicate:
-      "all six fixture routes match reference && transfer pair correct && spentUsd <= 2.99600205",
-    reason: "Every follow-up stayed inline and every independent job stayed isolated."
+    predicate: GP_GATE_PASSED_NO_HAND_CODE_AND_REFERENCE_SPEND,
+    reason:
+      "Your economic route actions matched the mixed reference and spent no more than GP_REFERENCE_USD."
   },
 
-  referenceCfg: { who: "subagent", width: 4, prompts: "identical" },
-  antiCfg: { who: "inline", width: 1, prompts: "identical" },
+  referenceCfg: {
+    who: "subagent",
+    width: 4,
+    prompts: "identical"
+  },
+  antiCfg: {
+    who: "inline",
+    width: 1,
+    prompts: "identical"
+  },
+  counterfactuals: [
+    {
+      id: "all-inline",
+      unlockAfterEventId: "ev-complete",
+      kind: "anti-pattern",
+      cfg: {
+        who: "inline",
+        width: 1,
+        prompts: "identical"
+      },
+      scenarioPatch: GP_ALL_INLINE_ROUTE_PATCH,
+      comparisonQuestion:
+        "What changed when the four independent jobs carried the main conversation?",
+      revealCopy:
+        "The mixed route cut this fixture's bill by 53.24% because three warm bounded reads replaced four growing main-history reads."
+    }
+  ],
 
-  interactionPatterns: [
-    "PATTERN_PREDICT_BEFORE_REVEAL",
-    "PATTERN_FAIL_FREEZE_REWIND",
-    "PATTERN_JUST_IN_TIME_TOAST",
-    "PATTERN_EXPLAIN_THEN_TRANSFER",
-    "PATTERN_COUNTERFACTUAL_AFTER_ATTEMPT"
-  ]
+  tape: GP_TAPE_FROM_SECTION_7,
+  result: GP_RESULT_FROM_SECTION_10,
+  vocabulary: [
+    {
+      term: "carried context",
+      definition:
+        "Earlier conversation tokens included with the current request.",
+      firstNeededEventId: "ev-reveal-assert",
+      toastId: "t-main-growth"
+    }
+  ],
+  qa: GP_QA_FROM_SECTION_12
 };
 ```
 
-`referenceCfg.who` is the batch default; the ordered reference route vector is
-`[main, main, subagent, subagent, subagent, subagent]`. `antiCfg` expands to
-`[main, main, main, main, main, main]`.
+`GP_PURE_PASS_EVALUATOR` reads only `acknowledgedExplanationIds` and `completedTransferIds`. It never reads the prediction option, prediction correctness, wallet, or initial fixture-route correctness.
+
+The reference route vector is `[main, main, subagent, subagent, subagent, subagent]`. `referenceCfg.who` is the four-card batch default; the two dependent follow-up routes are explicit player actions. `GP_ALL_INLINE_ROUTE_PATCH` is `[main, main, main, main, main, main]`.
 
 ## 6. Pricing walkthrough
 
-Sonnet rates are input `$3/M`, cache read `$0.30/M`, 5-minute write `$3.75/M`, and output `$15/M` (`C1`, `C3`). All totals use `PRICE_REQUEST` without intermediate rounding.
+Sonnet prices are input `$3/M`, cache read `$0.30/M`, five-minute write `$3.75/M`, and output `$15/M` (`C1`, `C3`). Every value below is produced by `PRICE_REQUEST` without intermediate rounding.
 
-| Request | Route | Buckets | Exact cost |
+For dependent work routed out, the required main-session material becomes fresh `inputTok` because the new `SUBAGENT_CONTEXT` cannot read the main cache namespace. Each ad-hoc dependent subagent is cold and does not join the independent batch’s shared pool.
+
+This is the level’s sole authoritative request-price table:
+
+| Request | Route | Authoritative buckets | Exact USD |
 |---|---|---|---:|
-| `r-followup-rename-main` | main | `34,000 read` (`C29`) + `2,000 input` `[FICTION]` + `4,000 output` `[FICTION]` | `34,000×$0.30/M + 2,000×$3/M + 4,000×$15/M = $0.0762` |
-| `r-followup-assert-main` | main | `56,000 read` (`C29`) + `1,000 input` `[FICTION]` + `2,000 output` `[FICTION]` | `$0.0168 + $0.0030 + $0.0300 = $0.0498` |
-| `r-audit-sub` | subagent cold | `26,237 write` (`C10`) + `6,000 input` + `44,000 output` (`C28`) | `$0.09838875 + $0.018 + $0.66 = $0.77638875` |
-| `r-migration-sub` | subagent warm | `26,237 read` (`C10`) + `18,000 input` `[FICTION]` + `44,000 output` (`C28`) | `$0.0078711 + $0.054 + $0.66 = $0.7218711` |
-| `r-callers-sub` | subagent warm | `26,237 read` + `6,000 input` + `44,000 output` (`C10`, `C28`) | `$0.0078711 + $0.018 + $0.66 = $0.6858711` |
-| `r-licenses-sub` | subagent warm | same as `r-callers-sub` | `$0.6858711` |
+| `r-followup-rename-main` | main | `34,000 read` (`C29`) + `2,000 input` `[FICTION]` + `4,000 output` `[FICTION]` | `$0.0762` |
+| `r-followup-rename-sub` | isolated cold subagent | `26,237 write` (`C10`) + `36,000 input` (`34,000` required context plus `2,000` current) + `4,000 output` | `$0.26638875` |
+| `r-followup-assert-main` | main | `56,000 read` (`C29`) + `1,000 input` `[FICTION]` + `2,000 output` `[FICTION]` | `$0.0498` |
+| `r-followup-assert-sub` | isolated cold subagent | `26,237 write` (`C10`) + `57,000 input` (`56,000` required context plus `1,000` current) + `2,000 output` | `$0.29938875` |
+| `r-audit-sub` | shared-pool cold subagent | `26,237 write` (`C10`) + `6,000 input` (`C28`) + `4,000 output` `[FICTION]` | `$0.17638875` |
+| `r-callers-sub` | shared-pool warm subagent | `26,237 read` (`C10`) + `6,000 input` (`C28`) + `4,000 output` `[FICTION]` | `$0.0858711` |
+| `r-licenses-sub` | shared-pool warm subagent | same authoritative buckets as `r-callers-sub` | `$0.0858711` |
+| `r-exports-sub` | shared-pool warm subagent | same authoritative buckets as `r-callers-sub` | `$0.0858711` |
+| `r-audit-main` | main | `600,000 read` `[FICTION]` + `6,000 input` (`C28`) + `4,000 output` `[FICTION]` | `$0.2580` |
+| `r-callers-main` | main | `622,000 read` (`600,000 + C29`) + `6,000 input` (`C28`) + `4,000 output` `[FICTION]` | `$0.2646` |
+| `r-licenses-main` | main | `644,000 read` (`600,000 + 2×C29`) + `6,000 input` (`C28`) + `4,000 output` `[FICTION]` | `$0.2712` |
+| `r-exports-main` | main | `666,000 read` (`600,000 + 3×C29`) + `6,000 input` (`C28`) + `4,000 output` `[FICTION]` | `$0.2778` |
 
-Three-star reference total:
-
-```text
-$0.0762 + $0.0498 + $0.77638875 + $0.7218711
-+ $0.6858711 + $0.6858711
-= $2.99600205
-```
-
-The anti-pattern’s independent inline requests carry `92,000`, `114,000`, `136,000`, and `158,000` history tokens `[FICTION]`:
+The decisive failure is economically true:
 
 ```text
-audit:      92,000×$0.30/M + 6,000×$3/M + 44,000×$15/M = $0.7056
-migration: 114,000×$0.30/M +18,000×$3/M + 44,000×$15/M = $0.7482
-callers:   136,000×$0.30/M + 6,000×$3/M + 44,000×$15/M = $0.7188
-licenses:  158,000×$0.30/M + 6,000×$3/M + 44,000×$15/M = $0.7254
+GP_AUDIT_INLINE_USD = $0.2580
+GP_AUDIT_SUB_USD = $0.17638875
+GP_AUDIT_ROUTE_PENALTY_USD
+  = $0.2580 − $0.17638875
+  = $0.08161125
 ```
 
-Anti-pattern total:
+The punished inline request is `46.27%` more expensive than its valid subagent alternative; choosing the subagent saves `31.63%` of that request’s inline cost. Both rows include the `4,000` output tokens at the `5x` output rate (`C1`, `C3`).
+
+Reference total:
 
 ```text
-$0.0762 + $0.0498 + $0.7056 + $0.7482 + $0.7188 + $0.7254
-= $3.0240
+GP_REFERENCE_USD
+  = $0.0762
+  + $0.0498
+  + $0.17638875
+  + 3×$0.0858711
+  = $0.56000205
 ```
 
-Post-attempt delta: `$3.0240 − $2.99600205 = $0.02799795` `[FICTION]`. The comparison explicitly shows that the first cold subagent is expensive; the batch wins because later identical parallel spawns read the bounded `26,237`-token base (`C10`) while inline history continues growing (`C29`).
+All-inline post-attempt total:
+
+```text
+GP_ALL_INLINE_USD
+  = $0.0762
+  + $0.0498
+  + $0.2580
+  + $0.2646
+  + $0.2712
+  + $0.2778
+  = $1.1976
+```
+
+Derived routing difference:
+
+```text
+GP_ROUTE_DELTA_USD
+  = GP_ALL_INLINE_USD − GP_REFERENCE_USD
+  = $0.63759795
+
+GP_ROUTE_SAVINGS_RATIO
+  = $0.63759795 / $1.1976
+  = 0.5323964178356712
+```
+
+The mixed route reduces the six-ticket bill by `53.24%`, comfortably exceeding the required `20%` effect. `GP_ROUTE_DELTA_USD` is arithmetic derived from the priced rows; it is not a separate `[FICTION]` estimate. Its underlying `600,000`-token history and `4,000`-token outputs remain explicitly tagged `[FICTION]`.
+
+With `GP_BUDGET_USD`, the reference leaves `$0.43999795`; the all-inline counterfactual overspends by `$0.1976`. Budget is presentation evidence only and is not part of the pass gate.
 
 ## 7. Tape sequence
 
-`rowSource: "ledger"`; hover is enabled through `UI_HOVER_PRICE_CALCULATOR`.
+`tape.rowSource: "ledger"` and `hoverEnabled: true`.
 
-Ordered segments:
+Actual tape slots:
 
-1. `r-followup-rename-main`: `read 34,000` → `input 2,000` → `output 4,000`.
-2. `r-followup-assert-main`: `read 56,000` → `input 1,000` → `output 2,000`.
-3. Failure-only `r-audit-main`: `read 92,000` → `input 6,000` → `output 44,000`.
-4. After rewind, `r-audit-sub`: `write 26,237` → `input 6,000` → `output 44,000`.
-5. `r-migration-sub`: `read 26,237` → `input 18,000` → `output 44,000`.
-6. `r-callers-sub`: `read 26,237` → `input 6,000` → `output 44,000`.
-7. `r-licenses-sub`: `read 26,237` → `input 6,000` → `output 44,000`.
+1. `followup-rename`: exactly one of `r-followup-rename-main` or `r-followup-rename-sub`.
+2. `followup-assert`: exactly one of `r-followup-assert-main` or `r-followup-assert-sub`.
+3. `audit-imports`: `r-audit-main` on the failure branch or `r-audit-sub` on the shared-subagent branch.
+4. `check-callers`: `r-callers-sub` on the reference branch.
+5. `review-licenses`: `r-licenses-sub` on the reference branch.
+6. `scan-exports`: `r-exports-sub` on the reference branch.
+
+`REWIND_TO_CHECKPOINT("cp-parallel-route")` removes the failure-only `r-audit-main` row before the corrected branch appends `r-audit-sub`.
 
 Reveal groups:
 
-- `followups`: rows 1–2, each gated by its route prediction.
-- `failure-marginal`: failure-only row 3, gated by `p-parallel`.
-- `isolated-batch`: rows 4–7, revealed only after rewind and recommit.
-- `counterfactual-all-inline`: hidden until `COMPLETE_ATTEMPT`.
+```ts
+[
+  {
+    id: "rename",
+    requestIds: ["r-followup-rename-main", "r-followup-rename-sub"],
+    gatedByPredictionId: "p-rename-cost"
+  },
+  {
+    id: "assert",
+    requestIds: ["r-followup-assert-main", "r-followup-assert-sub"],
+    gatedByPredictionId: "p-assert-cost"
+  },
+  {
+    id: "batch",
+    requestIds: [
+      "r-audit-sub",
+      "r-callers-sub",
+      "r-licenses-sub",
+      "r-exports-sub"
+    ],
+    gatedByPredictionId: "p-batch-cost"
+  }
+]
+```
 
-`ahaRequestId: "r-callers-sub"`. At that frame, the three warm `26,237`-token reads align while a non-ledger ghost ruler marks the prior `92,000` history span. The ghost carries no price and cannot be mistaken for a request.
+Only the request ID that exists in the actual ledger renders. Alternative IDs in a reveal group do not create ghost tape rows.
+
+`ahaRequestId: "r-callers-sub"`. At that frame, the first warm `26,237`-token read aligns with the cold bounded write above it while a labeled, uncharged ruler recalls the earlier `600,000`-token main span.
+
+`UI_TAPE_RENDERER` uses the canonical `tapeWeight` and segment-share formulas from `OBJECT_MODEL.md`. Every row includes output in its geometry from its first rendered frame:
+
+```text
+row weight ∝ readTok×0.1 + inputTok + writeTok×tier + outTok×5
+```
+
+Thus the violet output segment contributes its full priced share even before output pricing receives a teaching label. No visual width may be computed from input-side tokens alone.
+
+The all-inline tape remains unavailable until `ev-complete`.
 
 ## 8. Prediction prompts
 
-### `p-route-1`
+Prediction commitment unlocks evidence but never chooses a route, spends wallet, freezes the level, changes stars, or satisfies the gate.
 
-**Question:** “Which route will cost less for this rename?”
+### `p-rename-cost`
 
-- `main`: “Keep it in this conversation.”
-- `subagent`: “Open a fresh subagent.”
+**Question:** “Before you route it: which room do you expect to cost less for this rename?”
 
-Reveal sentence: **“The conversation already contained the code and decision this follow-up needed.”**
+- `main-costs-less`: “The current conversation.”
+- `subagent-costs-less`: “A fresh subagent.”
 
-### `p-route-2`
+After commitment, both route targets remain independently selectable.
 
-**Question:** “The assertion depends on the rename. Keep it here or send it out?”
+Reveal sentence: **“The current conversation already contained the code and decision this follow-up needed.”**
 
-- `main`: “Keep here.”
-- `subagent`: “Send out.”
+### `p-assert-cost`
 
-Reveal sentence: **“Its useful context was already in the main prefix.”**
+**Question:** “The assertion depends on the rename. Which route do you expect to cost less?”
 
-### `p-parallel`
+- `main-costs-less`: “Keep it here.”
+- `subagent-costs-less`: “Send it out.”
 
-**Question:** “Four unrelated jobs can start together. Which route will make the shorter tape?”
+Reveal sentence: **“Sending it out had to copy the dependency context into an isolated namespace.”**
 
-- `main-batch`: “Keep all four here.”
-- `subagent-batch`: “Give each job a fresh subagent.”
-- `split-randomly`: “Split them two and two.”
+### `p-batch-cost`
 
-No styling, stack color, cost preview, or disabled state indicates correctness before commitment.
+The visible `600,000`-token stack and the **“Can run together”** bracket provide inferable evidence, but neither route has a dollar label.
 
-### `p-rule`
+**Question:** “Four unrelated jobs can start together. Which route do you expect to cost less?”
 
-**Question:** “What made the cheaper route change?”
+- `main-batch-costs-less`: “Carry this conversation into all four.”
+- `subagent-batch-costs-less`: “Give the four jobs fresh subagents.”
 
-- `task-size-only`: “Only the number of task tokens.”
-- `relationship-and-carried-context`: “Whether the job needed this conversation, plus how much history the route carried.”
+Reveal sentence: **“One bounded spawn write and three warm reads cost less than four growing main-history reads.”**
+
+No styling, order, disabled state, stack color, animation, or cost preview signals the correct prediction before commitment.
+
+### Post-evidence explanation
+
+This is not a `PredictionPromptDef`.
+
+**Question:** “What made the cheaper route change between the follow-ups and the batch?”
+
+- `task-size-only`: “Only the current task’s input size.”
+- `relationship-and-carried-context`: “Whether the job needed this conversation, plus how much history its route carried.”
 - `fresh-is-always-cheaper`: “Fresh subagents are always cheaper.”
 
-Correct option: `relationship-and-carried-context`.
-
-### Transfer prompts
-
-- **“Change the error string you just reviewed.”** Options: `main`, `subagent`; correct: `main`.
-- **“Scan an unrelated package tree.”** Options: `main`, `subagent`; correct: `subagent`.
-
-Every `RUN_UNIT` in a reveal group is disabled until its corresponding prediction is committed.
+Selecting an explanation dispatches `ACK_EXPLANATION`. Only `"relationship-and-carried-context"` satisfies the post-evidence explanation requirement.
 
 ## 9. Fail-state
 
-- `failureRuleId`: `inline-92k-overread`
-- Decisive event: routing `audit-imports` to `MAIN_SESSION_CONTEXT`.
-- Predicate: `unitId=="audit-imports" && route=="main" && PB_HISTORY.tokenCount==92000`.
-- Freeze after the priced row is fully visible, before the next ticket can run.
-- Cause code: `INLINE_HISTORY_OVERREAD`.
-- Exact causal message: **“This task reread 92k history to use 6k relevant input.”**
-- Highlight: the `92,000` `PB_HISTORY` span, the `6,000` `PB_CURRENT` span, the corresponding `WireSegment`s, and the `$0.7056` `LedgerRow`.
-- `UI_REWIND_CONTROL` label: **“Route the audit again.”**
-- Rewind target: `cp-parallel-route`; preserves both completed follow-up predictions and their tape rows.
+- `failureRuleId`: `f-inline-audit`
+- Decisive event: `ev-inline-audit-failure`
+- Predicate: the player routes `audit-imports` to `MAIN_SESSION_CONTEXT` and runs it after `ev-open-batch`.
+- Cause code: `INLINE_HISTORY_OVERREAD`
+- Freeze timing: after `r-audit-main` and every non-zero `WireSegment` are fully visible, before any later independent ticket runs.
+- Exact causal message: **“The audit carried 600k history. The bounded spawn route costs $0.08161125 less.”**
+- Charged route: `GP_AUDIT_INLINE_USD`
+- Valid alternative: `GP_AUDIT_SUB_USD`
+- Rewind label: **“Route the batch again.”**
+- Rewind target: `cp-parallel-route`
 
-The freeze demonstrates marginal context cost, not wallet exhaustion.
+The decisive frame visibly places the charged ledger row beside the authored uncharged alternative quote, including both sets of token buckets. The alternative is labeled **“Not charged — route comparison”** and is not a `Request`, `LedgerRow`, or tape row.
+
+The freeze is local and economically true:
+
+```text
+GP_AUDIT_INLINE_USD > GP_AUDIT_SUB_USD
+```
+
+The wallet is still positive at the freeze, so wallet exhaustion cannot masquerade as the cause. The failure predicate does not inspect `PredictionState`; a wrong `p-batch-cost` prediction followed by the subagent route cannot freeze.
 
 ## 10. Gate & stars
 
-Pass requires all of the following:
+The one-star pass gate uses only actions taken after `ev-reveal-batch`:
 
-- The two dependent fixture follow-ups are routed to `MAIN_SESSION_CONTEXT`.
-- The four independent fixture jobs are routed to `SUBAGENT_CONTEXT`s.
-- `p-rule` selects `relationship-and-carried-context`.
-- In the unseen transfer pair, the dependent error-string task routes inline and the unrelated package scan routes out.
-- No unit is hand-coded.
+1. `ACK_EXPLANATION` records `"relationship-and-carried-context"`.
+2. The unseen dependent error-string task is routed to `MAIN_SESSION_CONTEXT`.
+3. The unseen unrelated package scan is routed to `SUBAGENT_CONTEXT`.
 
-Budget alone cannot pass the level.
+The initial three prediction choices and their correctness are excluded from `GateDef`, `pass(st)`, failure evaluation, wallet mutation, and every star predicate. The initial fixture routes are economic play actions and may affect actual spend, but the prediction records themselves never do.
 
-- **1 star:** behavioral gate passes.
-- **2 stars — “Read the relationships”:** pass, with at least five of six fixture routes matching the reference route vector.
-- **3 stars — “Clean split”:** all six fixture routes match, both transfer routes are correct on their first committed attempt, no hand-coding, and spend is at most `$2.99600205`.
+- **1 star:** the post-evidence explanation and transfer gate passes.
+- **2 stars — “Route the relationship”:** pass, and `counts.handCoded == 0`.
+- **3 stars — “Clean split”:** two-star condition, plus actual spend is at most `GP_REFERENCE_USD`. Implement this with an `lte`/`gte` threshold, never exact floating-point equality.
 
 Result copy:
 
 - Pass headline: **“You gave each job the context it deserved.”**
-- Fail headline: **“The routes still follow one rule for every task.”**
-- Evidence line: **“Follow-ups stayed with their useful history; independent work kept the growing session out.”**
-- Continue: **“Next shift”**
-- Retry: **“Reroute the tickets”**
+- Fail headline: **“The new tickets still need two different routes.”**
+- Evidence line: **“Dependent work stayed with useful history; independent work avoided carrying the enlarged session.”**
+- Comparison line: **“Mixed routing saved $0.63759795, or 53.24%, on this fixture.”**
+- Continue label: **“Next shift”**
+- Retry label: **“Reroute the tickets”**
+
+Budget cannot independently pass the level.
 
 ## 11. Toasts
 
 | ID | Trigger | Exact copy |
 |---|---|---|
-| `t-main-growth` | After `r-followup-assert-main` renders | **“Main context: 56k carried into this request.”** |
+| `t-main-growth` | After `ev-reveal-assert` renders the main reference row | **“Carried context: 56k reused for this dependent follow-up.”** |
+| `t-batch-history` | After `ev-open-batch` completes | **“Main context now carries 600k tokens.”** |
 | `t-isolated-base` | After `r-audit-sub` renders | **“Fresh subagent: separate 26,237-token base.”** |
-| `t-shared-read` | After the first warm parallel spawn renders | **“Identical spawn prefix reused: 26,237-token read.”** |
-| `t-92k-cause` | `FREEZE_FAILURE` with `INLINE_HISTORY_OVERREAD` | **“This task reread 92k history to use 6k relevant input.”** |
-| `t-route-rule` | After `p-rule` reveal | **“Route by dependency, not by habit.”** |
-| `t-reference` | Counterfactual reveal | **“One cold base, then three bounded reads beat four growing inline histories.”** |
+| `t-shared-read` | After `r-callers-sub` renders | **“Identical spawn prefix reused: 26,237-token read.”** |
+| `t-inline-cause` | `FREEZE_FAILURE` with `INLINE_HISTORY_OVERREAD` | **“The audit carried 600k history. The bounded spawn route costs $0.08161125 less.”** |
+| `t-route-rule` | After the correct post-evidence explanation | **“Route by dependency and carried context, not by habit.”** |
+| `t-reference` | After the all-inline counterfactual reveals | **“One bounded write and three reads replaced four growing main-history reads.”** |
 
-`t-92k-cause` is assertive and remains through the freeze; all others are polite, `3,500ms` `[ESTIMATE]`, and deduplicated per attempt.
+`t-inline-cause` has `priority: "cause"`, uses `aria-live="assertive"`, and remains visible while frozen. Other toasts are polite, use the default `3,500ms` duration `[ESTIMATE]`, and deduplicate per attempt.
 
 ## 12. QA gate
 
 Real-browser click-through must establish:
 
-1. First meaningful route control is interactive by `2s` `[ESTIMATE]`; no answer, comparison, or route recommendation appears first.
-2. Pointer, touch, and keyboard routing dispatch identical `ROUTE_UNIT` actions.
-3. No gated `RUN_UNIT` or `REVEAL_PREDICTION` succeeds before `COMMIT_PREDICTION`.
-4. Each priced `Request` produces exactly one `LedgerRow` and one `UI_TAPE_RENDERER` row; the failure-only row disappears after rewind.
-5. Each rendered row’s non-zero `WireSegment`s exactly match its `readTok`, `inputTok`, `writeTok`, and `outTok`.
-6. Every request cost is positive and matches `PRICE_REQUEST`; no positive amount displays as `$0.0000`.
-7. `r-audit-sub` alone writes `26,237`; the next three identical subagent spawns each read `26,237` (`C10`).
-8. Main and subagent cache namespaces remain isolated; the main panel never displays the shared subagent `CacheEntry`.
-9. Inline `audit-imports` freezes on the fully rendered `92,000`/`6,000` row with exact copy: **“This task reread 92k history to use 6k relevant input.”**
-10. `REWIND_TO_CHECKPOINT("cp-parallel-route")` restores wallet, ledger, caches, route choices, and prediction state byte-identically from the fixed seed.
-11. Static final bars render with their final colors and prices without hover; reduced motion presents identical evidence immediately.
-12. Hover/focus equations reproduce every cost in the pricing table above.
-13. The fixed reference route vector passes with `$2.99600205`; the all-inline route vector totals `$3.0240` and fails the behavioral gate.
-14. The player can win using only documented route, prediction, rewind, explanation, and completion controls.
-15. `CounterfactualOverlay`, route labels, reference total, and post-reveal rule remain unavailable until a meaningful attempt completes.
-16. At `320px` CSS width, the active route target, decisive tape row, toast, and rewind control do not overlap.
-17. Screen-reader order is ticket → prediction → route controls → revealed row → causal caption; failure announcement uses `aria-live="assertive"`.
+1. The first route interaction is available by `2s` `[ESTIMATE]`; no answer, dollar comparison, bounded-base explanation, or route recommendation appears first.
+2. The level enters with `ENTER_LEVEL { levelId: "08-growing-pains" }`.
+3. `concept.id` and `prerequisiteConceptIds` match the canonical registry exactly.
+4. `LevelDef.interactionPatterns` contains only canonical kebab-case IDs.
+5. Pointer, touch, and keyboard paths dispatch equivalent prediction and `ROUTE_UNIT` actions.
+6. Prediction commitment and route choice are separate actions; committing any prediction cannot select a route.
+7. No gated request or `REVEAL_PREDICTION` succeeds before its corresponding `COMMIT_PREDICTION`.
+8. A wrong prediction followed by the same route produces byte-identical wallet, ledger, stars, failure, and gate state as a correct prediction followed by that route.
+9. The one-star gate observes `ACK_EXPLANATION` and both transfer `ROUTE_UNIT` actions after `ev-reveal-batch`; no pre-reveal guess can pass or fail it.
+10. Each priced `Request` produces exactly one `LedgerRow` and one `UI_TAPE_RENDERER` row.
+11. Rewinding to `cp-parallel-route` removes the failure-only `r-audit-main` row and restores wallet, cache, routes, and prediction state deterministically.
+12. Every request cost is positive and matches `PRICE_REQUEST`; no positive amount displays as `$0.0000`.
+13. Every rendered row’s non-zero `readTok`, `inputTok`, `writeTok`, and `outTok` produces exactly one corresponding `WireSegment`.
+14. `UI_TAPE_RENDERER` row width is proportional to authoritative USD and includes `outTok × 5`; output-heavy visual weight cannot disappear when its teaching label is hidden.
+15. `r-audit-sub` writes `26,237`; the next three independent spawns each read `26,237` while live (`C10`, `C12`).
+16. Main and subagent cache namespaces remain isolated; `UI_MAIN_CACHE_PANEL` never displays the shared subagent entry.
+17. The inline audit freezes only after its complete charged row renders.
+18. The failure frame displays `GP_AUDIT_INLINE_USD`, `GP_AUDIT_SUB_USD`, their full bucket equations, and `GP_AUDIT_ROUTE_PENALTY_USD`.
+19. `FailureRuleDef.actualUsd > FailureRuleDef.validAlternativeUsd`; the exact punished request is `46.27%` more expensive than its valid alternative.
+20. The reference route produces `GP_REFERENCE_USD`; the post-attempt all-inline route produces `GP_ALL_INLINE_USD`; their derived difference is `GP_ROUTE_DELTA_USD`.
+21. The reference route lowers the six-ticket bill by `53.24%`, exceeding the required `20%`.
+22. The fixed reference route passes from seed `8292`; the all-inline route reaches the intended failure and cannot satisfy the post-evidence transfer gate without correction.
+23. Static final tape bars show their final colors, output segments, and prices without hover.
+24. Hover and keyboard focus equations reproduce every row in the sole pricing table.
+25. Reduced-motion mode reveals identical final evidence immediately.
+26. `UI_COUNTERFACTUAL_OVERLAY`, the all-inline total, the derived delta, and `concept.postRevealRule` remain unavailable until a meaningful attempt completes.
+27. The player can win with only documented prediction, route, rewind, explanation, and completion controls.
+28. At `320px` CSS width, the active route target, decisive tape row, cause toast, comparison quote, and rewind control do not overlap.
+29. Screen-reader order is ticket → prediction → route controls → revealed row → causal caption; the failure announcement is assertive.
+30. No stale alternative total, superseded price, unreachable failure rule, uppercase pattern alias, or legacy level/concept ID appears.
 
 ## 13. Reference-bar justification
 
-The screen opens on a tactile sorting decision, withholds economics until commitment, and lets the first two tiny follow-ups establish a tempting habit. The `92k` freeze then makes that habit fail at one concrete request, and the immediate rewind converts surprise into agency. Only after the player discovers the bounded parallel pattern does the game name the rule and test it on unseen surface details. The post-attempt all-inline overlay confirms the mechanism without becoming a pre-play answer key, matching the discovery, causal feedback, and fast-transfer rhythm of the reference experiences.
+The screen opens on one tactile sorting action and lets two dependent follow-ups establish that keeping work nearby can be economically sensible. It then enlarges the visible main stack and asks the player to reconsider the same control for unrelated parallel work. Choosing inline creates an immediate, truthful comparison: `$0.2580` versus `$0.17638875`, followed by a local rewind. The corrected batch reveals one bounded write and three warm reads, after which the player must articulate and transfer the rule to unseen tasks.
 
-Assumption: task-shape and the `92,000` history fixture are calibrated `[FICTION]`; pricing multipliers, Sonnet rates, `26,237` subagent base, `6,000/44,000` canonical workload, and inline growth anchors cite `C1`, `C3`, `C10`, `C28`, and `C29`.
+The post-attempt overlay confirms a material result—`53.24%` lower spend—without becoming a pre-play answer key. This preserves the predict, act, reveal, rewind, explain, and transfer rhythm of the reference experiences.
+
+Significant calibration tradeoff: the independent review jobs use `4,000 outTok` `[FICTION]` instead of the `44,000` development-task output fixture in `C28`, and the pre-batch main history is `600,000` tokens `[FICTION]`. Those choices make routing visibly causal while retaining the canonical `6,000` work input (`C28`), measured `26,237` spawn prefix (`C10`), `22,000` inline growth (`C29`), and the full output-cost contribution required by `C1`, `C3`, and `UI_TAPE_RENDERER`.

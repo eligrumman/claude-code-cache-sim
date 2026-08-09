@@ -2,26 +2,29 @@
 
 ## 1. Identity
 
-- `id`: `L6`
+- `id`: `"06-buy-more-time"`
 - `title`: **Buy More Time?**
 - `tier`: `1`
-- `objective`: **Choose a write for each work block. The gaps stay hidden until you commit.**
-- ONE concept: the higher-premium write tier is worthwhile only when its longer TTL prevents enough rewrites.
-- Prerequisite concepts: TTL expiry, cache reads versus writes, write/read cost.
-- `concept.id`: `cache-tier-break-even`
-- `concept.privateDesignerSummary`: Compare the 5-minute and 1-hour write tiers against the actual gap pattern.
-- `concept.postRevealRule`: **Paying for longer life is worthwhile only when it prevents enough rewrites.**
-- Unlock: `oneHourFlag`
-- Introduced control: `oneHourFlag`
+- `objective`: **Choose a write for each workday. Exact gaps stay covered until you commit.**
+- ONE concept: a higher-premium write tier is worthwhile only when its longer TTL prevents enough rewrites.
+- `concept.id`: `"ttl-tier-tradeoff"`
+- `concept.privateDesignerSummary`: Compare the 5-minute and 1-hour tiers against inferable but unrevealed workday rhythms.
+- `concept.postRevealRule`: **Pay for longer life only when the schedule prevents enough rewrites.**
+- `prerequisiteConceptIds`: `["write-vs-read", "cache-expiry"]`
+- Unlock and introduced control: `oneHourFlag`
 - Previously introduced controls remain locked except `run`.
+
+Prediction correctness is evidence only. It never changes the wallet, score, stars, failure state, or pass predicate.
 
 ## 2. Objects used
 
 - `Request`
 - `PricedRequest`
+- `PrefixStack`
 - `CacheEntry`
 - `MAIN_SESSION_CONTEXT`
 - `LedgerRow`
+- `WireSegment`
 - `Wallet`
 - `Budget`
 - `Clock`
@@ -42,206 +45,352 @@
 - `UI_COUNTERFACTUAL_OVERLAY`
 - `UI_REWIND_CONTROL`
 - `UI_RESULT_SCREEN`
-- `PATTERN_PREDICT_BEFORE_REVEAL`
-- `PATTERN_FAIL_FREEZE_REWIND`
-- `PATTERN_JUST_IN_TIME_TOAST`
-- `PATTERN_COUNTERFACTUAL_AFTER_ATTEMPT`
+- Interaction pattern `predict-before-reveal`
+- Interaction pattern `fail-freeze-rewind`
+- Interaction pattern `just-in-time-toast`
+- Interaction pattern `counterfactual-after-attempt`
 
 ## 3. Cold-open / narrative
 
-`maxInstructionCards: 0`; first interactive control appears by `1s` `[ESTIMATE]`.
+`maxInstructionCards: 0`; the first tier control is interactive by `1.0s` `[ESTIMATE]`.
 
 | Time | Beat |
 |---:|---|
-| `0.0s` | Two face-down workday strips land on the desk: **MONDAY** and **TUESDAY**. Each contains four work-block cards separated by covered gaps. |
-| `0.4s` | System copy: **“Four blocks today. The gaps are under the tape.”** |
-| `0.8s` | The first block exposes two equal-weight buttons: **“Write · 5 min”** and **“Write · 1 hour”**. No rate, TTL comparison, recommendation, color cue, or future schedule is shown. |
-| `1.0s` | Player may choose. Dispatch `CREATE_CHECKPOINT { checkpointId: "cp-r1-tier", reason: "decision" }`. |
-| After all Monday choices | Copy: **“Lock Monday, then call your shot.”** Open `pred-r1`. |
-| After Monday reveal | Tuesday slides forward with the same four covered gaps. Copy: **“New day. Same choice. New rhythm.”** |
-| After all Tuesday choices | Open `pred-r2`; the schedule remains covered until commitment. |
+| `0.0s` | A **MONDAY** calendar strip lands on the desk. Four covered work blocks are visibly packed into one narrow portion of the same hour. Generic hour ticks establish scale, while the exact gap labels remain masked. |
+| `0.3s` | System copy: **“Four blocks today. The exact gaps are under the tape.”** |
+| `0.6s` | Accessible evidence says: **“Four evenly spaced blocks are tightly clustered within a small part of one hour.”** This is the same evidence conveyed by the silhouette, not hidden metadata. |
+| `0.8s` | Two equal-weight controls appear: **“Write · 5 min”** and **“Write · 1 hour.”** Neither has a price, recommendation, correctness color, or rebuild count. |
+| `1.0s` | Player may select Monday’s tier. `CREATE_CHECKPOINT { checkpointId: "cp-monday", reason: "decision" }` has already completed. |
+| After tier selection | Copy: **“Lock your prediction before the tape comes off.”** Open `pred-monday`. |
+| After Monday resolves | Both Monday totals become visible. Monday is an observed comparison, never a failure freeze. |
+| Before Tuesday selection | A **TUESDAY** strip appears on the same scale. Four covered blocks are spread evenly across roughly an hour and a half. Exact gap labels remain masked. Copy: **“Same work. Different rhythm.”** |
+| After Tuesday tier selection | Open `pred-tuesday`; running remains disabled until commitment. |
 
-The opening never names the cheaper tier, the gap lengths, the break-even ratio, or the number of rebuilds either tier will avoid.
+The spatial density is deliberate inferable evidence. Before commitment, the UI exposes no exact gap value, price, total, avoided-rebuild count, break-even ratio, correctness label, or answer-shaped color.
 
 ## 4. Exact event sequence
 
-All requests use Sonnet and a byte-identical `26,237`-token cacheable prefix (`C10`), with `freshInputTok=0` and `expectedOutputTok=0`. Gap timings are scenario fixtures marked `[FICTION]`. Dollar mutations use unrounded `PRICE_REQUEST` results.
+All requests use Sonnet, a byte-identical cacheable prefix of `26,237` tokens (`C10`), `freshInputTok=0`, and `expectedOutputTok=0`. Prices use unrounded `PRICE_REQUEST` results. Gap and presentation timings are authored fixtures marked `[FICTION]` or `[ESTIMATE]`.
 
-1. **Enter level**
-   - Event: screen opens.
-   - Action: `ENTER_LEVEL { levelId: "L6" }`.
-   - Mutates: `ReducerState`, `Wallet`, `Budget`, `Clock`, `MAIN_SESSION_CONTEXT`, empty `CacheEntry` collection, empty ledger, attempt state.
-   - Numbers: wallet `$0.60` `[FICTION]`; clock `0m`; ledger rows `0`.
+1. **Enter level — `ev-enter`**
+   - Event: the screen opens.
+   - Action: `ENTER_LEVEL { levelId: "06-buy-more-time" }`.
+   - Mutates: `ReducerState`, `Wallet`, `Budget`, `Clock`, two `MAIN_SESSION_CONTEXT` seeds, empty cache, empty ledger, prediction state, and attempt state.
+   - Numbers: budget and wallet `$0.60000000` `[FICTION]`; clock `0m`; ledger rows `0`.
 
-2. **Checkpoint Monday**
-   - Event: Monday tier controls become active.
-   - Action: `CREATE_CHECKPOINT { checkpointId: "cp-r1-tier", reason: "decision" }`.
+2. **Create Monday checkpoint — `ev-cp-monday`**
+   - Event: Monday’s tier controls become active.
+   - Action: `CREATE_CHECKPOINT { checkpointId: "cp-monday", reason: "decision" }`.
    - Mutates: `Checkpoint[]`.
-   - Numbers: action boundary only; `$0`.
+   - Economic effect: none.
 
-3. **Choose Monday writes**
-   - Event: player chooses **5 min** or **1 hour** on each of `r1-b1…r1-b4`.
-   - Action per card: `SELECT_WRITE_TIER { blockId, tier }`.
-   - Mutates: selected tier for each block; no cache, ledger, clock, or wallet mutation.
-   - Numbers: `4` choices `[FICTION]`.
+3. **Choose Monday tier — `ev-select-monday-tier`**
+   - Event: the player selects one tier for Monday’s cache entry.
+   - Action: `SELECT_WRITE_TIER { blockId: "monday", tier }`.
+   - Mutates: Monday tier selection and `cfg.oneHourFlag`.
+   - Economic effect: none.
+   - The silhouette is already visible, so this is reasoning from calendar density rather than a blind guess.
 
-4. **Predict Monday**
-   - Event: fourth choice locks.
-   - Actions:
-     - `OPEN_PREDICTION { promptId: "pred-r1" }`
-     - `SELECT_PREDICTION { promptId: "pred-r1", optionId }`
-     - `COMMIT_PREDICTION { promptId: "pred-r1" }`
-   - Mutates: `prediction`, `phase`.
-   - Numbers: reveal remains blocked until commitment.
+4. **Commit Monday prediction — `ev-commit-pred-monday`**
+   - Ordered actions:
+     1. `OPEN_PREDICTION { promptId: "pred-monday" }`
+     2. `SELECT_PREDICTION { promptId: "pred-monday", optionId }`
+     3. `COMMIT_PREDICTION { promptId: "pred-monday" }`
+   - Mutates: `PredictionState` and phase.
+   - Monday execution remains disabled until commitment. The chosen option has no economic or scoring effect.
 
-5. **Monday block 1**
-   - Event: player presses **Run Monday** after committing.
+5. **Monday block 1 — `ev-monday-b1`**
+   - Event: the player presses **Run Monday**.
    - Action: `SEND_REQUEST { request: r1-b1 }`.
-   - Mutates: `CacheEntry`, ledger, `lastRequests`, `Wallet`, tape payload.
-   - If `5m`: `writeTok=26,237`; cost `26,237×1.25×$3/M=$0.09838875` (`C1`, `C3`, `C10`); expiry `5m`.
-   - If `1h`: `writeTok=26,237`; cost `26,237×2×$3/M=$0.157422` (`C1`, `C3`, `C10`); expiry `60m`.
+   - Mutates: Monday `CacheEntry`, ledger, `lastRequests`, wallet, and tape.
+   - With `5m`: `writeTok=26,237`; `$0.09838875` (`C1`, `C3`, `C10`).
+   - With `1h`: `writeTok=26,237`; `$0.15742200` (`C1`, `C3`, `C10`).
 
-6. **Reveal Monday gap 1**
-   - Event: first cover peels back only after request 1.
+6. **Reveal Monday gap 1 — `ev-monday-gap1`**
+   - Event: only the first exact gap label uncovers.
    - Action: `ADVANCE { min: 2 }`.
-   - Mutates: `Clock`; live entry derives `3m` remaining for 5m or `58m` for 1h.
-   - Numbers: gap `2m` `[FICTION]`.
+   - Mutates: `Clock`; the selected entry remains live.
+   - Number: `2m` `[FICTION]`.
 
-7. **Monday block 2**
-   - Event: scan head reaches block 2.
+7. **Monday block 2 — `ev-monday-b2`**
    - Action: `SEND_REQUEST { request: r1-b2 }`.
-   - Mutates: ledger, wallet, tape, `CacheEntry.lastTouchMin`, expiry.
-   - Both tiers hit: `readTok=26,237`; cost `26,237×0.1×$3/M=$0.0078711` (`C1`, `C3`, `C10`, `C12`).
-   - Successful read refreshes the selected entry’s TTL (`C12`).
+   - Mutates: ledger, wallet, tape, `CacheEntry.lastTouchMin`, and expiry.
+   - Both tiers resolve with `readTok=26,237` for `$0.00787110` (`C1`, `C3`, `C10`).
+   - The successful read refreshes idle TTL (`C12`).
 
-8. **Monday blocks 3–4**
-   - Events and actions, in order:
-     - `ADVANCE { min: 2 }`
-     - `SEND_REQUEST { request: r1-b3 }`
-     - `ADVANCE { min: 2 }`
-     - `SEND_REQUEST { request: r1-b4 }`
-   - Mutates: `Clock`, ledger, wallet, tape, cache touch/expiry after each hit.
-   - Numbers: each gap `2m` `[FICTION]`; each request reads `26,237` tokens for `$0.0078711` (`C1`, `C3`, `C10`, `C12`).
+8. **Monday blocks 3 and 4 — `ev-monday-b3` / `ev-monday-b4`**
+   - Ordered actions:
+     1. `ADVANCE { min: 2 }`
+     2. `SEND_REQUEST { request: r1-b3 }`
+     3. `ADVANCE { min: 2 }`
+     4. `SEND_REQUEST { request: r1-b4 }`
+   - Mutates: clock, ledger, wallet, tape, and cache expiry.
+   - Each gap is `2m` `[FICTION]`; each request reads `26,237` tokens for `$0.00787110` (`C1`, `C3`, `C10`, `C12`).
 
-9. **Reveal Monday result**
-   - Event: fourth request lands.
-   - Action: `REVEAL_PREDICTION { promptId: "pred-r1", correctOptionId: "five-minute" }`.
-   - Mutates: prediction result, phase; uncovers Monday schedule and totals.
-   - Numbers:
-     - all-5m total: `$0.09838875 + 3×$0.0078711 = $0.12200205`;
-     - all-1h total: `$0.157422 + 3×$0.0078711 = $0.18103530`;
-     - 1h premium with rebuilds avoided `0`: `$0.05903325`.
-   - Aha is not stated yet; evidence copy: **“Every next block arrived while the short write was still alive.”**
+9. **Reveal Monday evidence — `ev-monday-result`**
+   - Ordered actions:
+     1. `REVEAL_PREDICTION { promptId: "pred-monday", correctOptionId: "five-minute" }`
+     2. `REQUEST_COUNTERFACTUAL { comparisonId: "cf-monday-reference" }`
+     3. `REVEAL_COUNTERFACTUAL { comparisonId: "cf-monday-reference" }`
+     4. `REQUEST_COUNTERFACTUAL { comparisonId: "cf-monday-anti" }`
+     5. `REVEAL_COUNTERFACTUAL { comparisonId: "cf-monday-anti" }`
+   - Mutates: prediction reveal, completed-event evidence, and `UI_COUNTERFACTUAL_OVERLAY`.
+   - Visible comparison:
+     - 5m total: `$0.12200205`.
+     - 1h total: `$0.18103530`.
+     - Longer-tier premium: `$0.05903325`.
+     - Rebuilds avoided: `0`.
+   - Evidence copy: **“Every next block arrived while the short entry was still alive.”**
+   - This is deliberately non-freezing. The player has completed a meaningful attempt and receives truthful evidence without punishment.
 
-10. **Monday causal failure**
-    - Event: the player used 1h on any Monday block that required a write.
-    - Action: `FREEZE_FAILURE { failure: { failureId: "fail-r1-premium", causeCode: "PREMIUM_NO_REBUILD_AVOIDED", message: "Monday stayed clustered. The longer write cost $0.05903 more and prevented no rebuild.", checkpointId: "cp-r1-tier" } }`.
-    - Mutates: `clock.frozen`, `frozenFailure`, phase.
-    - Numbers: `$0.05903325` premium (`C1`, `C3`, `C10`).
-    - `UI_REWIND_CONTROL` label: **“Choose Monday again”**.
-    - Rewind action: `REWIND_TO_CHECKPOINT { checkpointId: "cp-r1-tier" }`.
+10. **Offer explanation and transfer — `ev-begin-tuesday-transfer`**
+    - Optional action: `ACK_EXPLANATION { explanationId: "monday-premium-no-rebuild" }`.
+    - Required transition action: `BEGIN_TRANSFER { challengeId: "tuesday-spaced-work" }`.
+    - Mutates: acknowledged explanations, phase, and transfer state.
+    - Prediction correctness is not inspected.
 
-11. **Begin Tuesday**
-    - Event: Monday passes with all four choices set to 5m.
-    - Actions:
-      - `DISCARD_CONTEXT { contextId: "main-l6-monday" }`
-      - `ADVANCE { min: 24 }`
-      - `CREATE_CHECKPOINT { checkpointId: "cp-r2-tier", reason: "decision" }`
-    - Mutates: Monday cache namespace cleared; clock advances from `6m` to `30m`; Tuesday context starts cold; checkpoint added.
-    - Numbers: day-separation advance `24m` `[FICTION]`; this action creates no ledger row and no cost.
+11. **Initialize Tuesday — `ev-cp-tuesday`**
+    - Ordered actions:
+      1. `DISCARD_CONTEXT { contextId: "main-l6-monday" }`
+      2. `ADVANCE { min: 24 }`
+      3. `CREATE_CHECKPOINT { checkpointId: "cp-tuesday", reason: "decision" }`
+    - Mutates: Monday cache namespace, clock, Tuesday cold context, and `Checkpoint[]`.
+    - Clock advances from `6m` to `30m`; the `24m` separation is `[FICTION]`.
+    - Monday’s completed evidence remains visible and is not replayed after a Tuesday rewind.
 
-12. **Choose and predict Tuesday**
-    - Event: player chooses a tier for `r2-b1…r2-b4`, then locks the day.
-    - Actions:
-      - four `SELECT_WRITE_TIER { blockId, tier }`
-      - `OPEN_PREDICTION { promptId: "pred-r2" }`
-      - `SELECT_PREDICTION { promptId: "pred-r2", optionId }`
-      - `COMMIT_PREDICTION { promptId: "pred-r2" }`
-    - Mutates: selected tiers, prediction, phase.
-    - Numbers: four choices `[FICTION]`; no economic mutation before Run.
+12. **Choose Tuesday tier — `ev-select-tuesday-tier`**
+    - Event: the player applies the rule to Tuesday’s sparse silhouette.
+    - Action: `SELECT_WRITE_TIER { blockId: "tuesday", tier }`.
+    - Mutates: Tuesday tier selection and `cfg.oneHourFlag`.
+    - Economic effect: none.
+    - This is the authoritative post-evidence transfer action used by the gate.
 
-13. **Tuesday block 1**
-    - Event: player presses **Run Tuesday**.
+13. **Commit Tuesday prediction — `ev-commit-pred-tuesday`**
+    - Ordered actions:
+      1. `OPEN_PREDICTION { promptId: "pred-tuesday" }`
+      2. `SELECT_PREDICTION { promptId: "pred-tuesday", optionId }`
+      3. `COMMIT_PREDICTION { promptId: "pred-tuesday" }`
+    - Mutates: `PredictionState` and phase.
+    - Tuesday execution remains disabled until commitment. Correctness remains non-punitive.
+
+14. **Tuesday block 1 — `ev-tuesday-b1`**
     - Action: `SEND_REQUEST { request: r2-b1 }`.
-    - Mutates: Tuesday `CacheEntry`, ledger, wallet, tape.
-    - If `5m`: `$0.09838875`; if `1h`: `$0.157422` (`C1`, `C3`, `C10`).
+    - Mutates: Tuesday `CacheEntry`, ledger, wallet, `lastRequests`, and tape.
+    - With `5m`: `$0.09838875`.
+    - With `1h`: `$0.15742200`.
+    - Citations: `C1`, `C3`, `C10`.
 
-14. **Reveal Tuesday gap 1**
-    - Event: first cover peels back.
+15. **Reveal Tuesday gap 1 — `ev-tuesday-gap1`**
     - Action: `ADVANCE { min: 30 }`.
-    - Mutates: `Clock`; 5m entry derives expired, 1h entry derives `30m` remaining.
-    - Numbers: gap `30m` `[FICTION]`; TTLs `5m`/`60m` (`C1`).
+    - Mutates: clock and derived cache liveness.
+    - Number: `30m` `[FICTION]`.
+    - A 5m entry is expired; a 1h entry has `30m` remaining (`C1`).
 
-15. **Tuesday block 2 — decisive transfer**
-    - Event: scan head reaches block 2.
+16. **Tuesday block 2 — `ev-tuesday-b2`**
     - Action: `SEND_REQUEST { request: r2-b2 }`.
-    - Mutates: ledger, wallet, tape, cache.
-    - With 5m: entry expired, so `writeTok=26,237`; cost `$0.09838875`.
-    - With 1h: entry live, so `readTok=26,237`; cost `$0.0078711`.
-    - This is `ahaFrame=true`: the same gap turns the two purchases into visibly different buckets.
+    - Mutates: ledger, wallet, tape, and cache.
+    - With `5m`: the expired prefix rewrites, `writeTok=26,237`, `$0.09838875`.
+    - With `1h`: the live prefix reads, `readTok=26,237`, `$0.00787110`.
+    - `ahaFrame=true`: the `30 MIN` label, `UI_TTL_DRAIN_BAR`, actual row, and causal bucket are visible together.
 
-16. **Tuesday short-tier failure**
-    - Event: `r2-b2` rewrites under the 5m choice.
-    - Action: `FREEZE_FAILURE { failure: { failureId: "fail-r2-expiry", causeCode: "SHORT_TTL_REBUILD", message: "Block 2 arrived 30 minutes later. The 5-minute entry expired, so all 26,237 tokens rewrote.", checkpointId: "cp-r2-tier" } }`.
-    - Mutates: clock frozen at the completed decisive request; failure state.
-    - Numbers: arrival gap `30m` `[FICTION]`; TTL `5m`; rewrite `26,237` tokens; `$0.09838875` (`C1`, `C3`, `C10`).
-    - Rewind label: **“Choose Tuesday again”**.
-    - Rewind action: `REWIND_TO_CHECKPOINT { checkpointId: "cp-r2-tier" }`.
+17. **Tuesday failure comparison — `ev-tuesday-b2-compare`**
+    - Preconditions: `r2-b2` resolved as a 5m rewrite.
+    - Ordered actions:
+      1. `REQUEST_COUNTERFACTUAL { comparisonId: "cf-tuesday-reference" }`
+      2. `REVEAL_COUNTERFACTUAL { comparisonId: "cf-tuesday-reference" }`
+    - Mutates: counterfactual presentation only; no ledger or wallet mutation.
+    - The overlay exposes only the already-reached block-2 comparison:
+      - actual `r2-b2` rewrite: `$0.09838875`;
+      - valid 1h `r2-b2` read: `$0.00787110`;
+      - request-cost multiple: `12.5×`;
+      - actual day-to-date: `$0.19677750`;
+      - valid-alternative day-to-date: `$0.16529310`.
+    - Future exact gap labels and the final break-even ratio remain concealed.
 
-17. **Tuesday blocks 3–4**
-    - Preconditions: Tuesday choices are 1h.
-    - Events and actions:
-      - `ADVANCE { min: 30 }`
-      - `SEND_REQUEST { request: r2-b3 }`
-      - `ADVANCE { min: 30 }`
-      - `SEND_REQUEST { request: r2-b4 }`
-    - Mutates: clock, ledger, wallet, tape, refreshed cache expiry.
-    - Numbers: each gap `30m` `[FICTION]`; each hit reads `26,237` tokens for `$0.0078711` (`C1`, `C3`, `C10`, `C12`).
+18. **Freeze Tuesday failure — `ev-freeze-tuesday-expiry`**
+    - Preconditions: the comparison in `ev-tuesday-b2-compare` is rendered.
+    - Action:
 
-18. **Reveal Tuesday result**
-    - Event: fourth Tuesday request lands.
-    - Action: `REVEAL_PREDICTION { promptId: "pred-r2", correctOptionId: "one-hour" }`.
-    - Mutates: prediction result, phase; uncovers the full Tuesday schedule and totals.
-    - Numbers:
-      - all-1h: `$0.157422 + 3×$0.0078711 = $0.18103530`;
-      - all-5m: `4×$0.09838875 = $0.39355500`;
-      - 1h saves `$0.21251970`;
-      - rebuilds avoided: `3`.
+```ts
+FREEZE_FAILURE {
+  failure: {
+    failureId: "fail-tuesday-expiry",
+    causeCode: "SHORT_TTL_REBUILD",
+    message:
+      "Block 2 arrived 30 minutes later. The 5-minute entry expired, so 26,237 tokens rewrote for $0.09838875 instead of reading for $0.00787110.",
+    checkpointId: "cp-tuesday"
+  }
+}
+```
 
-19. **Complete attempt and unlock comparison**
-    - Event: both days have resolved.
-    - Actions:
-      - `COMPLETE_ATTEMPT`
-      - `REQUEST_COUNTERFACTUAL { comparisonId: "cf-tier-break-even" }`
-      - `REVEAL_COUNTERFACTUAL { comparisonId: "cf-tier-break-even" }`
-    - Mutates: gate result, stars, result summary, `UI_COUNTERFACTUAL_OVERLAY`.
-    - Numbers:
-      - reference total: `$0.12200205 + $0.18103530 = $0.30303735`;
-      - anti-pattern total: `$0.18103530 + $0.39355500 = $0.57459030`;
-      - anti-pattern delta: `$0.27155295`.
-    - Only now reveal:
-      - write premium: `(2−1.25)=0.75` base-rate units;
-      - one avoided 5m rebuild is worth `(1.25−0.1)=1.15` base-rate units;
-      - ratio: `0.75/1.15=0.652173…` (`C21`).
-    - Reveal copy: **“The extra hour-write premium is about 0.65 of one avoided rebuild. Monday avoided none; Tuesday avoided three.”**
-    - Post-reveal rule appears only here: **“Buy longer life when the schedule will prevent enough rewrites.”**
+   - Mutates: frozen failure state, phase, and `clock.frozen`.
+   - This freeze occurs only after the decisive priced request and its cheaper counterfactual are simultaneously visible.
+   - Rewind action: `REWIND_TO_CHECKPOINT { checkpointId: "cp-tuesday" }`.
+   - Rewind label: **“Choose Tuesday again.”**
+
+19. **Complete Tuesday under 1h — `ev-tuesday-b3` / `ev-tuesday-b4`**
+    - Preconditions: Tuesday’s selected tier is `1h`.
+    - Ordered actions:
+      1. `ADVANCE { min: 30 }`
+      2. `SEND_REQUEST { request: r2-b3 }`
+      3. `ADVANCE { min: 30 }`
+      4. `SEND_REQUEST { request: r2-b4 }`
+    - Mutates: clock, ledger, wallet, tape, and refreshed cache expiry.
+    - Each request reads `26,237` tokens for `$0.00787110` (`C1`, `C3`, `C10`, `C12`).
+
+20. **Reveal Tuesday result — `ev-tuesday-result`**
+    - Action: `REVEAL_PREDICTION { promptId: "pred-tuesday", correctOptionId: "one-hour" }`.
+    - Mutates: prediction reveal, completed-event evidence, and transfer completion.
+    - Visible result:
+      - 1h total: `$0.18103530`.
+      - 5m counterfactual total: `$0.39355500`.
+      - 1h saving: `$0.21251970`.
+      - Rebuilds avoided: `3`.
+    - Causal copy: **“Each 30-minute read refreshed the hour; the 5-minute entry would have rebuilt every time.”**
+
+21. **Complete attempt and reveal the rule — `ev-complete-attempt`**
+    - Ordered actions:
+      1. `COMPLETE_ATTEMPT`
+      2. reveal the remaining Monday and Tuesday reference/anti counterfactuals
+    - Mutates: gate result, stars, `UI_RESULT_SCREEN`, and final comparison overlay.
+    - Reference total: `$0.30303735`.
+    - Anti-pattern total: `$0.57459030`.
+    - Anti-pattern delta: `$0.27155295`.
+    - Only now reveal `(2−1.25)/(1.25−0.1)=0.652173…` (`C21`).
+    - Final rule: **“Pay for longer life only when the schedule prevents enough rewrites.”**
 
 ## 5. Level data
 
 ```ts
+const L6_UNITS: UnitSeed[] = [
+  "r1-b1", "r1-b2", "r1-b3", "r1-b4",
+  "r2-b1", "r2-b2", "r2-b3", "r2-b4"
+].map(id => ({
+  id,
+  kind: "TASK",
+  ticket: 1,
+  deps: [],
+  hours: 0,
+  outTok: 0,
+  workIn: 0,
+  scripted: true
+}));
+
+const L6_CONTEXTS: ContextSeed[] = [
+  {
+    kind: "main",
+    id: "main-l6-monday",
+    sessionId: "session-l6-monday",
+    cacheNamespace: "cache-l6-monday",
+    initialPrefixStackId: "prefix-l6-monday"
+  },
+  {
+    kind: "main",
+    id: "main-l6-tuesday",
+    sessionId: "session-l6-tuesday",
+    cacheNamespace: "cache-l6-tuesday",
+    initialPrefixStackId: "prefix-l6-tuesday"
+  }
+];
+
+const L6_PREFIX_STACKS: PrefixStackSeed[] = [
+  {
+    id: "prefix-l6-monday",
+    contextId: "main-l6-monday",
+    blocks: [{
+      id: "pb-l6-monday",
+      kind: "instructions",
+      label: "Workday prefix",
+      tokenCount: 26_237,
+      identityHash: "l6-prefix-c10-v1",
+      order: 0,
+      cacheable: true,
+      breakpointAfter: true,
+      stability: "stable"
+    }]
+  },
+  {
+    id: "prefix-l6-tuesday",
+    contextId: "main-l6-tuesday",
+    blocks: [{
+      id: "pb-l6-tuesday",
+      kind: "instructions",
+      label: "Workday prefix",
+      tokenCount: 26_237,
+      identityHash: "l6-prefix-c10-v1",
+      order: 0,
+      cacheable: true,
+      breakpointAfter: true,
+      stability: "stable"
+    }]
+  }
+];
+
+const L6_GAPS: GapSeed[] = [
+  { id: "r1-g1", contextId: "main-l6-monday", startMin: 0,  durationMin: 2,  permitsKeepWarm: false },
+  { id: "r1-g2", contextId: "main-l6-monday", startMin: 2,  durationMin: 2,  permitsKeepWarm: false },
+  { id: "r1-g3", contextId: "main-l6-monday", startMin: 4,  durationMin: 2,  permitsKeepWarm: false },
+  { id: "r2-g1", contextId: "main-l6-tuesday", startMin: 30, durationMin: 30, permitsKeepWarm: false },
+  { id: "r2-g2", contextId: "main-l6-tuesday", startMin: 60, durationMin: 30, permitsKeepWarm: false },
+  { id: "r2-g3", contextId: "main-l6-tuesday", startMin: 90, durationMin: 30, permitsKeepWarm: false }
+];
+
+const L6_SCENARIO: ScenarioData = {
+  units: L6_UNITS,
+  contexts: L6_CONTEXTS,
+  prefixStacks: L6_PREFIX_STACKS,
+  gaps: L6_GAPS,
+  allowedCfg: { oneHourFlag: [false, true] },
+  estimates: [
+    { label: "Seed", value: 60065, tag: "[FICTION]" },
+    { label: "Level wallet", value: 0.60, tag: "[FICTION]" },
+    { label: "Clock cap", value: 120, tag: "[FICTION]" },
+    { label: "Monday gap", value: 2, tag: "[FICTION]" },
+    { label: "Tuesday gap", value: 30, tag: "[FICTION]" },
+    { label: "Day separation", value: 24, tag: "[FICTION]" },
+    { label: "Scripted work blocks", value: 8, tag: "[FICTION]" },
+    { label: "Scripted unit duration", value: 0, tag: "[FICTION]" },
+    { label: "First interaction", value: 1, tag: "[ESTIMATE]" }
+  ]
+};
+
+const MONDAY_ONLY_PATCH: Partial<ScenarioData> = {
+  units: L6_UNITS.filter(unit => unit.id.startsWith("r1-")),
+  contexts: L6_CONTEXTS.filter(context => context.id === "main-l6-monday"),
+  prefixStacks: L6_PREFIX_STACKS.filter(stack => stack.id === "prefix-l6-monday"),
+  gaps: L6_GAPS.filter(gap => gap.id.startsWith("r1-"))
+};
+
+const TUESDAY_ONLY_PATCH: Partial<ScenarioData> = {
+  units: L6_UNITS.filter(unit => unit.id.startsWith("r2-")),
+  contexts: L6_CONTEXTS.filter(context => context.id === "main-l6-tuesday"),
+  prefixStacks: L6_PREFIX_STACKS.filter(stack => stack.id === "prefix-l6-tuesday"),
+  gaps: L6_GAPS.filter(gap => gap.id.startsWith("r2-"))
+};
+
+const L6_COMMON_CFG: Partial<Config> = {
+  orchestratorModel: "sonnet",
+  planModel: "sonnet",
+  devModel: "sonnet",
+  who: "inline",
+  prompts: "identical",
+  keepWarm: false
+};
+
 const L6: LevelDef = {
-  id: "L6",
+  id: "06-buy-more-time",
   tier: 1,
   title: "Buy More Time?",
-  objective: "Choose a write for each work block. The gaps stay hidden until you commit.",
+  objective:
+    "Choose a write for each workday. Exact gaps stay covered until you commit.",
   concept: {
-    id: "cache-tier-break-even",
+    id: "ttl-tier-tradeoff",
     privateDesignerSummary:
-      "The 1-hour write premium pays only when the gap pattern prevents enough 5-minute rewrites.",
+      "Compare the 5-minute and 1-hour write tiers against inferable workday rhythms.",
     postRevealRule:
-      "Paying for longer life is worthwhile only when it prevents enough rewrites.",
+      "Pay for longer life only when the schedule prevents enough rewrites."
   },
-  prerequisiteConceptIds: ["cache-ttl-expiry", "cache-read-write-cost"],
+  prerequisiteConceptIds: ["write-vs-read", "cache-expiry"],
 
   unlocks: "oneHourFlag",
   introducedControls: ["oneHourFlag"],
@@ -253,278 +402,438 @@ const L6: LevelDef = {
 
   scope: "session",
   seed: 60065,
-  budgetUsd: 0.60, // [FICTION]
-  clockCapMin: 120, // [FICTION]
-  cfgOverride: {
-    orchestratorModel: "sonnet",
-    planModel: "sonnet",
-    devModel: "sonnet",
-    who: "inline",
-    prompts: "identical",
-    oneHourFlag: false,
-    keepWarm: false,
-  },
+  budgetUsd: 0.60,
+  clockCapMin: 120,
+  cfgOverride: { ...L6_COMMON_CFG, oneHourFlag: false },
   scenario: "gaps",
-  scenarioData: {
-    units: [
-      { id: "r1-b1" }, { id: "r1-b2" }, { id: "r1-b3" }, { id: "r1-b4" },
-      { id: "r2-b1" }, { id: "r2-b2" }, { id: "r2-b3" }, { id: "r2-b4" }
-    ],
-    contexts: [
-      { id: "main-l6-monday", kind: "main" },
-      { id: "main-l6-tuesday", kind: "main" }
-    ],
-    gaps: [
-      { id: "r1-g1", min: 2 }, { id: "r1-g2", min: 2 }, { id: "r1-g3", min: 2 },
-      { id: "r2-g1", min: 30 }, { id: "r2-g2", min: 30 }, { id: "r2-g3", min: 30 }
-    ],
-    allowedCfg: { oneHourFlag: [false, true] },
-    estimates: [
-      { label: "Monday gap", value: 2, tag: "[FICTION]" },
-      { label: "Tuesday gap", value: 30, tag: "[FICTION]" },
-      { label: "Level wallet", value: 0.60, tag: "[FICTION]" },
-      { label: "Clock cap", value: 120, tag: "[FICTION]" }
-    ]
+  scenarioData: L6_SCENARIO,
+
+  coldOpen: L6_COLD_OPEN,
+  sequence: L6_SEQUENCE,
+  predictions: [PRED_MONDAY, PRED_TUESDAY],
+  toasts: L6_TOASTS,
+  interactionPatterns: [
+    "predict-before-reveal",
+    "fail-freeze-rewind",
+    "just-in-time-toast",
+    "counterfactual-after-attempt"
+  ],
+
+  failLesson: {
+    bucket: "flagDeltaUsd",
+    cite: "C1, C3, C10",
+    line:
+      "A short tier is costly when an inferable idle gap expires it before the next request."
   },
+  failureRules: [FAIL_TUESDAY_EXPIRY],
+  checkpoints: [
+    {
+      id: "cp-monday",
+      createBeforeEventId: "ev-select-monday-tier",
+      reason: "decision",
+      resumeLabel: "Choose Monday again"
+    },
+    {
+      id: "cp-tuesday",
+      createBeforeEventId: "ev-select-tuesday-tier",
+      reason: "decision",
+      resumeLabel: "Choose Tuesday again"
+    }
+  ],
 
   gate: {
-    predicateId: "l6-correct-tier-by-gap-pattern",
-    behavioralRequirements: [
-      "all r1-b1…r1-b4 choices are 5m",
-      "all r2-b1…r2-b4 choices are 1h",
-      "pred-r1 and pred-r2 were committed before their reveals"
-    ],
-    explanationRequirement:
-      "player acknowledged explanation cache-tier-break-even after both causal tapes",
-    transferRequirement:
-      "Tuesday is completed with 1h after observing or predicting the 30m-gap consequence"
+    predicateId: "l6-post-evidence-tuesday-tier",
+    evidenceRevealEventIds: ["ev-monday-result"],
+    postEvidenceActionRequirements: [{
+      id: "l6-selected-hour-after-monday",
+      kind: "action-observed",
+      actionType: "SELECT_WRITE_TIER",
+      afterEventId: "ev-monday-result",
+      match: { blockId: "tuesday", tier: "1h" }
+    }],
+    behavioralRequirements: [{
+      id: "l6-tuesday-completed",
+      kind: "event-completed",
+      eventId: "ev-tuesday-result"
+    }],
+    transferRequirement: {
+      id: "l6-transfer-action",
+      kind: "action-observed",
+      actionType: "SELECT_WRITE_TIER",
+      afterEventId: "ev-monday-result",
+      match: { blockId: "tuesday", tier: "1h" }
+    }
+  },
+
+  pass(st) {
+    return {
+      pass:
+        st.completedEventIds.includes("ev-tuesday-result") &&
+        st.cfg.oneHourFlag === true &&
+        st.frozenFailure === null,
+      reason:
+        "Applied Monday's evidence by selecting the 1-hour tier for Tuesday's spaced work.",
+      evidence: [
+        "ev-monday-result",
+        "ev-select-tuesday-tier",
+        "ev-tuesday-result"
+      ]
+    };
   },
 
   star2: {
-    label: "Read both rhythms",
-    predicate: "pred-r1 and pred-r2 select the correct cheaper tier",
-    reason: "Correctly predicted which tier each hidden schedule would reward."
+    label: "Named the tradeoff",
+    predicate: {
+      id: "l6-acknowledged-cause",
+      kind: "compare",
+      path: "acknowledgedExplanationIds",
+      op: "contains",
+      value: "monday-premium-no-rebuild"
+    },
+    reason:
+      "Acknowledged that Monday's longer lifetime prevented no rebuild."
   },
   star3: {
-    label: "No wasted rebuilds",
-    predicate:
-      "reference choices on the completed branch and spentUsd <= 0.30303735",
-    reason: "Used 5m for clustered work and 1h for spaced work."
+    label: "No wasted premium",
+    predicate: {
+      id: "l6-reference-spend",
+      kind: "compare",
+      path: "wallet",
+      op: "gte",
+      value: 0.29696265
+    },
+    reason:
+      "Completed both days at or below the $0.30303735 reference spend."
   },
 
-  referenceCfg: { oneHourFlag: false }, // scenario patch: Monday 5m, Tuesday 1h
-  antiCfg: { oneHourFlag: true },       // scenario patch: Monday 1h, Tuesday 5m
+  referenceCfg: { ...L6_COMMON_CFG, oneHourFlag: false },
+  antiCfg: { ...L6_COMMON_CFG, oneHourFlag: true },
 
-  counterfactuals: [{
-    id: "cf-tier-break-even",
-    unlockAfterEventId: "complete-attempt",
-    kind: "alternate-choice",
-    cfg: {},
-    scenarioPatch: {
-      estimates: [{
-        label: "Inverted choices: Monday 1h, Tuesday 5m",
-        value: 0.57459030,
-        tag: "[FICTION]"
-      }]
+  counterfactuals: [
+    {
+      id: "cf-monday-reference",
+      unlockAfterEventId: "ev-monday-result",
+      kind: "reference",
+      cfg: { ...L6_COMMON_CFG, oneHourFlag: false },
+      scenarioPatch: MONDAY_ONLY_PATCH,
+      comparisonQuestion: "What did the longer write buy on Monday?",
+      revealCopy:
+        "The 5-minute tier cost $0.12200205; the 1-hour tier cost $0.18103530 and prevented no rebuild."
     },
-    comparisonQuestion:
-      "What did the write premium buy on each schedule?",
-    revealCopy:
-      "The extra hour-write premium is about 0.65 of one avoided rebuild. Monday avoided none; Tuesday avoided three."
-  }],
+    {
+      id: "cf-monday-anti",
+      unlockAfterEventId: "ev-monday-result",
+      kind: "anti-pattern",
+      cfg: { ...L6_COMMON_CFG, oneHourFlag: true },
+      scenarioPatch: MONDAY_ONLY_PATCH,
+      comparisonQuestion: "How large was Monday's unused premium?",
+      revealCopy:
+        "The unused 1-hour premium was $0.05903325."
+    },
+    {
+      id: "cf-tuesday-reference",
+      unlockAfterEventId: "ev-tuesday-b2",
+      kind: "reference",
+      cfg: { ...L6_COMMON_CFG, oneHourFlag: true },
+      scenarioPatch: TUESDAY_ONLY_PATCH,
+      comparisonQuestion: "What would the longer entry do at this gap?",
+      revealCopy:
+        "At block 2, the 1-hour entry reads for $0.00787110 instead of rewriting for $0.09838875."
+    },
+    {
+      id: "cf-tuesday-anti",
+      unlockAfterEventId: "ev-tuesday-result",
+      kind: "anti-pattern",
+      cfg: { ...L6_COMMON_CFG, oneHourFlag: false },
+      scenarioPatch: TUESDAY_ONLY_PATCH,
+      comparisonQuestion: "What would repeated expiry cost across Tuesday?",
+      revealCopy:
+        "Four 5-minute writes cost $0.39355500; the 1-hour route cost $0.18103530."
+    }
+  ],
 
-  interactionPatterns: [
-    "PATTERN_PREDICT_BEFORE_REVEAL",
-    "PATTERN_FAIL_FREEZE_REWIND",
-    "PATTERN_JUST_IN_TIME_TOAST",
-    "PATTERN_COUNTERFACTUAL_AFTER_ATTEMPT"
-  ]
+  tape: L6_TAPE,
+  result: L6_RESULT,
+  vocabulary: L6_VOCABULARY,
+  qa: L6_QA
 };
 ```
 
-`referenceCfg` and `antiCfg` require the stated per-round scenario patches because a single legacy `oneHourFlag` cannot encode opposite choices across two days.
+The four explicit `cfg + scenarioPatch` pairs are authoritative:
+
+| Run | Scenario patch | Tier |
+|---|---|---|
+| Reference Monday | `MONDAY_ONLY_PATCH` | `5m` |
+| Reference Tuesday | `TUESDAY_ONLY_PATCH` | `1h` |
+| Anti-pattern Monday | `MONDAY_ONLY_PATCH` | `1h` |
+| Anti-pattern Tuesday | `TUESDAY_ONLY_PATCH` | `5m` |
+
+The aggregate reference and anti-pattern totals combine those exact deterministic day runs. No global configuration is used as a substitute for a per-day tier.
 
 ## 6. Pricing walkthrough
 
-Model: Sonnet, `$3/M` base (`C3`). Cacheable prefix: `26,237` tokens (`C10`). Output is deliberately absent because output pricing is not this level’s concept.
+Model: Sonnet, `$3/M` base (`C3`). Cacheable prefix: `26,237` tokens (`C10`). Every L6 request has `outTok=0`; nevertheless, `UI_TAPE_RENDERER` uses its canonical output-inclusive visual-weight model, where any non-zero `outTok` would contribute at `5x` (`C1`). L6 does not redefine or bypass that geometry.
 
-| Request class | Buckets | Equation | Exact USD |
+| Request class | Authoritative buckets | Equation | Exact USD |
 |---|---|---:|---:|
-| 5m cold write | `writeTok=26,237` | `26,237×1.25×3/1,000,000` (`C1`, `C3`, `C10`) | `$0.09838875` |
-| 1h cold write | `writeTok=26,237` | `26,237×2×3/1,000,000` (`C1`, `C3`, `C10`) | `$0.15742200` |
-| Warm read | `readTok=26,237` | `26,237×0.1×3/1,000,000` (`C1`, `C3`, `C10`) | `$0.00787110` |
+| 5m cold write | `writeTok=26,237`, `outTok=0` | `26,237×1.25×3/1,000,000` (`C1`, `C3`, `C10`) | `$0.09838875` |
+| 1h cold write | `writeTok=26,237`, `outTok=0` | `26,237×2×3/1,000,000` (`C1`, `C3`, `C10`) | `$0.15742200` |
+| Warm read | `readTok=26,237`, `outTok=0` | `26,237×0.1×3/1,000,000` (`C1`, `C3`, `C10`) | `$0.00787110` |
 
-### Monday: `2m, 2m, 2m` gaps `[FICTION]`
+### Day totals
 
-| Choice | Request sequence | Total |
+| Day and tier | Request sequence | Exact total |
 |---|---|---:|
-| 5m | write5m, read, read, read | `$0.12200205` |
-| 1h | write1h, read, read, read | `$0.18103530` |
+| Monday 5m | write5m, read, read, read | `$0.12200205` |
+| Monday 1h | write1h, read, read, read | `$0.18103530` |
+| Tuesday 5m | write5m, write5m, write5m, write5m | `$0.39355500` |
+| Tuesday 1h | write1h, read, read, read | `$0.18103530` |
 
-The longer tier pays `$0.05903325` more and prevents `0` rebuilds.
+Derived economic evidence:
 
-### Tuesday: `30m, 30m, 30m` gaps `[FICTION]`
-
-| Choice | Request sequence | Total |
-|---|---|---:|
-| 5m | write5m, write5m, write5m, write5m | `$0.39355500` |
-| 1h | write1h, read, read, read | `$0.18103530` |
-
-The longer tier prevents `3` rebuilds and saves `$0.21251970`.
-
-### Totals
-
-- 3-star reference: Monday 5m + Tuesday 1h = **`$0.30303735`**.
-- Anti-pattern: Monday 1h + Tuesday 5m = **`$0.57459030`**.
-- Anti-pattern penalty: **`$0.27155295`**.
-- One-hour premium per cold write: `26,237×(2−1.25)×3/M = $0.05903325`.
-- One avoided 5m rebuild: `26,237×(1.25−0.1)×3/M = $0.09051765`.
-- Premium/avoided-rebuild value: `$0.05903325/$0.09051765 = 0.652173…` (`C21`), concealed until both rounds resolve.
+- Monday’s longer-tier premium is `$0.05903325` and avoids `0` rebuilds.
+- Tuesday’s longer tier avoids `3` rebuilds and saves `$0.21251970`.
+- Reference route, Monday 5m plus Tuesday 1h: **`$0.30303735`**.
+- Anti-pattern route, Monday 1h plus Tuesday 5m: **`$0.57459030`**.
+- Anti-pattern delta: **`$0.27155295`**.
+- Reference wallet remaining: **`$0.29696265`**.
+- One-hour premium per cold write: `$0.05903325`.
+- One avoided 5m rebuild is worth `$0.09051765`.
+- Premium divided by one avoided rebuild is `0.652173…` (`C21`), concealed until `ev-complete-attempt`.
 
 ## 7. Tape sequence
 
-`TapeSpec.rowSource = "ledger"`; hover enabled.
+`TapeSpec.rowSource = "ledger"`; hover is enabled. Every row and segment is sourced from its authoritative `LedgerRow`.
 
-Ordered reference rows:
+Reference rows:
 
-1. `r1-b1`: **MON · BLOCK 1** — red `write`, `26,237`, `$0.09838875`.
-2. `r1-b2`: **MON · BLOCK 2** — blue `read`, `26,237`, `$0.00787110`.
-3. `r1-b3`: **MON · BLOCK 3** — blue `read`, `26,237`, `$0.00787110`.
-4. `r1-b4`: **MON · BLOCK 4** — blue `read`, `26,237`, `$0.00787110`.
-5. `r2-b1`: **TUE · BLOCK 1** — red `write`, `26,237`, `$0.15742200`.
-6. `r2-b2`: **TUE · BLOCK 2** — blue `read`, `26,237`, `$0.00787110`.
-7. `r2-b3`: **TUE · BLOCK 3** — blue `read`, `26,237`, `$0.00787110`.
-8. `r2-b4`: **TUE · BLOCK 4** — blue `read`, `26,237`, `$0.00787110`.
+1. `r1-b1` — **MON · BLOCK 1** — red 5m `write`, `26,237`, `$0.09838875`.
+2. `r1-b2` — **MON · BLOCK 2** — blue `read`, `26,237`, `$0.00787110`.
+3. `r1-b3` — **MON · BLOCK 3** — blue `read`, `26,237`, `$0.00787110`.
+4. `r1-b4` — **MON · BLOCK 4** — blue `read`, `26,237`, `$0.00787110`.
+5. `r2-b1` — **TUE · BLOCK 1** — red 1h `write`, `26,237`, `$0.15742200`.
+6. `r2-b2` — **TUE · BLOCK 2** — blue `read`, `26,237`, `$0.00787110`.
+7. `r2-b3` — **TUE · BLOCK 3** — blue `read`, `26,237`, `$0.00787110`.
+8. `r2-b4` — **TUE · BLOCK 4** — blue `read`, `26,237`, `$0.00787110`.
+
+Failure frame substitution:
+
+- Under Tuesday 5m, `r2-b2` is a red `write` row for `26,237` tokens and `$0.09838875`.
+- `UI_COUNTERFACTUAL_OVERLAY` places the valid blue `$0.00787110` read directly beneath that row before `FREEZE_FAILURE`.
 
 Reveal groups:
 
-- `monday-tape`: `r1-b1…r1-b4`, gated by `pred-r1`.
-- `tuesday-first-gap`: `r2-b1,r2-b2`, gated by `pred-r2`.
-- `tuesday-rest`: `r2-b3,r2-b4`, available after the decisive transfer.
+```ts
+const L6_TAPE: TapeSpec = {
+  rowSource: "ledger",
+  labels: {
+    "r1-b1": "MON · BLOCK 1",
+    "r1-b2": "MON · BLOCK 2",
+    "r1-b3": "MON · BLOCK 3",
+    "r1-b4": "MON · BLOCK 4",
+    "r2-b1": "TUE · BLOCK 1",
+    "r2-b2": "TUE · BLOCK 2",
+    "r2-b3": "TUE · BLOCK 3",
+    "r2-b4": "TUE · BLOCK 4"
+  },
+  revealGroups: [
+    {
+      id: "monday-tape",
+      requestIds: ["r1-b1", "r1-b2", "r1-b3", "r1-b4"],
+      gatedByPredictionId: "pred-monday"
+    },
+    {
+      id: "tuesday-first-gap",
+      requestIds: ["r2-b1", "r2-b2"],
+      gatedByPredictionId: "pred-tuesday"
+    },
+    {
+      id: "tuesday-rest",
+      requestIds: ["r2-b3", "r2-b4"]
+    }
+  ],
+  ahaRequestId: "r2-b2",
+  hoverEnabled: true
+};
+```
 
-`ahaRequestId = "r2-b2"`: freeze the scan head with the `30 MIN` gap label between `r2-b1` and `r2-b2`, the live/expired `UI_TTL_DRAIN_BAR`, and the resulting blue read or red rewrite simultaneously visible. No ratio appears in this frame.
+At `r2-b2`, the scan head stops with the `30 MIN` gap, TTL state, actual bucket, counterfactual bucket, and both exact row costs visible. The `0.652173…` ratio is absent from this frame.
 
-The counterfactual overlay pairs each actual row with the same block under the alternate tier and labels only:
-
-- **WRITE PREMIUM**
-- **REBUILDS AVOIDED**
-- **DAY TOTAL**
+Every tape width and segment uses `UI_TAPE_RENDERER`’s canonical price-weighted geometry, including output cost. Here output contributes zero only because the authoritative requests have `outTok=0`.
 
 ## 8. Prediction prompts
 
-### `pred-r1`
+### `pred-monday`
 
-Question: **“When Monday finishes, which write do you think will have cost less?”**
-
-Options:
-
-- `five-minute`: **“5-minute writes”**
-- `one-hour`: **“1-hour writes”**
-- `same`: **“They’ll tie”**
-
-Reveal is blocked until `COMMIT_PREDICTION`. Correct option: `five-minute`.
-
-Post-reveal causal sentence: **“The short gaps kept both entries alive, so the longer write bought no extra reads.”**
-
-### `pred-r2`
-
-Question: **“New schedule, still hidden: which write will cost less by block four?”**
+Question: **“From this tightly packed calendar silhouette, which write do you expect to cost less by block four?”**
 
 Options:
 
-- `five-minute`: **“5-minute writes”**
-- `one-hour`: **“1-hour writes”**
-- `same`: **“They’ll tie”**
+- `five-minute`: **“5-minute write”**
+- `one-hour`: **“1-hour write”**
+- `same`: **“They’ll cost the same”**
 
-Reveal is blocked until `COMMIT_PREDICTION`. Correct option: `one-hour`.
+The visible density makes the prediction inferable without exposing exact gaps or prices. Reveal remains blocked until `COMMIT_PREDICTION`. Correct option: `five-minute`.
 
-Post-reveal causal sentence: **“Thirty-minute gaps expired the short entry, while each long-tier read refreshed its hour.”**
+Post-reveal sentence: **“All three gaps were two minutes, so both entries stayed live and the longer write bought no additional read.”**
 
-Predictions never affect score directly; stars reward correct committed predictions as behavioral evidence.
+### `pred-tuesday`
+
+Question: **“These blocks are spread across a much wider calendar strip. Which write do you expect to cost less by block four?”**
+
+Options:
+
+- `five-minute`: **“5-minute write”**
+- `one-hour`: **“1-hour write”**
+- `same`: **“They’ll cost the same”**
+
+Reveal remains blocked until `COMMIT_PREDICTION`. Correct option: `one-hour`.
+
+Post-reveal sentence: **“Thirty-minute gaps expired the short entry, while every long-tier read refreshed its hour.”**
+
+Neither selected option nor correctness appears in the gate, either star, the wallet mutation, or the failure predicate.
 
 ## 9. Fail-state
 
-### Monday: premium without benefit
+Monday has no failure rule. Its fourth block is a decisive observation: after `r1-b4`, the screen proves that the longer tier avoided zero rebuilds and shows the complete 5m counterfactual. The player receives evidence and continues.
 
-- Decisive event: `r1-b4` completes and proves every short-tier entry would have remained live.
-- Freeze copy: **“Monday stayed clustered. The longer write cost $0.05903 more and prevented no rebuild.”**
-- Highlight: Monday’s first write premium, three equal read rows, and `0 REBUILDS AVOIDED`.
-- Rewind: `REWIND_TO_CHECKPOINT "cp-r1-tier"` restores the four Monday choices while preserving the cold-open and committed prediction.
+Tuesday has one failure rule:
 
-### Tuesday: first expired short write
+```ts
+const FAIL_TUESDAY_EXPIRY: FailureRuleDef = {
+  id: "fail-tuesday-expiry",
+  predicate: {
+    id: "l6-r2-b2-rewrote",
+    kind: "all",
+    predicates: [
+      {
+        id: "l6-r2-b2-complete",
+        kind: "event-completed",
+        eventId: "ev-tuesday-b2"
+      },
+      {
+        id: "l6-selected-short-tuesday",
+        kind: "compare",
+        path: "cfg.oneHourFlag",
+        op: "eq",
+        value: false
+      }
+    ]
+  },
+  decisiveEventId: "ev-tuesday-b2",
+  causeCode: "SHORT_TTL_REBUILD",
+  message:
+    "Block 2 arrived 30 minutes later. The 5-minute entry expired, so 26,237 tokens rewrote for $0.09838875 instead of reading for $0.00787110.",
+  checkpointId: "cp-tuesday",
+  highlightObjectIds: [
+    "r2-g1",
+    "cache-l6-tuesday",
+    "r2-b2",
+    "cf-tuesday-reference:r2-b2"
+  ],
+  actualUsd: 0.09838875,
+  validAlternativeUsd: 0.00787110
+};
+```
 
-- Decisive event: `r2-b2` resolves after the first `30m` gap as a rewrite under `CACHE_TIER_5M`.
-- Freeze copy: **“Block 2 arrived 30 minutes later. The 5-minute entry expired, so all 26,237 tokens rewrote.”**
-- Highlight: expired `CacheEntry`, `30 MIN` gap, and red `r2-b2` write segment.
-- Rewind: `REWIND_TO_CHECKPOINT "cp-r2-tier"` restores Tuesday choices without replaying Monday.
+Freeze order is strict:
 
-After either day’s meaningful attempt, `UI_COUNTERFACTUAL_OVERLAY` may show write premium versus rebuilds avoided. The `0.652173…` ratio remains locked until both days have produced causal evidence.
+1. Price and append actual `r2-b2`.
+2. Render its red write segment.
+3. Render the valid blue counterfactual read.
+4. Show `$0.09838875 > $0.00787110`.
+5. Dispatch `FREEZE_FAILURE`.
+6. Rewind to `cp-tuesday`.
+
+The freeze never depends on prediction correctness. Rewind restores Tuesday’s tier and prediction controls while retaining Monday’s mastered evidence.
 
 ## 10. Gate & stars
 
-Pass predicate:
+Pass requires the post-evidence Tuesday transfer, not either pre-reveal prediction:
 
 ```ts
 pass =
-  mondayTierChoices.every(tier => tier === "5m") &&
-  tuesdayTierChoices.every(tier => tier === "1h") &&
-  prediction("pred-r1").committedBeforeReveal &&
-  prediction("pred-r2").committedBeforeReveal &&
-  explanationAcknowledged("cache-tier-break-even") &&
-  transferCompleted("tuesday-spaced-work");
+  actionObserved({
+    actionType: "SELECT_WRITE_TIER",
+    afterEventId: "ev-monday-result",
+    match: { blockId: "tuesday", tier: "1h" }
+  }) &&
+  eventCompleted("ev-tuesday-result") &&
+  frozenFailure === null;
 ```
 
-Budget alone cannot pass the level.
+Budget and prediction correctness cannot pass or fail the level.
 
-- **1 star — Pattern matched:** pass predicate true.
-- **2 stars — Read both rhythms:** pass predicate true and both committed predictions selected the eventual cheaper tier.
-- **3 stars — No wasted rebuilds:** 2-star predicate, reference branch completed, `spentUsd <= $0.30303735`, and no failure branch remains active.
+- **1 star — Applied the rhythm:** pass predicate is true.
+- **2 stars — Named the tradeoff:** pass is true and `monday-premium-no-rebuild` was acknowledged after Monday’s evidence.
+- **3 stars — No wasted premium:** 2-star predicate is true and final spend is at most `$0.30303735`, implemented as `wallet >= $0.29696265`, never floating-point equality.
+
+A player may predict incorrectly twice and still earn all three stars by responding correctly to the revealed evidence.
 
 ## 11. Toasts
 
 | ID | Trigger | Exact copy |
 |---|---|---|
-| `toast-tier-choice` | First `SELECT_WRITE_TIER` | **“You’re buying how long this write can wait for its next read.”** |
-| `toast-monday-live` | `r1-b2` hits after the first `2m` gap | **“Still alive. This block reads the saved 26,237 tokens.”** |
-| `toast-monday-premium` | Monday resolves with 1h | **“Extra lifetime bought; no rebuild avoided.”** |
-| `toast-tuesday-expired` | `r2-b2` rewrites under 5m | **“Expired after 5 idle minutes. Block 2 has to write again.”** |
-| `toast-tuesday-refresh` | `r2-b2` reads under 1h | **“Read at 30 minutes. The idle clock refreshes.”** |
-| `toast-counterfactual` | `REVEAL_COUNTERFACTUAL "cf-tier-break-even"` | **“Premium ÷ one avoided rebuild ≈ 0.65. The schedule decides whether you earn that rebuild back.”** |
+| `toast-tier-choice` | First `SELECT_WRITE_TIER` | **“You’re choosing how long this write can wait for its next read.”** |
+| `toast-monday-live` | `ev-monday-b2` resolves as a read | **“Still alive. The read refreshes the idle timer.”** |
+| `toast-monday-premium` | `ev-monday-result` shows the 1h comparison | **“Longer lifetime bought; zero rebuilds avoided.”** |
+| `toast-tuesday-expired` | `ev-tuesday-b2` rewrites under 5m | **“Expired before block 2. The prefix writes again.”** |
+| `toast-tuesday-refresh` | `ev-tuesday-b2` reads under 1h | **“Read at 30 minutes. The hour refreshes.”** |
+| `toast-counterfactual` | `ev-complete-attempt` | **“The hour premium is about 0.65 of one avoided rebuild.”** |
 
-All teaching toasts dedupe per attempt. Failure cause toasts remain visible while frozen.
+All teaching toasts dedupe per attempt. The Tuesday cause toast remains visible while frozen. The ratio toast cannot fire before both day results exist.
 
 ## 12. QA gate
 
 Real-browser pointer and keyboard click-through must assert:
 
-1. First tier control is interactive by `1s` `[ESTIMATE]`; no instruction card blocks it.
-2. Covered gaps expose no timing, relative width, color, tooltip, accessibility label, or DOM text before the relevant prediction commits.
-3. `Run Monday` and `Run Tuesday` remain disabled until their predictions are committed.
-4. Monday always resolves the fixed `2m,2m,2m` schedule; Tuesday always resolves `30m,30m,30m` from seed `60065`.
-5. Every `SEND_REQUEST` yields exactly one `LedgerRow` and one `UI_TAPE_RENDERER` row.
-6. Reference completion yields exactly eight request rows.
-7. Non-request actions—tier selection, prediction, checkpoint, advance, discard, freeze, rewind, and counterfactual request—yield no ledger row.
-8. Every request cost is positive and matches `PRICE_REQUEST`.
-9. Exact request prices are `$0.09838875`, `$0.15742200`, or `$0.00787110` as specified.
-10. No positive price renders as `$0.0000`.
-11. A 5m entry is live after `2m`, expired after `30m`; a 1h entry is live after `30m` (`C1`).
-12. Every successful read refreshes `lastTouchMin` and expiry (`C12`).
-13. Monday 5m total is `$0.12200205`; Monday 1h total is `$0.18103530`.
-14. Tuesday 5m total is `$0.39355500`; Tuesday 1h total is `$0.18103530`.
-15. Reference total is `$0.30303735`; anti-pattern total is `$0.57459030`.
-16. The `0.652173…` ratio and its interpretation are absent from pre-play copy, prediction options, hidden DOM, hover text, and accessibility text.
-17. `REVEAL_COUNTERFACTUAL` is rejected before a meaningful attempt and remains ratio-redacted until both days resolve.
-18. Failure freezes after the decisive request is priced and rendered; it never rolls back the evidence before freezing.
-19. Monday rewind returns byte-identically to `cp-r1-tier`; Tuesday rewind returns byte-identically to `cp-r2-tier`.
-20. Rewind retains mastered earlier-day evidence and does not replay the cold-open.
-21. Reference choices pass; inverted choices trigger the intended causal failure and fail the behavioral gate.
-22. Final tape colors and prices render without hover.
-23. `UI_HOVER_PRICE_CALCULATOR` equations reconcile with authoritative ledger totals.
-24. Pointer and keyboard paths dispatch equivalent action sequences.
-25. Reduced-motion mode exposes identical final rows, failures, totals, and gate evidence.
-26. `UI_RESULT_SCREEN` names why each star was earned or missed and offers **“Try the days again”** / **“Continue”**.
-27. The level is winnable from seed `60065` without undocumented controls.
+1. The first tier control is interactive by `1.0s` `[ESTIMATE]`; no instruction card blocks it.
+2. Monday’s visible calendar density and equivalent accessibility text appear before `pred-monday`.
+3. Tuesday’s visibly wider density and equivalent accessibility text appear before `pred-tuesday`.
+4. Pre-commit DOM, canvas labels, tooltips, and accessibility text contain no exact gap value, price, total, rebuild count, correctness label, or break-even ratio.
+5. Generic calendar scale and relative silhouette width are visible evidence, not hidden answer metadata.
+6. Monday and Tuesday execution remain disabled until their respective predictions commit.
+7. A wrong prediction changes no score, star, wallet, failure, or gate result.
+8. Prediction commitment and correctness are absent from all gate and star predicates.
+9. `ENTER_LEVEL` uses `"06-buy-more-time"`; no `"L6"` identifier appears in persisted level data.
+10. `concept.id` is `"ttl-tier-tradeoff"` and prerequisites are exactly `["write-vs-read", "cache-expiry"]`.
+11. Monday resolves `2m,2m,2m`; Tuesday resolves `30m,30m,30m` from seed `60065`.
+12. Each `SELECT_WRITE_TIER` applies to its named day only.
+13. The four `cfg + scenarioPatch` counterfactual pairs produce the declared per-day tiers.
+14. Every `SEND_REQUEST` yields exactly one `LedgerRow` and one `UI_TAPE_RENDERER` row.
+15. A reference completion yields exactly eight request rows.
+16. Selection, prediction, checkpoint, advance, context discard, counterfactual, freeze, rewind, explanation, transfer, and completion actions create no ledger row.
+17. Every request price is positive and equals `PRICE_REQUEST`.
+18. Exact row prices are `$0.09838875`, `$0.15742200`, or `$0.00787110`.
+19. No positive price renders as `$0.0000`.
+20. A 5m entry is live after `2m` and expired after `30m`; a 1h entry is live after `30m` (`C1`).
+21. Every successful read refreshes `lastTouchMin` and expiry (`C12`).
+22. Monday totals are `$0.12200205` for 5m and `$0.18103530` for 1h.
+23. Tuesday totals are `$0.39355500` for 5m and `$0.18103530` for 1h.
+24. Reference total is `$0.30303735`; anti-pattern total is `$0.57459030`; no competing total exists.
+25. Monday never dispatches `FREEZE_FAILURE`.
+26. Monday’s comparison cannot render until `r1-b4` proves zero rebuilds were avoided.
+27. Tuesday 5m freezes only after `r2-b2` is priced and both `$0.09838875` actual and `$0.00787110` alternative rows are visible.
+28. The failure rule satisfies `actualUsd > validAlternativeUsd`.
+29. Tuesday’s failure frame shows the `12.5×` decisive request-cost multiple without exposing future exact gaps.
+30. Rewind returns byte-identically to `cp-tuesday`, retains Monday’s evidence, and does not replay the cold-open.
+31. The gate observes `SELECT_WRITE_TIER { blockId: "tuesday", tier: "1h" }` after `ev-monday-result`.
+32. Reference actions pass from seed `60065`; the Tuesday 5m action reaches the intended causal freeze and fails the behavioral gate.
+33. The `0.652173…` ratio is absent from pre-play copy, hidden DOM, hover text, accessibility text, prediction options, and the Tuesday failure frame.
+34. The ratio appears only after both day results exist.
+35. Every tape row uses the canonical `UI_TAPE_RENDERER` visual-weight model.
+36. `outTok=0` is preserved in every L6 ledger row; a regression fixture with non-zero output confirms output contributes at `5x` to bar and segment geometry (`C1`).
+37. Final tape colors, segment geometry, and exact prices render without hover.
+38. `UI_HOVER_PRICE_CALCULATOR` reconciles every visible row with its authoritative ledger buckets.
+39. Pointer and keyboard paths dispatch equivalent action sequences.
+40. Reduced-motion mode exposes identical rows, comparison evidence, failure state, totals, and gate evidence.
+41. `UI_RESULT_SCREEN` explains each earned or missed star and offers **“Try the days again”** and **“Continue.”**
+42. Every authoritative quantity has one implementable value.
+43. Both tiers are live choices: 5m is cheaper for the clustered day, while 1h is cheaper for the spaced day.
+44. The level is winnable without undocumented controls.
 
 ## 13. Reference-bar justification
 
-The screen opens on one tactile choice, withholds the schedule, and makes the player commit twice before evidence appears. Monday creates a compact expectation; Tuesday transfers the same control into a different rhythm and freezes on the first causal divergence. Only after both attempts does the counterfactual attach the numerical `C21` rule to evidence the player already produced. The loop is therefore action → prediction → reveal → local rewind → transfer → concise rule, with no pre-play answer key.
+The screen opens on one tactile control and supplies just enough calendar geometry to support a reasoned prediction without exposing exact gaps or prices. Monday lets the player observe a complete, economically truthful comparison without freezing exploration. Its evidence then feeds a genuinely new Tuesday transfer choice, where the opposite tier wins.
+
+Tuesday freezes only at the first decisive divergence: the actual short-tier rewrite and valid long-tier read are priced and visible together before the clock stops. The gate observes the player’s post-Monday tier selection, never the pre-reveal guess. Only after both schedules resolve does the counterfactual attach the numerical `C21` rule to evidence the player produced. The discovery rhythm is therefore silhouette → choice → prediction → reveal → observed comparison → transfer → decisive freeze or success → concise rule.

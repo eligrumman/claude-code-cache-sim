@@ -2,15 +2,17 @@
 
 ## 1. Identity
 
-- **id:** `L7`
+- **id:** `07-keep-it-alive`
 - **title:** Keep It Alive
 - **tier:** `2`
 - **Objective copy:** “Three pings. Five gaps. Keep the day moving without babysitting it.”
-- **One concept:** `keep-warm-break-even` — a keep-warm request is worthwhile only when its accumulated cost is below the rewrite it prevents.
-- **Prerequisite:** `ttl-tier-tradeoff` from Level 6.
+- **One concept:** `keep-warm-breakeven` — a keep-warm request is worthwhile only while its accumulated cost remains below the rewrite delta it prevents.
+- **Prerequisites:** `cache-expiry` and `ttl-tier-tradeoff`.
 - **Post-reveal rule:** “Ping only while the pings cost less than rebuilding.”
 - **Unlocks:** `keepWarm`
 - **Introduced control:** `keepWarmMin`
+
+The title, objective, opening timeline, and policy controls do not identify the correct gaps.
 
 ## 2. Objects used
 
@@ -29,223 +31,268 @@
 - `Budget`
 - `LedgerRow`
 - `WireSegment`
+- `LimitedMarkerInventoryState`
 - `PRICE_REQUEST`
 - `RESOLVE_PREFIX`
-- `TapeRenderer`
-- `TTLDrainBar`
-- `MainCachePanel`
-- `HoverPriceCalculator`
-- `ToastSystem`
+- `UI_TAPE_RENDERER`
+- `UI_TTL_DRAIN_BAR`
+- `UI_MAIN_CACHE_PANEL`
+- `UI_HOVER_PRICE_CALCULATOR`
+- `UI_TOAST_SYSTEM`
 - `UI_PREDICTION_PROMPT`
 - `UI_REWIND_CONTROL`
-- `CounterfactualOverlay`
-- `ResultScreen`
-- `PATTERN_PREDICT_BEFORE_REVEAL`
-- `PATTERN_FAIL_FREEZE_REWIND`
-- `PATTERN_JUST_IN_TIME_TOAST`
-- `PATTERN_COUNTERFACTUAL_AFTER_ATTEMPT`
+- `UI_COUNTERFACTUAL_OVERLAY`
+- `UI_RESULT_SCREEN`
+- `predict-before-reveal`
+- `fail-freeze-rewind`
+- `just-in-time-toast`
+- `counterfactual-after-attempt`
+- `limited-marker-inventory`
+
+Each of the three limited markers authors exactly one real `PLACE_KEEP_WARM_PING` effect. No policy, counterfactual, or shortcut creates more than three pings.
 
 ## 3. Cold-open / narrative
 
-No instruction card and no pre-play comparison.
+No instruction card and no pre-play price comparison.
 
 | Time | Beat |
 |---:|---|
-| `0.0s` | A workday timeline slides under the cursor. Five closed gap cards read **Coffee**, **Lunch**, **Meeting**, **Commute**, **Overnight**. Their durations are visible; their outcomes are not. |
-| `0.4s` | The `MainCachePanel` shows a live 60-minute entry. Three draggable ping markers land beside the timeline with the label **“3 pings left.”** |
+| `0.0s` | A workday timeline slides under the cursor. Five closed gap cards read **Coffee**, **Lunch**, **Meeting**, **Commute**, and **Overnight**. Their durations are visible; their outcomes are not. |
+| `0.4s` | `UI_MAIN_CACHE_PANEL` shows a live 60-minute entry. Three draggable markers land beside the timeline with the label **“3 pings left.”** |
 | `0.8s` | Copy: **“Tomorrow’s release is already cached. Plan the gaps.”** |
-| `1.2s` | The Lunch card pulses once. Copy: **“Drag pings onto the day, then choose what your policy should protect.”** |
-| `1.6s` | The player can drag a ping. |
-| `2.0s` | Three policy chips appear: **Always ping**, **Never ping**, **Only bridge selected gaps**. No chip is described as correct. |
+| `1.2s` | Lunch’s two available marker slots pulse without success coloring. Copy: **“Spend now, save for later, or leave the cache alone.”** |
+| `1.6s` | Pointer and keyboard users can place the first marker. |
+| `2.0s` | Three policy chips appear: **Always ping — 3 max**, **Never ping**, and **Choose each ping**. No chip is styled or described as correct. |
 
 `firstInteractiveBySec = 1.6` `[ESTIMATE]`.
 
+Policy semantics are finite:
+
+- **Always ping — 3 max** assigns the three markers to the earliest eligible slots: Lunch `50m`, Lunch `100m`, and Meeting `50m`.
+- **Never ping** leaves all markers unplaced.
+- **Choose each ping** leaves placement under player control.
+
+Before Lunch resolves, only its two slots accept manual placement. Later slots remain visible but unresolved, preventing the opening from becoming a five-gap answer-entry form. Lunch evidence unlocks placement of the remaining marker on Meeting, Commute, or Overnight slots.
+
 ## 4. Exact event sequence
 
-The scenario uses a `34,738`-token main prefix (`C6`), Sonnet pricing (`C3`), and the 60-minute tier (`C1`). Work requests add `100` fresh input tokens and `100` output tokens `[FICTION]`. Pings add `1` fresh input token and `1` output token `[FICTION]`.
+The scenario uses `MAIN_PREFIX_HEY = 34,738` tokens (`C34`), Sonnet rates (`C1`, `C3`), and `CACHE_TIER_1H` with a 60-minute idle TTL (`C1`). Every work request adds `100` fresh input tokens and `100` output tokens `[FICTION]`. Every ping adds `1` fresh input token and `1` output token `[FICTION]`. The selected cadence is `50m` `[FICTION]`.
 
 1. **Enter the planner**
    - Event: screen mounts.
-   - Action: `{ type: "ENTER_LEVEL", levelId: "L7" }`
-   - Mutates: `ReducerState`, `Clock`, `Wallet`, `MAIN_SESSION_CONTEXT`, `PREFIX_STACK`.
-   - Numbers: clock `0m`; wallet `$0.70` `[FICTION]`; ping inventory `3` `[FICTION]`; TTL `60m` (`C1`).
+   - Action: `{ type: "ENTER_LEVEL", levelId: "07-keep-it-alive" }`
+   - Mutates: `ReducerState`, `Clock`, `Wallet`, `MAIN_SESSION_CONTEXT`, `PREFIX_STACK`, `LimitedMarkerInventoryState`.
+   - Numbers: clock `0m`; wallet `$0.70` `[FICTION]`; marker capacity `3` `[FICTION]`; TTL `60m` (`C1`).
 
 2. **Prime the workday**
-   - Event: opening work request runs automatically.
+   - Event: the opening request runs automatically.
    - Action: `{ type: "SEND_REQUEST", request: REQ_OPEN }`
    - Mutates: `CacheEntry`, `LedgerRow[]`, `Wallet`, `lastRequests`.
-   - Numbers: `writeTok=34,738`, `inputTok=100`, `outTok=100`; cost `$0.210228` (`C1`, `C3`, `C6`).
+   - Numbers: `writeTok=34,738`, `inputTok=100`, `outTok=100`; cost `$0.210228` (`C1`, `C3`, `C34`).
    - Toast: `toast-first-write`.
 
-3. **Create the decision checkpoint**
+3. **Create the placement checkpoint**
    - Event: the opening tape settles.
    - Action: `{ type: "CREATE_CHECKPOINT", checkpointId: "cp-plan", reason: "decision" }`
    - Mutates: `Checkpoint[]`.
-   - Numbers: action boundary only; no request and no cost.
+   - Numbers: no request and no cost.
 
-4. **Place lunch ping 1**
-   - Event: player drags a marker to `50m` inside Lunch.
-   - Action: `{ type: "PLACE_KEEP_WARM_PING", gapId: "lunch", atMin: 50 }`
-   - Mutates: scheduled ping set and remaining ping inventory.
-   - Numbers: inventory `3→2`; no ledger row until execution.
-
-5. **Place lunch ping 2**
-   - Event: player drags a marker to `100m` inside Lunch.
-   - Action: `{ type: "PLACE_KEEP_WARM_PING", gapId: "lunch", atMin: 100 }`
-   - Mutates: scheduled ping set and remaining ping inventory.
-   - Numbers: inventory `2→1`.
-
-6. **Place commute ping**
-   - Event: player drags the final marker to `50m` inside Commute.
-   - Action: `{ type: "PLACE_KEEP_WARM_PING", gapId: "commute", atMin: 50 }`
-   - Mutates: scheduled ping set and remaining ping inventory.
-   - Numbers: inventory `1→0`.
-
-7. **Choose the selective policy**
-   - Event: player chooses **Only bridge selected gaps**.
+4. **Choose manual placement**
+   - Event: the reference player chooses **Choose each ping**.
    - Action: `{ type: "SET_CFG", patch: { keepWarm: true, keepWarmMin: 50 } }`
    - Mutates: `cfg.keepWarm`, `cfg.keepWarmMin`.
    - Numbers: interval `50m` `[FICTION]`.
 
-8. **Commit the first prediction**
-   - Event: player presses **Run the day**.
-   - Actions, in order:
+5. **Place the two Lunch markers**
+   - Events and actions:
+     1. `{ type: "PLACE_LIMITED_MARKER", inventoryId: "l7-pings", markerId: "ping-a", targetId: "lunch-50", atMin: 50 }`
+     2. `{ type: "PLACE_LIMITED_MARKER", inventoryId: "l7-pings", markerId: "ping-b", targetId: "lunch-100", atMin: 100 }`
+   - Mutates: `LimitedMarkerInventoryState.placements`.
+   - Numbers: available markers `3→2→1`; placement itself creates no ledger row.
+   - Each target permits stacking only through its distinct authored slot ID.
+
+6. **Commit the Lunch prediction**
+   - Event: player presses **Run to Lunch**.
+   - Actions:
      1. `{ type: "OPEN_PREDICTION", promptId: "pred-lunch" }`
-     2. `{ type: "SELECT_PREDICTION", promptId: "pred-lunch", optionId: "two-pings-win" }`
+     2. player selects any option
      3. `{ type: "COMMIT_PREDICTION", promptId: "pred-lunch" }`
    - Mutates: `phase`, `prediction`.
-   - Numbers: reveal remains locked.
+   - Numbers: Lunch evidence remains locked until commitment. Option identity has no economic or scoring effect.
 
-9. **Coffee**
-   - Event: advance through the `20m` Coffee gap.
+7. **Cross Coffee**
+   - Event: the `20m` Coffee gap completes.
    - Actions:
      1. `{ type: "ADVANCE", min: 20 }`
      2. `{ type: "SEND_REQUEST", request: REQ_AFTER_COFFEE }`
    - Mutates: `Clock`, `CacheEntry.lastTouchMin`, `LedgerRow[]`, `Wallet`.
-   - Numbers: cache hit; `readTok=34,738`, `inputTok=100`, `outTok=100`; `$0.0122214` (`C1`, `C3`, `C6`).
+   - Numbers: `readTok=34,738`, `inputTok=100`, `outTok=100`; cost `$0.0122214` (`C1`, `C3`, `C34`).
 
-10. **Lunch ping 1 executes**
-    - Event: Lunch reaches `50m`.
-    - Actions:
-      1. `{ type: "ADVANCE", min: 50 }`
-      2. `{ type: "SEND_REQUEST", request: PING_LUNCH_1 }`
-    - Mutates: `Clock`, `CacheEntry.lastTouchMin`, `LedgerRow[]`, `Wallet`.
-    - Numbers: `readTok=34,738`, `inputTok=1`, `outTok=1`; `$0.0104394` (`C1`, `C3`, `C6`); TTL refreshes (`C12`).
+8. **Resolve Lunch**
+   - Event: the two placed targets resolve at `50m` and `100m`; work resumes `20m` later.
+   - Actions, in order:
+     1. `{ type: "ADVANCE", min: 50 }`
+     2. `{ type: "PLACE_KEEP_WARM_PING", gapId: "lunch", atMin: 50 }`
+     3. `{ type: "SEND_REQUEST", request: PING_LUNCH_1 }`
+     4. `{ type: "ADVANCE", min: 50 }`
+     5. `{ type: "PLACE_KEEP_WARM_PING", gapId: "lunch", atMin: 100 }`
+     6. `{ type: "SEND_REQUEST", request: PING_LUNCH_2 }`
+     7. `{ type: "ADVANCE", min: 20 }`
+     8. `{ type: "SEND_REQUEST", request: REQ_AFTER_LUNCH }`
+     9. `{ type: "REVEAL_PREDICTION", promptId: "pred-lunch", correctOptionId: "two-pings-win" }`
+   - Mutates: `Clock`, `CacheEntry`, `LedgerRow[]`, `Wallet`, resolved marker placements, `prediction`, `phase`.
+   - Numbers:
+     - Each ping: `readTok=34,738`, `inputTok=1`, `outTok=1`; `$0.0104394`.
+     - Two pings: `$0.0208788`.
+     - Warm resumed work: `$0.0122214`.
+     - Protected route: `$0.0331002`.
+     - Cold resumed work without pings: `$0.210228`.
+     - Saving: `$0.1771278`.
+     - All values derive from `C1`, `C3`, `C12`, `C20`, and `C34`.
+   - Toast: `toast-lunch-paid`.
 
-11. **Lunch ping 2 executes**
-    - Event: Lunch reaches `100m`.
-    - Actions:
-      1. `{ type: "ADVANCE", min: 50 }`
-      2. `{ type: "SEND_REQUEST", request: PING_LUNCH_2 }`
-    - Mutates: same objects as step 10.
-    - Numbers: `$0.0104394`; TTL refreshes (`C12`).
+   If zero markers were placed on Lunch, `REQ_AFTER_LUNCH` instead resolves cold and immediately enters the failure in §9.
 
-12. **Lunch reveal**
-    - Event: Lunch ends `20m` after its second ping and work resumes.
-    - Actions:
-      1. `{ type: "ADVANCE", min: 20 }`
-      2. `{ type: "SEND_REQUEST", request: REQ_AFTER_LUNCH }`
-      3. `{ type: "REVEAL_PREDICTION", promptId: "pred-lunch", correctOptionId: "two-pings-win" }`
-    - Mutates: `Clock`, `CacheEntry`, `LedgerRow[]`, `Wallet`, `prediction`, `phase`.
-    - Numbers: work request `$0.0122214`; two pings cost `$0.0208788`; avoided rewrite delta is `$0.1980066`; net saving `$0.1771278` (`C1`, `C3`, `C6`, `C20`).
-    - Aha remains unstated; only the observed Lunch result is revealed.
-    - Toast: `toast-lunch-paid`.
+9. **Open the post-evidence transfer**
+   - Event: Lunch evidence settles; Meeting, Commute, and Overnight targets unlock.
+   - Action: `{ type: "BEGIN_TRANSFER", challengeId: "bridge-next-gap" }`
+   - Mutates: `phase`, transfer visibility.
+   - Numbers: one unused marker remains on the reference route.
 
-13. **Meeting**
-    - Event: advance `50m`, then resume work.
+10. **Apply the Lunch evidence**
+    - Event: player places the remaining marker `50m` into Commute.
+    - Action:
+      ```ts
+      {
+        type: "PLACE_LIMITED_MARKER",
+        inventoryId: "l7-pings",
+        markerId: "ping-c",
+        targetId: "commute-50",
+        atMin: 50
+      }
+      ```
+    - Mutates: `LimitedMarkerInventoryState.placements`, transfer evidence.
+    - Numbers: available markers `1→0`; no ledger row until the target resolves.
+    - This is the gate’s required post-evidence action. Prediction correctness is not inspected.
+
+11. **Cross Meeting**
+    - Event: `50m` passes without a ping.
     - Actions:
       1. `{ type: "ADVANCE", min: 50 }`
       2. `{ type: "SEND_REQUEST", request: REQ_AFTER_MEETING }`
     - Mutates: `Clock`, `CacheEntry`, `LedgerRow[]`, `Wallet`.
-    - Numbers: no ping; cache remains live because `50<60`; request `$0.0122214` (`C1`, `C3`, `C6`).
+    - Numbers: `50<60`, so the request remains warm and costs `$0.0122214` (`C1`, `C3`, `C34`).
     - Toast: `toast-no-ping-needed`.
 
-14. **Commute prediction**
+12. **Commit the Commute prediction**
     - Event: Commute begins.
     - Actions:
       1. `{ type: "OPEN_PREDICTION", promptId: "pred-commute" }`
-      2. player selection
+      2. player selects any option
       3. `{ type: "COMMIT_PREDICTION", promptId: "pred-commute" }`
     - Mutates: `phase`, `prediction`.
+    - Numbers: no request and no cost.
 
-15. **Commute ping and reveal**
+13. **Resolve Commute**
     - Event: the `90m` gap runs.
     - Actions:
       1. `{ type: "ADVANCE", min: 50 }`
-      2. `{ type: "SEND_REQUEST", request: PING_COMMUTE }`
-      3. `{ type: "ADVANCE", min: 40 }`
-      4. `{ type: "SEND_REQUEST", request: REQ_AFTER_COMMUTE }`
-      5. `{ type: "REVEAL_PREDICTION", promptId: "pred-commute", correctOptionId: "one-ping-win" }`
-    - Mutates: `Clock`, `CacheEntry`, `LedgerRow[]`, `Wallet`, `prediction`.
-    - Numbers: ping `$0.0104394`; work hit `$0.0122214`; ping prevents a `$0.1980066` hit-to-rewrite delta (`C1`, `C3`, `C6`, `C20`).
+      2. `{ type: "PLACE_KEEP_WARM_PING", gapId: "commute", atMin: 50 }`
+      3. `{ type: "SEND_REQUEST", request: PING_COMMUTE }`
+      4. `{ type: "ADVANCE", min: 40 }`
+      5. `{ type: "SEND_REQUEST", request: REQ_AFTER_COMMUTE }`
+      6. `{ type: "REVEAL_PREDICTION", promptId: "pred-commute", correctOptionId: "one-ping-win" }`
+    - Mutates: `Clock`, `CacheEntry`, `LedgerRow[]`, `Wallet`, resolved marker placement, `prediction`.
+    - Numbers: ping `$0.0104394`; warm resumed work `$0.0122214`; the ping avoids a `$0.1980066` cold-to-warm request delta (`C1`, `C3`, `C12`, `C20`, `C34`).
+    - Toast: `toast-commute-paid`.
 
-16. **Overnight prediction**
+14. **Commit the Overnight prediction**
     - Event: the `1,260m` Overnight card expands.
     - Actions:
       1. `{ type: "OPEN_PREDICTION", promptId: "pred-overnight" }`
-      2. player selection
+      2. player selects any option
       3. `{ type: "COMMIT_PREDICTION", promptId: "pred-overnight" }`
     - Mutates: `phase`, `prediction`.
-    - Numbers: `1,260m = 21h` `[FICTION]`; maintaining a `50m` policy would require `25` pings `[FICTION]`.
+    - Numbers: `1,260m = 21h` `[FICTION]`. No result or break-even label appears before commitment.
 
-17. **Abandon overnight — aha frame**
-    - Event: no ping is scheduled; time advances and next-day work resumes.
+15. **Let Overnight expire — aha frame**
+    - Event: no marker remains; next-day work resumes after `1,260m`.
     - Actions:
       1. `{ type: "ADVANCE", min: 1260 }`
       2. `{ type: "SEND_REQUEST", request: REQ_NEXT_DAY }`
       3. `{ type: "REVEAL_PREDICTION", promptId: "pred-overnight", correctOptionId: "let-expire" }`
     - Mutates: `Clock`, expired and replacement `CacheEntry`, `LedgerRow[]`, `Wallet`, `prediction`.
-    - Numbers: next request rewrites `34,738` tokens and costs `$0.210228`; `25` hypothetical pings cost `$0.260985`, exceeding the `$0.1980066` rewrite delta. The `21h` gap also exceeds the `20h` 1-hour-tier break-even (`C19`, `C20`).
+    - Numbers:
+      - Actual rebuild request: `$0.210228`.
+      - An uninterrupted `50m` rate projection would require `25` pings; this is explanatory arithmetic, not a runnable marker branch.
+      - Projected pings: `25 × $0.0104394 = $0.260985`.
+      - Projected pings plus warm next request: `$0.2732064`.
+      - Rebuild wins by `$0.0629784`.
+      - The gap also exceeds the canonical 1-hour-tier `20h` keep-warm break-even (`C19`, `C20`).
     - `ahaFrame=true`.
     - Copy revealed now: **“Lunch was worth tending. Overnight wasn’t.”**
+    - Toast: `toast-overnight-line`.
 
-18. **Submit understanding**
-    - Event: player answers the transfer question and presses **Finish**.
+16. **Submit understanding**
+    - Event: player selects the revealed causal rule and presses **Finish**.
     - Actions:
       1. `{ type: "ACK_EXPLANATION", explanationId: "keep-warm-rule" }`
-      2. `{ type: "BEGIN_TRANSFER", challengeId: "classify-gaps" }`
+      2. `{ type: "LOCK_LIMITED_MARKERS", inventoryId: "l7-pings" }`
       3. `{ type: "COMPLETE_ATTEMPT" }`
-    - Mutates: explanation evidence, transfer evidence, result state.
-    - Numbers: reference total `$0.5006598`.
+    - Mutates: explanation evidence, locked marker state, result state.
+    - Numbers: reference spend `$0.5006598`.
 
-19. **Post-attempt counterfactual**
-    - Event: result screen opens **Compare policies**.
+17. **Reveal post-attempt policies**
+    - Event: `UI_RESULT_SCREEN` opens **Compare policies**.
     - Actions:
       1. `{ type: "REQUEST_COUNTERFACTUAL", comparisonId: "policy-three-way" }`
       2. `{ type: "REVEAL_COUNTERFACTUAL", comparisonId: "policy-three-way" }`
     - Mutates: comparison visibility only.
-    - Numbers: selective `$0.5006598`; always `$0.5740776`; never `$0.8653548`.
-    - Copy: **“Always paid past the rebuild. Never paid for avoidable rebuilds.”**
+    - Numbers:
+      - Choose each ping: `$0.5006598`.
+      - Always ping — 3 max: `$0.6986664`.
+      - Never ping: `$0.8653548`.
+    - Copy: **“Spending all three early left Commute unprotected. Spending none paid for avoidable rewrites.”**
 
 ## 5. Level data
 
 ```ts
 const L7: LevelDef = {
-  id: "L7",
+  id: "07-keep-it-alive",
   tier: 2,
   title: "Keep It Alive",
   objective: "Three pings. Five gaps. Keep the day moving without babysitting it.",
+
   concept: {
-    id: "keep-warm-break-even",
+    id: "keep-warm-breakeven",
     privateDesignerSummary:
-      "A keep-warm ping pays only while cumulative ping cost remains below the avoided rewrite.",
+      "A keep-warm ping pays only while cumulative ping cost remains below the avoided rewrite delta.",
     postRevealRule:
       "Ping only while the pings cost less than rebuilding."
   },
-  prerequisiteConceptIds: ["ttl-tier-tradeoff"],
+  prerequisiteConceptIds: ["cache-expiry", "ttl-tier-tradeoff"],
 
   unlocks: "keepWarm",
   introducedControls: ["keepWarmMin"],
   cfgLocked: [
-    "orchestratorModel", "planModel", "devModel", "who", "prompts",
-    "width", "oneHourFlag", "hook", "skills", "skillsMode",
-    "memoryFiles", "mcp"
+    "orchestratorModel",
+    "planModel",
+    "devModel",
+    "who",
+    "prompts",
+    "width",
+    "oneHourFlag",
+    "hook",
+    "skills",
+    "skillsMode",
+    "memoryFiles",
+    "mcp"
   ],
 
   scope: "session",
   seed: 7007,
   budgetUsd: 0.70, // [FICTION]
-  clockCapMin: 1590, // [FICTION]
+  clockCapMin: 1540, // [FICTION]
   cfgOverride: {
     devModel: "sonnet",
     who: "inline",
@@ -254,21 +301,81 @@ const L7: LevelDef = {
     keepWarmMin: 50
   },
   scenario: "gaps",
+
   scenarioData: {
+    units: [],
+    contexts: [
+      {
+        kind: "main",
+        id: "l7-main",
+        sessionId: "l7-session",
+        cacheNamespace: "l7-main-cache",
+        initialPrefixStackId: "l7-main-prefix"
+      }
+    ],
     gaps: [
-      { id: "coffee", label: "Coffee", durationMin: 20 },
-      { id: "lunch", label: "Lunch", durationMin: 120 },
-      { id: "meeting", label: "Meeting", durationMin: 50 },
-      { id: "commute", label: "Commute", durationMin: 90 },
-      { id: "overnight", label: "Overnight", durationMin: 1260 }
+      {
+        id: "coffee",
+        contextId: "l7-main",
+        startMin: 0,
+        durationMin: 20,
+        permitsKeepWarm: false
+      },
+      {
+        id: "lunch",
+        contextId: "l7-main",
+        startMin: 20,
+        durationMin: 120,
+        permitsKeepWarm: true
+      },
+      {
+        id: "meeting",
+        contextId: "l7-main",
+        startMin: 140,
+        durationMin: 50,
+        permitsKeepWarm: true
+      },
+      {
+        id: "commute",
+        contextId: "l7-main",
+        startMin: 190,
+        durationMin: 90,
+        permitsKeepWarm: true
+      },
+      {
+        id: "overnight",
+        contextId: "l7-main",
+        startMin: 280,
+        durationMin: 1260,
+        permitsKeepWarm: true
+      }
+    ],
+    markerInventories: [
+      {
+        id: "l7-pings",
+        capacity: 3,
+        markerIds: ["ping-a", "ping-b", "ping-c"],
+        targetIds: [
+          "lunch-50",
+          "lunch-100",
+          "meeting-50",
+          "commute-50",
+          ...Array.from(
+            { length: 25 },
+            (_, i) => `overnight-${(i + 1) * 50}`
+          )
+        ]
+      }
     ],
     estimates: [
       { label: "budgetUsd", value: 0.70, tag: "[FICTION]" },
+      { label: "clockCapMin", value: 1540, tag: "[FICTION]" },
       { label: "availablePings", value: 3, tag: "[FICTION]" },
       { label: "workFreshInputTok", value: 100, tag: "[FICTION]" },
       { label: "workOutputTok", value: 100, tag: "[FICTION]" },
       { label: "pingFreshInputTok", value: 1, tag: "[FICTION]" },
       { label: "pingOutputTok", value: 1, tag: "[FICTION]" },
+      { label: "keepWarmMin", value: 50, tag: "[FICTION]" },
       { label: "coffeeMin", value: 20, tag: "[FICTION]" },
       { label: "lunchMin", value: 120, tag: "[FICTION]" },
       { label: "meetingMin", value: 50, tag: "[FICTION]" },
@@ -279,27 +386,118 @@ const L7: LevelDef = {
 
   gate: {
     predicateId: "l7-selective-policy",
-    behavioralRequirements: [
-      "exactly two pings occur during lunch",
-      "exactly one ping occurs during commute",
-      "no ping occurs during coffee, meeting, or overnight",
-      "pred-overnight is committed before REQ_NEXT_DAY",
-      "classify-gaps transfer answer is correct"
+    evidenceRevealEventIds: [
+      "ev-lunch-reveal",
+      "ev-overnight-reveal"
     ],
-    explanationRequirement: "keep-warm-rule acknowledged",
-    transferRequirement: "classify-gaps completed"
+    postEvidenceActionRequirements: [
+      {
+        id: "place-commute-after-lunch-evidence",
+        kind: "action-observed",
+        actionType: "PLACE_LIMITED_MARKER",
+        afterEventId: "ev-lunch-reveal",
+        match: {
+          inventoryId: "l7-pings",
+          targetId: "commute-50",
+          atMin: 50
+        }
+      }
+    ],
+    behavioralRequirements: [
+      {
+        id: "lunch-has-two-pings",
+        kind: "compare",
+        path: "counts.pingsByGap.lunch",
+        op: "eq",
+        value: 2
+      },
+      {
+        id: "commute-has-one-ping",
+        kind: "compare",
+        path: "counts.pingsByGap.commute",
+        op: "eq",
+        value: 1
+      },
+      {
+        id: "no-wasted-pings",
+        kind: "all",
+        predicates: [
+          {
+            id: "coffee-zero",
+            kind: "compare",
+            path: "counts.pingsByGap.coffee",
+            op: "eq",
+            value: 0
+          },
+          {
+            id: "meeting-zero",
+            kind: "compare",
+            path: "counts.pingsByGap.meeting",
+            op: "eq",
+            value: 0
+          },
+          {
+            id: "overnight-zero",
+            kind: "compare",
+            path: "counts.pingsByGap.overnight",
+            op: "eq",
+            value: 0
+          }
+        ]
+      }
+    ],
+    explanationRequirement: {
+      id: "rule-acknowledged-after-evidence",
+      kind: "action-observed",
+      actionType: "ACK_EXPLANATION",
+      afterEventId: "ev-overnight-reveal",
+      match: { explanationId: "keep-warm-rule" }
+    },
+    transferRequirement: {
+      id: "bridge-next-gap-completed",
+      kind: "includes",
+      path: "completedTransferIds",
+      value: "bridge-next-gap",
+      observedAfterEventId: "ev-lunch-reveal"
+    }
   },
 
   star2: {
     label: "Day planner",
-    predicate: "pass && spentUsd <= 0.55",
+    predicate: {
+      id: "l7-star2",
+      kind: "compare",
+      path: "wallet.spentUsd",
+      op: "lte",
+      value: 0.55
+    },
     reason: "Bridge the useful gaps without costly extras."
   },
+
   star3: {
     label: "Exact caretaker",
-    predicate:
-      "pass && spentUsd === 0.5006598 && ping request count === 3",
-    reason: "Use the three pings only where each remains cheaper than rebuilding."
+    predicate: {
+      id: "l7-star3",
+      kind: "all",
+      predicates: [
+        {
+          id: "reference-spend-or-better",
+          kind: "compare",
+          path: "wallet.spentUsd",
+          op: "lte",
+          value: 0.5006598
+        },
+        {
+          id: "exact-marker-effects",
+          kind: "compare",
+          path: "counts.keepWarmPings",
+          op: "eq",
+          value: 3
+        }
+      ]
+    },
+    reason:
+      "Use all three markers only where each remains cheaper than rebuilding."
   },
 
   referenceCfg: {
@@ -307,6 +505,7 @@ const L7: LevelDef = {
     keepWarm: true,
     keepWarmMin: 50
   },
+
   antiCfg: {
     oneHourFlag: true,
     keepWarm: false,
@@ -314,21 +513,24 @@ const L7: LevelDef = {
   },
 
   interactionPatterns: [
-    "PATTERN_PREDICT_BEFORE_REVEAL",
-    "PATTERN_FAIL_FREEZE_REWIND",
-    "PATTERN_JUST_IN_TIME_TOAST",
-    "PATTERN_COUNTERFACTUAL_AFTER_ATTEMPT"
+    "predict-before-reveal",
+    "fail-freeze-rewind",
+    "just-in-time-toast",
+    "counterfactual-after-attempt",
+    "limited-marker-inventory"
   ]
 };
 ```
 
-`referenceCfg` is paired with scheduled pings at Lunch `50m/100m` and Commute `50m`. `antiCfg` represents **Never ping**. The post-attempt **Always ping** comparison uses the same seed with a `50m` policy over every gap.
+Reference actions place `ping-a` on `lunch-50`, `ping-b` on `lunch-100`, and—after `ev-lunch-reveal`—`ping-c` on `commute-50`.
+
+The **Always ping — 3 max** counterfactual places the same three marker IDs on `lunch-50`, `lunch-100`, and `meeting-50`. The **Never ping** counterfactual leaves `placements=[]`. Neither branch can produce more than three ping requests.
 
 ## 6. Pricing walkthrough
 
-Sonnet rates are input `$3/M`, read `$0.30/M`, 1-hour write `$6/M`, and output `$15/M` (`C1`, `C3`). The reusable prefix is `34,738` tokens (`C6`).
+`PRICE_REQUEST` uses Sonnet input `$3/M`, cache read `$0.30/M`, 1-hour write `$6/M`, and output `$15/M` (`C1`, `C3`). The reusable prefix is `MAIN_PREFIX_HEY = 34,738` tokens (`C34`). Output is priced at `5x` and remains present in every request total and tape row.
 
-### Request prices
+### Authoritative request prices
 
 - **Cold work request**
   - `writeTok=34,738`: `34,738 × $6/M = $0.208428`
@@ -348,47 +550,47 @@ Sonnet rates are input `$3/M`, read `$0.30/M`, 1-hour write `$6/M`, and output `
   - `outTok=1`: `$0.000015`
   - **Total: `$0.0104394`**
 
-- **Rewrite delta avoided by a successful ping chain**
+- **Cold-to-warm work-request delta**
   - `$0.210228 − $0.0122214 = $0.1980066`
 
-### Per-gap evidence
+### Gap evidence
 
-| Gap | Reference action | Ping total | Rewrite delta avoided | Result |
-|---|---|---:|---:|---|
-| Coffee `20m` | No ping | `$0` | No expiry | Cache hit |
-| Lunch `120m` | Two pings | `$0.0208788` | `$0.1980066` | Pings win by `$0.1771278` |
-| Meeting `50m` | No ping | `$0` | No expiry | Cache hit |
-| Commute `90m` | One ping | `$0.0104394` | `$0.1980066` | Ping wins by `$0.1875672` |
-| Overnight `1,260m` | Let expire | hypothetical `$0.260985` | `$0.1980066` | Rebuild wins by `$0.0629784` |
+| Gap | Reference action | Complete route comparison | Result |
+|---|---|---:|---|
+| Coffee `20m` | No ping | Warm request `$0.0122214` | No expiry |
+| Lunch `120m` | Two pings | Protected `$0.0331002` vs cold `$0.210228` | Pings win by `$0.1771278` |
+| Meeting `50m` | No ping | Warm request `$0.0122214` | No expiry |
+| Commute `90m` | One ping | Protected `$0.0226608` vs cold `$0.210228` | Ping wins by `$0.1875672` |
+| Overnight `1,260m` | Let expire | Projected keep-warm route `$0.2732064` vs rebuild `$0.210228` | Rebuild wins by `$0.0629784` |
 
-The overnight result agrees with the `20h` 1-hour-tier keep-warm break-even (`C19`) and the decision rule in `C20`.
+The Overnight projection applies the same `PRICE_REQUEST` ping price but creates no ledger rows and consumes no fictional markers. It confirms `C19` and applies the decision rule in `C20`.
 
-### Totals
+### Policy totals
 
-- **3-star reference**
+- **Reference — Choose each ping**
   - Two cold work requests: `2 × $0.210228 = $0.420456`
-  - Four warm daytime work requests: `4 × $0.0122214 = $0.0488856`
+  - Four warm work requests: `4 × $0.0122214 = $0.0488856`
   - Three pings: `3 × $0.0104394 = $0.0313182`
   - **Total: `$0.5006598`**
 
-- **Never ping anti-pattern**
+- **Always ping — 3 max**
+  - Three cold work requests: `3 × $0.210228 = $0.630684`
+  - Three warm work requests: `3 × $0.0122214 = $0.0366642`
+  - Three pings: `3 × $0.0104394 = $0.0313182`
+  - **Total: `$0.6986664`**
+
+- **Never ping**
   - Four cold work requests: `4 × $0.210228 = $0.840912`
   - Two warm work requests: `2 × $0.0122214 = $0.0244428`
   - **Total: `$0.8653548`**
 
-- **Always ping anti-pattern**
-  - One cold work request: `$0.210228`
-  - Five warm work requests: `5 × $0.0122214 = $0.061107`
-  - Twenty-nine pings: `29 × $0.0104394 = $0.3027426`
-  - **Total: `$0.5740776`**
-
-The always-policy ping count is `2` Lunch + `1` Meeting + `1` Commute + `25` Overnight. Coffee needs none because it ends before the first `50m` interval. This comparison is hidden until the player completes an attempt.
+The capped Always policy spends its third marker on a Meeting that did not need one, then pays a cold Commute request. It costs `$0.1980066` more than the reference, a `39.55%` increase over `$0.5006598`. The three totals remain hidden until a meaningful attempt completes.
 
 ## 7. Tape sequence
 
-`TapeRenderer.rowSource = "ledger"`.
+`UI_TAPE_RENDERER.rowSource = "ledger"`.
 
-Exact 3-star order:
+Exact 3-star row order:
 
 1. `REQ_OPEN` — write `34,738`; input `100`; output `100`
 2. `REQ_AFTER_COFFEE` — read `34,738`; input `100`; output `100`
@@ -411,30 +613,48 @@ Reveal groups:
 
 `ahaRequestId = "REQ_NEXT_DAY"`.
 
-At the aha frame, the Overnight card expands into two aligned totals:
+Every row renders all non-zero `WireSegment`s. In particular, `outTok` contributes its `$15/M` Sonnet output cost to the violet segment and to total bar geometry from the first row (`C1`, `C3`). Hiding a small output label may not remove its visual width.
 
-- **25 pings: `$0.260985`**
+At the aha frame, the Overnight card shows the complete route totals:
+
+- **Projected 25-ping route plus warm work: `$0.2732064`**
 - **Let expire, then rebuild: `$0.210228`**
 
-Only then does the timeline annotate Lunch and Commute with **“worth it”** and Overnight with **“stop here.”**
+Only after this frame does the timeline annotate Lunch and Commute with **“worth it”**, Meeting with **“already safe”**, and Overnight with **“let go.”**
 
 ## 8. Prediction prompts
 
+Prediction keys control reveal copy only. A wrong option changes no score, star, wallet, failure, or gate result.
+
 ### `pred-lunch`
 
-**Question:** “Lunch is 120 minutes. What will two pings do to the next request?”
+**Question:** “Lunch is 120 minutes. What will the two placed markers do to the next request?”
 
 Options:
 
-- `two-pings-win`: **“Keep it blue, for less than a rewrite.”**
+- `two-pings-win`: **“Keep it warm for less than a rewrite.”**
 - `two-pings-lose`: **“Cost more than letting it expire.”**
-- `still-expires`: **“Expire before lunch ends anyway.”**
+- `still-expires`: **“Expire before Lunch ends anyway.”**
 
-Correct: `two-pings-win`.
+Reveal key: `two-pings-win`.
+
+### Post-evidence transfer — `bridge-next-gap`
+
+This appears only after Lunch’s ledger is visible.
+
+**Question:** “One marker remains. Meeting lasts 50 minutes; Commute lasts 90. Where do you spend it?”
+
+Actions:
+
+- Place it on `meeting-50`.
+- Place it on `commute-50`.
+- Save it for Overnight.
+
+The reference action is `PLACE_LIMITED_MARKER` on `commute-50`. This post-evidence placement—not any prediction answer—is the demonstrated-understanding gate.
 
 ### `pred-commute`
 
-**Question:** “One ping sits 50 minutes into a 90-minute commute. What reaches the other side?”
+**Question:** “One marker sits 50 minutes into a 90-minute commute. What reaches the other side?”
 
 Options:
 
@@ -442,147 +662,160 @@ Options:
 - `cache-expires`: **“A rewrite.”**
 - `same-cost`: **“Exactly the same bill.”**
 
-Correct: `one-ping-win`.
+Reveal key: `one-ping-win`.
 
 ### `pred-overnight`
 
-**Question:** “The overnight gap is 21 hours. Which bill will be smaller?”
+**Question:** “The overnight gap is 21 hours. Which complete route will cost less?”
 
 Options:
 
 - `let-expire`: **“Let it expire, then rebuild.”**
-- `keep-pinging`: **“Ping every 50 minutes.”**
+- `keep-pinging`: **“Project a ping every 50 minutes.”**
 - `same-cost`: **“They meet at the same price.”**
 
-Correct: `let-expire`.
+Reveal key: `let-expire`.
 
-### Transfer prompt
-
-**Question:** “A new gap needs 4 pings. Together they cost `$0.0417576`; the rewrite delta is `$0.1980066`. Protect it?”
-
-Options:
-
-- **“Yes — the pings are still cheaper.”** — correct
-- **“No — any expiry risk means rebuild.”**
-- **“Only if the gap has a meeting label.”**
-
-The transfer values are derived from the same request prices (`C1`, `C3`, `C6`, `C20`).
+The `20h` canonical break-even and both dollar totals remain hidden until this prediction is committed and `REQ_NEXT_DAY` resolves.
 
 ## 9. Fail-state
 
-Two local failures use `PATTERN_FAIL_FREEZE_REWIND`.
+One reachable local failure uses `fail-freeze-rewind`.
 
-### Failure A — never ping
+### Failure — skip Lunch protection
 
-- **Decisive event:** `REQ_AFTER_LUNCH` becomes a cold rewrite.
-- Action:
-  ```ts
-  {
-    type: "FREEZE_FAILURE",
-    failure: {
-      failureId: "fail-lunch-rewrite",
-      causeCode: "PING_UNDERSPEND",
-      message:
-        "Lunch expired the cache: $0.0208788 of pings would have avoided a $0.1980066 rewrite delta.",
-      checkpointId: "cp-plan"
-    }
+- **Predicate:** zero Lunch markers resolve and `REQ_AFTER_LUNCH` is cold.
+- **Decisive event:** `REQ_AFTER_LUNCH` appends its cold ledger row.
+- **Visible actual route:** cold resumed work costs `$0.210228`.
+- **Visible valid alternative:** two pings plus warm resumed work cost `$0.0331002`.
+- **Margin:** the mistake costs `$0.1771278` more; `actualUsd > validAlternativeUsd`.
+
+Action:
+
+```ts
+{
+  type: "FREEZE_FAILURE",
+  failure: {
+    failureId: "fail-lunch-rewrite",
+    causeCode: "PING_UNDERSPEND",
+    message:
+      "Lunch cost $0.210228. Two pings plus a warm resume would have cost $0.0331002.",
+    checkpointId: "cp-plan"
   }
-  ```
-- Highlight: Lunch gap, empty ping slots, expired `CacheEntry`, write segment, wallet delta.
-- Timeline itemization:
-  - **Pings skipped: `$0.0208788`**
-  - **Extra rewrite paid: `$0.1980066`**
-- Rewind: **“Rewind to ping placement”** dispatches `{ type: "REWIND_TO_CHECKPOINT", checkpointId: "cp-plan" }`. Opening request and its explanation do not replay.
+}
+```
 
-### Failure B — always ping
+Highlight:
 
-- **Decisive event:** the twentieth overnight ping makes cumulative overnight ping cost exceed the rewrite delta.
-- At ping 19: `$0.1983486 > $0.1980066`.
-- Action:
-  ```ts
-  {
-    type: "FREEZE_FAILURE",
-    failure: {
-      failureId: "fail-overnight-overping",
-      causeCode: "PING_OVERSPEND",
-      message:
-        "Overnight ping 19 crossed the line: $0.1983486 in pings now costs more than the rewrite it avoids.",
-      checkpointId: "cp-plan"
-    }
-  }
-  ```
-- Highlight: ping 19, cumulative ping meter, rewrite-delta marker.
-- Rewind restores `cp-plan`; the player can remove overnight coverage without replaying the opening.
+- Lunch’s empty marker slots.
+- The expired `CacheEntry`.
+- `REQ_AFTER_LUNCH`’s write and output segments.
+- The `$0.210228` versus `$0.0331002` comparison.
+- The wallet delta.
+
+Rewind copy: **“Rewind to ping placement.”**
+
+Action:
+
+```ts
+{ type: "REWIND_TO_CHECKPOINT", checkpointId: "cp-plan" }
+```
+
+Rewind preserves `REQ_OPEN` and its ledger row, clears later economics, and restores all three marker IDs as unplaced. There is no overnight ping-count failure: a three-marker inventory cannot reach an uncapped nineteenth or twenty-fifth ping.
 
 ## 10. Gate & stars
 
 ### Pass predicate
 
-`pass(st)` returns true only when all are true:
+`pass(st)` is pure and returns true only when:
 
-- Lunch contains exactly two executed pings.
-- Commute contains exactly one executed ping.
-- Coffee, Meeting, and Overnight contain zero executed pings.
-- `pred-lunch`, `pred-commute`, and `pred-overnight` were committed before their gated reveals.
-- `pred-overnight.optionId === "let-expire"`.
-- The transfer prompt is answered **“Yes — the pings are still cheaper.”**
-- `keep-warm-rule` is acknowledged after the aha frame.
-- The attempt reaches `REQ_NEXT_DAY`.
+- Exactly two real ping requests executed during Lunch.
+- Exactly one real ping request executed during Commute.
+- Zero pings executed during Coffee, Meeting, and Overnight.
+- The Commute marker was placed through `PLACE_LIMITED_MARKER` after `ev-lunch-reveal`.
+- `bridge-next-gap` completed from that post-evidence action.
+- `keep-warm-rule` was acknowledged after `ev-overnight-reveal`.
+- The attempt reached `REQ_NEXT_DAY`.
 
-Budget alone cannot pass the level.
+The pass predicate does not inspect:
+
+- Which prediction option was selected.
+- Prediction correctness.
+- Whether a prediction matched its reveal key.
+- Budget alone.
+
+Prediction commitment remains a reveal precondition enforced by `predict-before-reveal`, not a scoring criterion.
 
 ### Stars
 
 - **1 star:** behavioral pass.
-- **2 stars:** pass and spend at most `$0.55` `[FICTION]`.
-- **3 stars:** pass, execute exactly three pings, and spend exactly `$0.5006598` before display rounding.
+- **2 stars:** pass and `spentUsd <= $0.55` `[FICTION]`.
+- **3 stars:** pass, exactly three ping requests, and `spentUsd <= $0.5006598`.
+
+The 3-star comparison is a `lte` predicate against the authoritative reference total; it never uses floating-point equality.
 
 ## 11. Toasts
 
 | ID | Trigger | Exact copy |
 |---|---|---|
 | `toast-first-write` | `REQ_OPEN` resolves | **“Day started. Saved context is live for 60 idle minutes.”** |
+| `toast-first-marker` | First `PLACE_LIMITED_MARKER` action | **“Keep-warm ping: one marker becomes one real request when its slot arrives.”** |
 | `toast-lunch-ping-1` | `PING_LUNCH_1` resolves | **“Ping · `$0.0104394`. The idle clock restarts.”** |
-| `toast-lunch-paid` | `REQ_AFTER_LUNCH` resolves | **“Lunch crossed safely: `$0.0208788` in pings avoided a `$0.1980066` rewrite delta.”** |
-| `toast-no-ping-needed` | `REQ_AFTER_MEETING` resolves | **“50 minutes. Still alive without a ping.”** |
-| `toast-commute-paid` | `REQ_AFTER_COMMUTE` resolves | **“One small ping bridged the commute.”** |
-| `toast-overnight-line` | Overnight comparison reveals | **“Past 20 hours, tending this 1-hour cache costs more than rebuilding.”** |
-| `toast-rule` | explanation acknowledged | **“Keep-warm is a price comparison, not a promise.”** |
+| `toast-lunch-paid` | `REQ_AFTER_LUNCH` resolves warm | **“Lunch route: `$0.0331002` instead of `$0.210228`.”** |
+| `toast-no-ping-needed` | `REQ_AFTER_MEETING` resolves | **“50 minutes. Still alive without spending a marker.”** |
+| `toast-commute-paid` | `REQ_AFTER_COMMUTE` resolves warm | **“One ping bridged the commute.”** |
+| `toast-overnight-line` | Overnight comparison reveals | **“This 21-hour route costs less if the cache expires.”** |
+| `toast-rule` | `keep-warm-rule` acknowledged | **“Keep-warm is a price comparison, not a promise.”** |
 
-The term **keep-warm ping** first appears when the player places the first marker. The `20h` break-even is not shown until `pred-overnight` is committed and revealed.
+The term **keep-warm ping** first appears after the player places a marker. The canonical `20h` break-even is not named before Overnight evidence reveals.
 
 ## 12. QA gate
 
 Real-browser click-through must assert:
 
-1. The first draggable ping is usable by `1.6s` `[ESTIMATE]`.
-2. No copy before the first attempt states which gaps should receive pings.
-3. Lunch, Commute, and Overnight outcomes cannot reveal before their prediction is committed.
-4. Pointer drag and keyboard placement dispatch identical `PLACE_KEEP_WARM_PING` actions.
-5. Policy chips are keyboard reachable and expose selected state.
-6. Reference play yields exactly `9` `LedgerRow`s and exactly `9` tape rows.
-7. Each priced request produces one ledger row; each tape row maps to that request.
-8. All request costs are positive.
-9. No positive amount displays as `$0.0000`; ping input/output details retain sufficient precision.
-10. Every price equals `PRICE_REQUEST` using `C1`, `C3`, and `C6`.
-11. Reference total is exactly `$0.5006598` before rounding.
-12. Never-ping total is exactly `$0.8653548`.
-13. Always-ping total is exactly `$0.5740776`.
-14. Overnight ping 19 freezes at cumulative `$0.1983486`, before further economic actions.
-15. Rewind to `cp-plan` deterministically preserves the opening ledger row and restores all three ping markers.
-16. Static tape bars render immediately without hover.
-17. Hover calculations sum to the authoritative row cost.
-18. `TTLDrainBar` refreshes on each successful ping (`C12`).
-19. Reduced-motion mode produces identical actions, ledger rows, costs, and reveal order.
-20. The three-policy comparison is absent before `COMPLETE_ATTEMPT`.
-21. The fixed seed is winnable without hidden controls.
-22. `referenceCfg` passes the behavioral gate.
-23. `antiCfg` fails at Lunch for the intended causal reason.
-24. Wallet arithmetic uses unrounded values and may visibly cross the budget in anti-pattern runs.
-25. The result screen reports behavior separately from budget.
+1. The first marker is usable by `1.6s` `[ESTIMATE]`.
+2. No pre-play copy states which gaps should receive markers.
+3. The inventory starts with exactly three unique marker IDs.
+4. Pointer drag and keyboard placement dispatch equivalent `PLACE_LIMITED_MARKER` actions.
+5. A marker occupies at most one target, and each authored slot accepts at most one marker.
+6. Placement creates no priced request until its target resolves.
+7. Exactly one `PLACE_KEEP_WARM_PING` and one priced ping request result from each resolved marker.
+8. **Always ping — 3 max** creates exactly three pings at `lunch-50`, `lunch-100`, and `meeting-50`.
+9. No policy or counterfactual creates more than three ping effects.
+10. Lunch, Commute, and Overnight evidence cannot reveal before the corresponding prediction is committed.
+11. A wrong prediction changes no wallet value, score, star, failure, or gate result.
+12. The gate observes `PLACE_LIMITED_MARKER` on `commute-50` after `ev-lunch-reveal`.
+13. Prediction option identity never appears in `pass(st)`, a star predicate, or a failure predicate.
+14. Reference play yields exactly `9` `LedgerRow`s and `9` tape rows.
+15. Every priced request produces exactly one ledger row and one tape row.
+16. Every real request cost is positive.
+17. No positive amount displays as `$0.0000`; ping input and output details retain sufficient precision.
+18. Every request price matches `PRICE_REQUEST` using `C1`, `C3`, and `C34`.
+19. Reference spend is exactly `$0.5006598` before display rounding.
+20. **Always ping — 3 max** totals exactly `$0.6986664`.
+21. **Never ping** totals exactly `$0.8653548` in the post-attempt counterfactual.
+22. The Lunch failure freezes only after the `$0.210228` cold row is visible.
+23. The failure comparison shows `$0.210228 > $0.0331002`.
+24. No unreachable overnight ping-count failure exists.
+25. Rewind to `cp-plan` preserves `REQ_OPEN`, removes later rows, and restores three unplaced markers deterministically.
+26. `UI_TTL_DRAIN_BAR` refreshes on each successful cache read (`C12`).
+27. Static tape bars render without hover.
+28. Hover bucket calculations sum to the authoritative row cost.
+29. Every tape row includes the visual weight of non-zero `outTok`.
+30. Reduced-motion mode produces identical actions, rows, costs, marker consumption, and reveal order.
+31. The three-policy comparison is absent before `COMPLETE_ATTEMPT`.
+32. `referenceCfg` plus the reference marker actions passes the behavioral gate from seed `7007`.
+33. `antiCfg` with no placements reaches the Lunch failure for the intended economic cause.
+34. Wallet arithmetic uses unrounded values and may become negative on the full Never counterfactual.
+35. The result screen reports behavioral understanding separately from budget.
+36. The fixed seed is winnable without undocumented controls.
+37. `concept.id`, both prerequisites, and the level slug match the canonical registries.
+38. Each authoritative quantity has one implementable value; no uncapped Always total or superseded price appears.
 
 ## 13. Reference-bar justification
 
-The screen opens directly on a tactile day planner, gives the player one legible resource—three pings—and withholds the governing rule. Short gaps establish intuition through motion; Lunch rewards intervention; Meeting rewards restraint; Overnight overturns the tempting “keep everything alive” strategy only after a committed prediction.
+The screen opens on one tactile resource: three finite markers. The player cannot maximize a dial or schedule an unlimited background policy; spending a marker now necessarily removes it from a later gap. Lunch first establishes that intervention can be dramatically cheaper than a rewrite. The player must then apply that visible evidence by placing the final marker on a new gap, making the gate a real post-evidence decision rather than a scored guess.
 
-Failure stops on the exact ping or rewrite that changed the comparison, itemizes the two competing costs, and rewinds to the placement decision. The post-attempt three-policy overlay confirms the discovered rule without pre-solving the toy. That rhythm—touch, predict, observe, revise, transfer—keeps the lesson causal and gives both extremes a vivid, local consequence.
+Meeting rewards restraint, Commute rewards selective intervention, and Overnight overturns the urge to preserve everything only after a committed prediction. The sole freeze occurs where the ledger makes the punished route unambiguously more expensive, then rewinds directly to marker placement. The capped post-attempt comparison shows both failure extremes without violating the inventory: spend all three too early, spend none, or allocate them where their priced benefit is largest.
+
+The discovery rhythm is therefore: touch a finite resource, predict, observe a causal bill, transfer the rule through a new placement, encounter the break-even reversal, then compare completed policies.

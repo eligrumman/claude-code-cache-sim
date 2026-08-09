@@ -2,18 +2,19 @@
 
 ## 1. Identity
 
-- `id`: `L1`
+- `id`: `"01-red-or-blue"`
 - `title`: `Red or Blue?`
 - `tier`: `1`
-- `objective`: “Send three small coding requests without draining Bob’s $0.30 wallet.”
-- ONE concept: Reusing an unchanged context converts a costly first `RATE_CACHE_WRITE_1H` into a cheaper `RATE_CACHE_READ`.
-- Prerequisite concept: none. `Token` is introduced in context after the first send.
-- `concept.id`: `cache-write-becomes-read`
+- `objective`: “Send three related coding requests without draining Bob’s $0.30 wallet.”
+- ONE concept: Reusing an unchanged context converts the saved prefix from `RATE_CACHE_WRITE_1H` to `RATE_CACHE_READ`.
+- Prerequisite concepts: none.
+- `concept.id`: `"write-vs-read"`
 - `concept.privateDesignerSummary`: Reusing the same `MAIN_SESSION_CONTEXT` makes its saved prefix a read on later requests.
 - `concept.postRevealRule`: “The expensive part was the saved context, not the new sentence.”
 
 ## 2. Objects used
 
+- `LevelDef`
 - `Token`
 - `TokenCount`
 - `PrefixBlock`
@@ -28,20 +29,24 @@
 - `Budget`
 - `Clock`
 - `Checkpoint`
+- `StatePredicate`
+- `FailureRuleDef`
+- `GateDef`
 - `RESOLVE_PREFIX`
 - `PRICE_REQUEST`
 - `ReducerState`
-- `TapeRenderer`
-- `MainCachePanel`
-- `HoverPriceCalculator`
-- `ToastSystem`
+- `UI_TAPE_RENDERER`
+- `UI_MAIN_CACHE_PANEL`
+- `UI_HOVER_PRICE_CALCULATOR`
+- `UI_TOAST_SYSTEM`
 - `UI_PREDICTION_PROMPT`
 - `UI_REWIND_CONTROL`
-- `ResultScreen`
-- `PATTERN_PREDICT_BEFORE_REVEAL`
-- `PATTERN_FAIL_FREEZE_REWIND`
-- `PATTERN_JUST_IN_TIME_TOAST`
-- `PATTERN_COUNTERFACTUAL_AFTER_ATTEMPT`
+- `UI_COUNTERFACTUAL_OVERLAY`
+- `UI_RESULT_SCREEN`
+- `"predict-before-reveal"`
+- `"fail-freeze-rewind"`
+- `"just-in-time-toast"`
+- `"counterfactual-after-attempt"`
 
 ## 3. Cold-open / narrative
 
@@ -49,133 +54,203 @@
 
 | Time | Beat |
 |---:|---|
-| `0.0s` | Show Bob’s task card, an empty `TapeRenderer`, `MainCachePanel`, and `Wallet` at **$0.30** `[FICTION]`. |
-| `0.3s` | Bob: “Login is broken. Ask Claude to fix it?” |
-| `0.8s` | Primary control appears: **Send**. No rate table, explanation, comparison, or color legend is visible. |
-| Player click | Request `l1-r1` launches. Its final red bar renders immediately, and the wallet counts down to **$0.089736**. |
+| `0.0s` | Show Bob’s task card, an empty `UI_TAPE_RENDERER`, compact `UI_MAIN_CACHE_PANEL`, and `Wallet` at **$0.30** `[FICTION]`. |
+| `0.3s` `[ESTIMATE]` | Bob: “Login is broken. Ask Claude to fix it?” |
+| `0.8s` `[ESTIMATE]` | Primary control appears: **Send**. No rate table, comparison, color legend, or cache explanation is visible. |
+| First click | `l1-r1` settles as a red-dominant row; wallet becomes **$0.089736**. |
 | After settle | Toast: “First request: Claude saved **34,738 tokens** of context. **WRITE · $0.210264**.” |
 | `+1.2s` `[ESTIMATE]` | Bob replaces the task text with: “Add the matching logout route.” |
-| Second click | Request `l1-r2` renders blue; wallet moves only to **$0.077473**. |
-| After settle | Toast: “Same saved context. **READ · $0.012263**.” |
-| `+0.8s` `[ESTIMATE]` | Third card appears: “Add a test for both routes.” The **Send** control becomes **Predict, then send**. |
+| Second click | `l1-r2` settles as a blue-dominant row; wallet becomes **$0.0774726**. |
+| After settle | Toast: “Same saved context. **READ · $0.0122634**.” |
+| `+0.8s` `[ESTIMATE]` | A related third task appears: “Add a test for both routes.” Bob asks whether to keep it in this chat or give it a clean thread. |
 
-The words “write” and “token” first appear after `l1-r1`; “read” first appears after `l1-r2`.
+The third-task choice is an ordinary workspace decision:
+
+- **Keep working here** — keeps the related login, logout, and test work together.
+- **Open a clean chat** — gives the test a tidier isolated thread but leaves the prior saved context behind.
+
+Both routes can produce the correct test. Their organization-versus-reuse tradeoff makes the choice plausible; the level does not teach that a clean chat is always wrong.
+
+Vocabulary timing:
+
+- “token” and “write” first appear after `l1-r1`.
+- “read” first appears after `l1-r2`.
+- TTL terminology remains hidden; expiry is not this level’s concept.
 
 ## 4. Exact event sequence
 
-All `PrefixBlock` hashes except `PB_CURRENT` remain byte-identical across the reference sequence. The cacheable prefix totals `34,738` tokens (`C6`); each request’s tiny current sentence and output fixture are `[FICTION]`.
+The reference route keeps the same `MAIN_SESSION_CONTEXT`. Its cacheable prefix is `MAIN_PREFIX_HEY = 34,738` tokens (`C34`). All cacheable `PrefixBlock.identityHash` values remain byte-identical; only the fresh current sentence changes. Current-sentence and output fixtures are `[FICTION]`.
 
-1. **Enter level**
-   - Event: route opens `L1`.
-   - Action: `ENTER_LEVEL { levelId: "L1" }`.
-   - Mutates: `ReducerState`, `Wallet`, `Budget`, `Clock`, `MAIN_SESSION_CONTEXT`, `PREFIX_STACK`, empty ledger and tape.
-   - Numbers: wallet `$0.30` `[FICTION]`; clock `0m`; prefix `34,738 tok` (`C6`).
+1. **Enter the level**
+   - Event: route opens `"01-red-or-blue"`.
+   - Action: `ENTER_LEVEL { levelId: "01-red-or-blue" }`.
+   - Mutates: `ReducerState`, `Wallet`, `Budget`, `Clock`, `MAIN_SESSION_CONTEXT`, `PREFIX_STACK`, and empty ledger/tape state.
+   - Numbers: wallet `$0.30` `[FICTION]`; clock `0m`; reusable prefix `34,738 tok` (`C34`).
    - Copy: “Login is broken. Ask Claude to fix it?”
 
-2. **Establish the failure rewind point**
-   - Event: first **Send** gains focus.
-   - Action: `CREATE_CHECKPOINT { checkpointId: "l1-before-first-send", reason: "unit-start" }`.
-   - Mutates: `Checkpoint[]` only.
-   - Numbers: no economic mutation.
-
-3. **First send**
+2. **First send**
    - Event: player clicks **Send** for “Fix the login route.”
    - Action: `SEND_REQUEST { request: l1-r1 }`.
-   - Mutates: `CacheEntry`, `MainCachePanel`, `LedgerRow[]`, `lastRequests`, `Wallet`, and the `TapeRenderer` payload.
+   - Mutates: `CacheEntry`, `UI_MAIN_CACHE_PANEL`, `LedgerRow[]`, `lastRequests`, `Wallet`, and the `UI_TAPE_RENDERER` payload.
    - Resolution: `readTok=0`, `inputTok=12`, `writeTok=34,738`, `outTok=120`, `cold=true`.
-   - Numbers: write `$0.208428`; input `$0.000036`; output `$0.001800`; total `$0.210264`; wallet `$0.300000 → $0.089736` (`C1`, `C3`, `C6`; `12/120 tok` `[FICTION]`).
-   - Render: large red write segment plus output evidence; no answer about later sends is shown.
+   - Price:
+     - write: `$0.208428`
+     - input: `$0.000036`
+     - output: `$0.001800`
+     - total: `$0.210264`
+   - Wallet: `$0.3000000 → $0.0897360`.
+   - Citations: `C1`, `C3`, `C34`; `12 input tok` and `120 outTok` `[FICTION]`.
+   - Render: red write, red fresh-input, and violet output segments. No claim about later requests appears.
 
-4. **Second send**
+3. **Second send**
    - Event: player clicks **Send** for “Add the matching logout route.”
    - Action: `SEND_REQUEST { request: l1-r2 }`.
-   - Mutates: existing `CacheEntry.lastTouchMin`, `CacheEntry.expiresAtMin`, `LedgerRow[]`, `lastRequests`, `Wallet`, and tape.
+   - Mutates: the live `CacheEntry`, its touch/expiry values, `LedgerRow[]`, `lastRequests`, `Wallet`, and tape.
    - Resolution: `readTok=34,738`, `inputTok=14`, `writeTok=0`, `outTok=120`, `cold=false`.
-   - Numbers: read `$0.0104214`; input `$0.000042`; output `$0.001800`; total `$0.0122634`; wallet `$0.089736 → $0.0774726` (`C1`, `C3`, `C6`, `C12`; `14/120 tok` `[FICTION]`).
-   - Render: a narrow blue read row. Only now may the UI say that the same context was reused.
+   - Price:
+     - read: `$0.0104214`
+     - input: `$0.000042`
+     - output: `$0.001800`
+     - total: `$0.0122634`
+   - Wallet: `$0.0897360 → $0.0774726`.
+   - Citations: `C1`, `C3`, `C12`, `C34`; `14 input tok` and `120 outTok` `[FICTION]`.
+   - Render: blue-dominant row with visible red and violet contributions. Only now may copy say that saved context was read.
 
-5. **Checkpoint before the transferable prediction**
-   - Event: third task becomes visible.
-   - Action: `CREATE_CHECKPOINT { checkpointId: "l1-before-third-prediction", reason: "prediction" }`.
+4. **Create the route checkpoint**
+   - Event: the related test task and the two thread choices appear.
+   - Action: `CREATE_CHECKPOINT { checkpointId: "l1-before-third-route", reason: "decision" }`.
    - Mutates: `Checkpoint[]` only.
-   - Numbers: ledger remains at two rows; wallet remains `$0.0774726`.
+   - State remains: two ledger rows, live cache, wallet `$0.0774726`.
 
-6. **Open prediction**
-   - Event: player clicks **Predict, then send**.
+5. **Choose where the related test goes**
+   - Reference event: player clicks **Keep working here**.
+   - Reference action: `BEGIN_TRANSFER { challengeId: "l1-third-same-chat" }`.
+   - Reference mutation: records the route choice without altering the cache, ledger, or wallet.
+   - Anti-pattern event: player clicks **Open a clean chat**.
+   - Anti-pattern action: `DISCARD_CONTEXT { contextId: "l1-main" }`.
+   - Anti-pattern mutation: invalidates only the named cache namespace; `UI_MAIN_CACHE_PANEL` shows its cleared state.
+   - Neither action produces a `LedgerRow` or changes the wallet.
+
+6. **Open the route-specific prediction**
+   - Event: after either route choice, player clicks **Predict, then send**.
    - Action: `OPEN_PREDICTION { promptId: "l1-third-color-cost" }`.
    - Mutates: `phase="predict"` and `prediction`.
-   - Numbers: no request, ledger row, cache touch, or wallet change.
+   - The prompt repeats the chosen route but shows no correctness treatment or price result.
 
-7. **Commit prediction**
+7. **Commit the prediction**
    - Event: player selects an option and clicks **Lock prediction**.
    - Actions, in order:
      - `SELECT_PREDICTION { promptId: "l1-third-color-cost", optionId }`
      - `COMMIT_PREDICTION { promptId: "l1-third-color-cost" }`
    - Mutates: `prediction.optionId`, then `prediction.committed=true`.
-   - Numbers: third send remains impossible until commitment.
+   - No request, cache touch, ledger row, wallet mutation, score, or star change occurs.
+   - The third `SEND_REQUEST` remains disabled until commitment.
 
 8. **Reference third send — aha frame**
-   - Event: committed player clicks **Send** for “Add a test for both routes.”
+   - Preconditions: route is `l1-third-same-chat`; prediction is committed.
+   - Event: player clicks **Send and find out**.
    - Action: `SEND_REQUEST { request: l1-r3 }`.
-   - Mutates: existing `CacheEntry`, `LedgerRow[]`, `lastRequests`, `Wallet`, tape.
+   - Mutates: the live `CacheEntry`, `LedgerRow[]`, `lastRequests`, `Wallet`, and tape.
    - Resolution: `readTok=34,738`, `inputTok=13`, `writeTok=0`, `outTok=120`, `cold=false`.
-   - Numbers: read `$0.0104214`; input `$0.000039`; output `$0.001800`; total `$0.0122604`; wallet `$0.0774726 → $0.0652122` (`C1`, `C3`, `C6`, `C12`; `13/120 tok` `[FICTION]`).
-   - Render: third row settles blue beside the differently worded sentence. This is the aha frame.
+   - Price:
+     - read: `$0.0104214`
+     - input: `$0.000039`
+     - output: `$0.001800`
+     - total: `$0.0122604`
+   - Wallet: `$0.0774726 → $0.0652122`.
+   - Citations: `C1`, `C3`, `C12`, `C34`; `13 input tok` and `120 outTok` `[FICTION]`.
+   - Render: the third differently worded request settles blue-dominant beside the first two rows.
 
-9. **Reveal prediction**
-   - Event: third tape row finishes settling.
+9. **Reveal the reference prediction**
+   - Event: `l1-r3` is fully priced and rendered.
    - Action: `REVEAL_PREDICTION { promptId: "l1-third-color-cost", correctOptionId: "blue-about-1-cent" }`.
    - Mutates: `prediction.correctOptionId`, `prediction.revealed=true`, `phase="reveal"`.
    - Copy: “The sentence was new. The **34,738-token context** was already saved.”
+   - This is evidence event `l1-reveal-third-reference`.
 
-10. **Acknowledge the discovered rule**
-    - Event: player clicks **Got it**.
-    - Action: `ACK_EXPLANATION { explanationId: "l1-context-not-sentence" }`.
-    - Mutates: explanation evidence and `phase`.
-    - Copy: “The expensive part was the saved context, not the new sentence.”
+10. **Post-evidence explanation choice**
+    - Event: after `l1-reveal-third-reference`, the player answers: “Why was this request cheap even though the sentence was new?”
+    - Correct action: `ACK_EXPLANATION { explanationId: "l1-context-not-sentence" }`.
+    - Other choices dispatch `ACK_EXPLANATION` with their own explanation IDs and return focus to the evidence; they do not spend money, freeze, alter the prediction, or complete the gate.
+    - Correct copy: “It read the saved context; only the task sentence was new.”
+    - Mutates: `acknowledgedExplanationIds` and `phase`.
+    - This post-evidence action, not the prediction, supplies the one-star gate evidence.
 
-11. **Complete reference attempt**
-    - Event: post-reveal evidence is visible.
+11. **Complete the reference attempt**
+    - Preconditions: three requests completed and `l1-context-not-sentence` was acknowledged after `l1-reveal-third-reference`.
     - Action: `COMPLETE_ATTEMPT`.
-    - Mutates: gate result, stars, `phase="result"`, and `ResultScreen`.
-    - Numbers: three rows; total `$0.2347878`; wallet `$0.0652122`.
+    - Mutates: gate result, stars, `phase="result"`, and `UI_RESULT_SCREEN`.
+    - Numbers: three ledger rows; spend `$0.2347878`; wallet `$0.0652122`.
 
-12. **Anti-pattern branch: discard before the third request**
-    - Event: on retry/counterfactual branch, player clicks **Discard session** after `l1-r2`.
-    - Action: `DISCARD_CONTEXT { contextId: "l1-main" }`.
-    - Mutates: invalidates the named `MAIN_SESSION_CONTEXT` cache namespace; `MainCachePanel` becomes cleared.
-    - Numbers: no ledger row and no immediate wallet change.
-
-13. **Anti-pattern third send**
-    - Event: after committing the same prediction prompt, player sends `l1-r3`.
-    - Action: `SEND_REQUEST { request: l1-r3-discarded }`.
-    - Mutates: new `CacheEntry`, `LedgerRow[]`, `lastRequests`, `Wallet`, tape.
+12. **Anti-pattern third send**
+    - Preconditions: player chose **Open a clean chat** and committed any prediction.
+    - Event: player clicks **Send and find out**.
+    - Action: `SEND_REQUEST { request: l1-r3-clean }`.
+    - Mutates: a new `CacheEntry`, `LedgerRow[]`, `lastRequests`, `Wallet`, and tape.
     - Resolution: `readTok=0`, `inputTok=13`, `writeTok=34,738`, `outTok=120`, `cold=true`.
-    - Numbers: total `$0.210267`; wallet `$0.0774726 → -$0.1327944`; anti-pattern three-request total `$0.4327944` (`C1`, `C3`, `C6`; `13/120 tok` `[FICTION]`).
-    - Render: third row turns red and the wallet crosses zero.
+    - Price:
+      - write: `$0.208428`
+      - input: `$0.000039`
+      - output: `$0.001800`
+      - total: `$0.210267`
+    - Wallet: `$0.0774726 → -$0.1327944`.
+    - Anti-pattern attempt spend: `$0.4327944`.
+    - Citations: `C1`, `C3`, `C34`; `13 input tok` and `120 outTok` `[FICTION]`.
+    - Render: the third row settles red-dominant while the earlier blue row remains visible.
 
-14. **Freeze failure**
-    - Event: the red row and negative wallet become visible.
-    - Action: `FREEZE_FAILURE { failure: { failureId: "l1-discard-rewrite", causeCode: "CONTEXT_DISCARDED", message: "You discarded the saved context, so 34,738 tokens had to be written again.", checkpointId: "l1-before-third-prediction" } }`.
-    - Mutates: `clock.frozen=true`, `frozenFailure`; blocks further economic actions.
-    - Highlight: cleared `MainCachePanel`, red `l1-r3-discarded`, and wallet `-$0.1327944`.
+13. **Reveal the anti-pattern prediction**
+    - Event: `l1-r3-clean` is fully priced and rendered.
+    - Action: `REVEAL_PREDICTION { promptId: "l1-third-color-cost", correctOptionId: "red-about-21-cents" }`.
+    - Mutates prediction evidence only.
+    - Prediction correctness has no effect on the ensuing failure: the costly clean-chat route is the cause.
+
+14. **Freeze the economically true failure**
+    - Decisive event: `l1-r3-clean` resolved for `$0.210267`.
+    - Valid alternative: `l1-r3` would have resolved for `$0.0122604`.
+    - Visible excess: `$0.1980066`; the clean-chat request costs about `17.15×` the same-chat request.
+    - Action:
+
+```ts
+FREEZE_FAILURE {
+  failure: {
+    failureId: "l1-clean-chat-rewrite",
+    causeCode: "CONTEXT_DISCARDED",
+    message:
+      "The clean chat left the saved context behind, so 34,738 tokens were written again.",
+    checkpointId: "l1-before-third-route"
+  }
+}
+```
+
+   - Mutates: `clock.frozen=true` and `frozenFailure`; blocks economic actions.
+   - Highlights: cleared `UI_MAIN_CACHE_PANEL`, red `l1-r3-clean`, blue `l1-r2`, and wallet `-$0.1327944`.
 
 15. **Rewind**
-    - Event: player clicks **Undo discard**.
-    - Action: `REWIND_TO_CHECKPOINT { checkpointId: "l1-before-third-prediction" }`.
-    - Mutates: deterministic branch replay; restores the live `CacheEntry`, two-row ledger, wallet `$0.0774726`, and unopened prediction.
-    - Numbers: no replayed intro and no duplicate ledger rows.
+    - Event: player clicks **Choose the thread again**.
+    - Action: `REWIND_TO_CHECKPOINT { checkpointId: "l1-before-third-route" }`.
+    - Mutates: deterministic replay restores the live cache, two-row ledger, wallet `$0.0774726`, unchosen route, and no committed prediction.
+    - The introduction and first two sends are not replayed; no duplicate ledger rows are created.
+
+16. **Optional post-attempt comparison**
+    - Availability: only after a passing attempt.
+    - Actions:
+      - `REQUEST_COUNTERFACTUAL { comparisonId: "l1-clean-chat-comparison" }`
+      - `REVEAL_COUNTERFACTUAL { comparisonId: "l1-clean-chat-comparison" }`
+    - `UI_COUNTERFACTUAL_OVERLAY` pairs `l1-r3` with `l1-r3-clean`.
+    - It shows `$0.0122604` versus `$0.210267` and the `$0.1980066` delta without mutating the completed attempt.
 
 ## 5. Level data
 
 ```ts
-const L1: LevelDef = {
-  id: "L1",
+const LEVEL_01_RED_OR_BLUE: LevelDef = {
+  id: "01-red-or-blue",
   tier: 1,
   title: "Red or Blue?",
-  objective: "Send three small coding requests without draining Bob’s $0.30 wallet.",
+  objective:
+    "Send three related coding requests without draining Bob’s $0.30 wallet.",
+
   concept: {
-    id: "cache-write-becomes-read",
+    id: "write-vs-read",
     privateDesignerSummary:
       "Reusing the same main-session context converts the saved prefix from a 1h write to a read.",
     postRevealRule:
@@ -186,15 +261,27 @@ const L1: LevelDef = {
   unlocks: "run",
   introducedControls: ["run"],
   cfgLocked: [
-    "orchestratorModel", "planModel", "devModel", "who", "prompts",
-    "width", "oneHourFlag", "keepWarm", "keepWarmMin", "hook",
-    "skills", "skillsMode", "memoryFiles", "mcp"
+    "orchestratorModel",
+    "planModel",
+    "devModel",
+    "who",
+    "prompts",
+    "width",
+    "oneHourFlag",
+    "keepWarm",
+    "keepWarmMin",
+    "hook",
+    "skills",
+    "skillsMode",
+    "memoryFiles",
+    "mcp"
   ],
 
   scope: "session",
   seed: 1001,
   budgetUsd: 0.30,
   clockCapMin: 60,
+
   cfgOverride: {
     orchestratorModel: "sonnet",
     planModel: "sonnet",
@@ -202,6 +289,7 @@ const L1: LevelDef = {
     who: "inline",
     oneHourFlag: true
   },
+
   scenario: "l1-onboarding",
   scenarioData: {
     units: ["fix-login", "add-logout", "test-routes"],
@@ -209,61 +297,105 @@ const L1: LevelDef = {
     prefixStacks: ["l1-main-prefix-34738"],
     estimates: [
       { label: "budgetUsd", value: 0.30, tag: "[FICTION]" },
-      { label: "r1 fresh input", value: 12, tag: "[FICTION]" },
-      { label: "r2 fresh input", value: 14, tag: "[FICTION]" },
-      { label: "r3 fresh input", value: 13, tag: "[FICTION]" },
+      { label: "seed", value: 1001, tag: "[FICTION]" },
+      { label: "r1 fresh input tokens", value: 12, tag: "[FICTION]" },
+      { label: "r2 fresh input tokens", value: 14, tag: "[FICTION]" },
+      { label: "r3 fresh input tokens", value: 13, tag: "[FICTION]" },
       { label: "output tokens per request", value: 120, tag: "[FICTION]" },
-      { label: "cold-open first interaction", value: 1, tag: "[ESTIMATE]" }
+      { label: "cold-open first interaction seconds", value: 1, tag: "[ESTIMATE]" }
     ]
   },
 
-  coldOpen: "as specified in §3",
-  sequence: "as specified in §4",
+  coldOpen: "§3 ColdOpenDef",
+  sequence: "§4 LevelEventDef[]",
+
   predictions: ["l1-third-color-cost"],
   toasts: [
-    "l1-first-write", "l1-first-read", "l1-third-reveal",
-    "l1-discarded", "l1-frozen"
+    "l1-first-write",
+    "l1-first-read",
+    "l1-third-reveal",
+    "l1-clean-chat",
+    "l1-frozen"
   ],
   interactionPatterns: [
-    "PATTERN_PREDICT_BEFORE_REVEAL",
-    "PATTERN_FAIL_FREEZE_REWIND",
-    "PATTERN_JUST_IN_TIME_TOAST",
-    "PATTERN_COUNTERFACTUAL_AFTER_ATTEMPT"
+    "predict-before-reveal",
+    "fail-freeze-rewind",
+    "just-in-time-toast",
+    "counterfactual-after-attempt"
   ],
 
   failLesson: {
     bucket: "none",
-    cite: "C6",
-    line: "Discarding the session removed the reusable context, so the next request rewrote 34,738 tokens."
+    cite: "C34",
+    line:
+      "Opening a clean chat left the reusable context behind, so the related request rewrote 34,738 tokens."
   },
-  failureRules: ["l1-discard-rewrite"],
-  checkpoints: [
-    "l1-before-first-send",
-    "l1-before-third-prediction"
-  ],
+
+  failureRules: ["l1-clean-chat-rewrite"],
+  checkpoints: ["l1-before-third-route"],
 
   gate: {
-    predicateId: "l1-demonstrated-reuse",
-    behavioralRequirements: [
-      "prediction l1-third-color-cost committed before l1-r3",
-      "committed option is blue-about-1-cent",
-      "l1-r3 resolves with readTok=34738 and writeTok=0",
-      "three requests complete in one MAIN_SESSION_CONTEXT"
+    predicateId: "l1-post-reveal-causal-explanation",
+
+    evidenceRevealEventIds: [
+      "l1-reveal-third-reference"
     ],
-    explanationRequirement:
-      "l1-context-not-sentence acknowledged after reveal"
+
+    postEvidenceActionRequirements: [
+      {
+        id: "l1-explanation-action-after-reveal",
+        kind: "action-observed",
+        actionType: "ACK_EXPLANATION",
+        afterEventId: "l1-reveal-third-reference",
+        match: {
+          explanationId: "l1-context-not-sentence"
+        }
+      }
+    ],
+
+    behavioralRequirements: [
+      {
+        id: "l1-three-priced-requests",
+        kind: "compare",
+        path: "ledger.length",
+        op: "eq",
+        value: 3,
+        observedAfterEventId: "l1-reveal-third-reference"
+      },
+      {
+        id: "l1-causal-rule-acknowledged",
+        kind: "includes",
+        path: "acknowledgedExplanationIds",
+        value: "l1-context-not-sentence",
+        observedAfterEventId: "l1-reveal-third-reference"
+      }
+    ],
+
+    explanationRequirement: {
+      id: "l1-explanation-required",
+      kind: "includes",
+      path: "acknowledgedExplanationIds",
+      value: "l1-context-not-sentence",
+      observedAfterEventId: "l1-reveal-third-reference"
+    }
   },
+
   pass: "pure predicate specified in §10",
+
   star2: {
-    label: "Called the color",
-    predicate: "prediction correct and no DISCARD_CONTEXT action",
-    reason: "Predicted the third request would reuse saved context."
+    label: "Kept the thread",
+    predicate:
+      "pass and l1-r3 resolves with readTok=34738, writeTok=0, cold=false",
+    reason:
+      "Kept the related work in the context that already contained it."
   },
+
   star3: {
     label: "Three in a row",
     predicate:
-      "exactly one cold write, two reads, total spend <= 0.2347878, and no rewind",
-    reason: "Kept one session alive for all three requests."
+      "star2 and exactly one cold write, two reads, spend <= 0.2347878, and no rewind",
+    reason:
+      "Completed all three related requests with one write and two reads."
   },
 
   referenceCfg: {
@@ -271,47 +403,70 @@ const L1: LevelDef = {
     who: "inline",
     oneHourFlag: true
   },
+
   antiCfg: {
     devModel: "sonnet",
     who: "inline",
     oneHourFlag: true
   },
-  counterfactuals: ["l1-discard-before-third"],
 
-  tape: "as specified in §7",
-  result: "as specified in §10",
+  counterfactuals: [
+    {
+      id: "l1-clean-chat-comparison",
+      unlockAfterEventId: "l1-complete-reference",
+      kind: "alternate-choice",
+      cfg: {
+        devModel: "sonnet",
+        who: "inline",
+        oneHourFlag: true
+      },
+      comparisonQuestion:
+        "What changed when the related test moved to a clean chat?",
+      revealCopy:
+        "The task sentence stayed tiny; the new chat had to write the 34,738-token context again."
+    }
+  ],
+
+  tape: "§7 TapeSpec",
+  result: "§10 ResultSpec",
   vocabulary: ["token", "write", "read"],
-  qa: "as specified in §12"
+  qa: "§12 QaAssertion[]"
 };
 ```
 
-`seed: 1001`, the three current-sentence sizes, output sizes, budget, timings, and fixture IDs are deterministic level fixtures `[FICTION]`; the shared prefix and pricing rates are grounded in `C1`, `C3`, and `C6`.
+The scenario adapter expands the three unit IDs, context ID, and prefix-stack ID into the canonical `UnitSeed`, `ContextSeed`, and `PrefixStackSeed` objects. It must use `MAIN_PREFIX_HEY`, not define a second main-prefix value.
+
+`seed`, wallet, current-sentence sizes, output size, and presentation timing are deterministic `[FICTION]`/`[ESTIMATE]` fixtures. The reusable prefix, cache behavior, and rates are grounded in `C1`, `C3`, `C12`, and `C34`.
 
 ## 6. Pricing walkthrough
 
-Model: Sonnet. `RATE_CACHE_WRITE_1H=$6/M`, `RATE_CACHE_READ=$0.30/M`, fresh input `$3/M`, and output `$15/M` (`C1`, `C3`). The reusable main prefix is `34,738 tok` (`C6`).
+Model: Sonnet. `RATE_INPUT=$3/M`, `RATE_CACHE_READ=$0.30/M`, `RATE_CACHE_WRITE_1H=$6/M`, and `RATE_OUTPUT=$15/M` (`C1`, `C3`). The reusable prefix is `MAIN_PREFIX_HEY = 34,738 tok` (`C34`).
 
-| Request | Wire buckets | Calculation | Cost |
-|---|---|---:|---:|
-| `l1-r1` | `0 read + 12 input + 34,738 write + 120 output` | `0 + 12×3/M + 34,738×6/M + 120×15/M` | `$0.210264` |
-| `l1-r2` | `34,738 read + 14 input + 0 write + 120 output` | `34,738×0.30/M + 14×3/M + 120×15/M` | `$0.0122634` |
-| `l1-r3` | `34,738 read + 13 input + 0 write + 120 output` | `34,738×0.30/M + 13×3/M + 120×15/M` | `$0.0122604` |
+This is the sole authoritative request-price table for the level:
 
-Three-star reference total:
+| Request | Route | Priced buckets | `PRICE_REQUEST` calculation | Cost |
+|---|---|---|---:|---:|
+| `l1-r1` | First request | `0 read + 12 input + 34,738 write + 120 output` | `0 + 12×$3/M + 34,738×$6/M + 120×$15/M` | `$0.210264` |
+| `l1-r2` | Same chat | `34,738 read + 14 input + 0 write + 120 output` | `34,738×$0.30/M + 14×$3/M + 120×$15/M` | `$0.0122634` |
+| `l1-r3` | Keep working here | `34,738 read + 13 input + 0 write + 120 output` | `34,738×$0.30/M + 13×$3/M + 120×$15/M` | `$0.0122604` |
+| `l1-r3-clean` | Open a clean chat | `0 read + 13 input + 34,738 write + 120 output` | `0 + 13×$3/M + 34,738×$6/M + 120×$15/M` | `$0.210267` |
+
+Three-star reference result:
 
 ```text
-$0.210264 + $0.0122634 + $0.0122604 = $0.2347878
-wallet remaining = $0.3000000 - $0.2347878 = $0.0652122
+spend
+= $0.210264 + $0.0122634 + $0.0122604
+= $0.2347878
+
+wallet remaining
+= $0.3000000 - $0.2347878
+= $0.0652122
 ```
 
-Anti-pattern total when the session is discarded before request three:
+Clean-chat anti-pattern result:
 
 ```text
-l1-r3-discarded
-= 13×$3/M + 34,738×$6/M + 120×$15/M
-= $0.210267
-
-anti total
+spend
 = $0.210264 + $0.0122634 + $0.210267
 = $0.4327944
 
@@ -320,42 +475,66 @@ wallet remaining
 = -$0.1327944
 ```
 
-The post-attempt comparison may show the `20x` 1-hour-write-to-read input-side rate ratio (`C5`); it must not appear before the third prediction.
+Economically true failure comparison:
+
+```text
+third-request excess
+= $0.210267 - $0.0122604
+= $0.1980066
+```
+
+The clean-chat third request is about `17.15×` the same-chat third request. The anti-pattern attempt costs about `84.33%` more than the reference attempt. Both comparisons derive from `C1`, `C3`, and `C34`.
+
+The `20×` one-hour-write-to-read input-side rate ratio (`C5`) may appear only after the attempt. It is not shown before the player has produced the evidence.
 
 ## 7. Tape sequence
 
 `TapeSpec.rowSource = "ledger"` and `hoverEnabled = true`.
 
-1. Reveal group `l1-first`:
-   - `l1-r1`
+1. Reveal group `l1-first`
+   - request: `l1-r1`
    - ordered segments: `write(34,738)`, `input(12)`, `output(120)`
    - label: `Fix login`
-2. Reveal group `l1-second`:
-   - `l1-r2`
+
+2. Reveal group `l1-second`
+   - request: `l1-r2`
    - ordered segments: `read(34,738)`, `input(14)`, `output(120)`
    - label: `Add logout`
-3. Reveal group `l1-third`:
-   - `l1-r3`
+
+3. Reference reveal group `l1-third-reference`
+   - request: `l1-r3`
    - `gatedByPredictionId: "l1-third-color-cost"`
    - ordered segments: `read(34,738)`, `input(13)`, `output(120)`
    - label: `Test both`
-4. Anti-pattern branch replaces only the third request:
-   - `l1-r3-discarded`
+
+4. Clean-chat branch reveal group `l1-third-clean`
+   - request: `l1-r3-clean`
+   - `gatedByPredictionId: "l1-third-color-cost"`
    - ordered segments: `write(34,738)`, `input(13)`, `output(120)`
+   - label: `Test both · clean chat`
 
 `ahaRequestId: "l1-r3"`.
 
-Aha frame: three settled rows remain visible together; row one is dominated by red, rows two and three by blue, while the three current-sentence labels visibly differ. The caption appears only after `REVEAL_PREDICTION`: “Three different requests. One saved context.”
+Aha frame: the three settled reference rows remain visible together. Row one is red-dominant; rows two and three are blue-dominant despite their different current sentences. Only after `REVEAL_PREDICTION` does the caption appear: “Three different requests. One saved context.”
 
-`HoverPriceCalculator` shows all nonzero buckets and their exact unrounded contribution. Static final bars must render before hover.
+The tape cites the canonical output-aware geometry from `UI_TAPE_RENDERER`:
+
+```text
+segment.widthRatio = segment.usd / row.usd
+segment.startRatio = sum(previousSegment.usd) / row.usd
+```
+
+Therefore each request’s `$0.001800` output charge contributes violet visual width from its first render. Hiding or delaying an output label may not remove `outTok` from bar weight. `UI_HOVER_PRICE_CALCULATOR` shows every nonzero bucket and asserts its contributions against the authoritative `LedgerRow.usd`.
+
+Static final bars render before hover.
 
 ## 8. Prediction prompt
 
 ### `l1-third-color-cost`
 
-Question:
+Route-specific question:
 
-> “Before you send it: what color will most of the third request be, and about what will it cost?”
+> “You chose **{Keep working here | Open a clean chat}**. Before you send: what color will most of this request be, and about what will it cost?”
 
 Options:
 
@@ -363,23 +542,63 @@ Options:
 - `red-about-21-cents`: “Red — about 21¢”
 - `violet-about-2-cents`: “Violet — about 2¢”
 
-Button copy before selection: **Choose one**  
-Button copy after selection: **Lock prediction**  
-Post-commit send copy: **Send and find out**
+Controls:
 
-The widget displays no correctness treatment until `l1-r3` has been priced and rendered. Keyboard selection and pointer selection dispatch the same actions.
+- Before selection: **Choose one**
+- After selection: **Lock prediction**
+- After commitment: **Send and find out**
+
+Correct reveal evidence depends only on the executed route:
+
+- `l1-r3`: `blue-about-1-cent`
+- `l1-r3-clean`: `red-about-21-cents`
+
+The selected option and its correctness remain hidden until the corresponding third row is priced and rendered. A wrong prediction:
+
+- changes no wallet value;
+- changes no request resolution;
+- causes no freeze;
+- removes no star;
+- does not affect the gate or `pass(st)`.
+
+Keyboard and pointer selection dispatch identical action sequences.
+
+After the reference reveal, the post-evidence explanation prompt asks:
+
+> “Why was this request cheap even though the sentence was new?”
+
+Options:
+
+- `l1-context-not-sentence`: “It read the saved context; only the task sentence was new.”
+- `l1-short-is-always-cheap`: “Short requests are always cheap.”
+- `l1-tests-cost-less`: “Tests are billed at a cheaper rate.”
+
+Only `l1-context-not-sentence`, chosen after `l1-reveal-third-reference`, satisfies the behavioral gate. Incorrect explanation choices spend nothing and leave the evidence visible for another choice.
 
 ## 9. Fail-state
 
-- Decisive event: `l1-r3-discarded` is priced after `DISCARD_CONTEXT`.
-- Freeze frame: cleared `MainCachePanel`; third bar fully red; wallet at `-$0.1327944`; prior blue row remains visible.
-- Causal message: **“You discarded the saved context, so 34,738 tokens had to be written again.”**
-- Supporting line: “The new test sentence was only 13 tokens `[FICTION]`; the rewritten context caused the drop.”
-- Rewind control: **Undo discard**
-- Rewind target: `l1-before-third-prediction`
-- Restored state: live cache, two ledger rows, `$0.0774726`, third task ready, prediction uncommitted.
-- No introduction, first write, or second send is replayed.
-- Freeze blocks **Send**, **Discard session**, and all other economic actions until rewind.
+Failure rule: `l1-clean-chat-rewrite`.
+
+- Plausible player action: **Open a clean chat**, offered as the normal way to give the related test a tidy isolated thread.
+- Decisive event: `l1-r3-clean` settles after that new thread discarded access to the live cache namespace.
+- Actual request cost: `$0.210267`.
+- Valid same-chat alternative: `$0.0122604`.
+- Visible excess: `$0.1980066`.
+- Freeze frame:
+  - cleared `UI_MAIN_CACHE_PANEL`;
+  - red-dominant `l1-r3-clean`;
+  - prior blue `l1-r2`;
+  - wallet `-$0.1327944`;
+  - both third-request prices visible for comparison.
+- Causal message: **“The clean chat left the saved context behind, so 34,738 tokens were written again.”**
+- Supporting line: “The new test sentence was only 13 tokens `[FICTION]`; rebuilding `MAIN_PREFIX_HEY` caused the drop.”
+- Rewind control: **Choose the thread again**
+- Rewind target: `l1-before-third-route`
+- Restored state: live cache, two ledger rows, wallet `$0.0774726`, route unchosen, prediction uncommitted.
+- No cold-open, first request, or second request is replayed.
+- Freeze blocks all economic actions until rewind.
+
+The freeze is independent of prediction correctness and is economically true because `$0.210267 > $0.0122604`.
 
 ## 10. Gate & stars
 
@@ -387,90 +606,130 @@ Behavioral pass predicate:
 
 ```ts
 pass =
-  prediction("l1-third-color-cost").committed &&
-  prediction("l1-third-color-cost").optionId === "blue-about-1-cent" &&
-  request("l1-r3").readTok === 34_738 &&
-  request("l1-r3").writeTok === 0 &&
-  completedRequestCount === 3 &&
-  contextIdsUsed.deepEqual(["l1-main"]) &&
-  explanationSeen("l1-context-not-sentence");
+  ledger.length === 3 &&
+  completedEventIds.includes("l1-reveal-third-reference") &&
+  actionObserved({
+    actionType: "ACK_EXPLANATION",
+    afterEventId: "l1-reveal-third-reference",
+    match: {
+      explanationId: "l1-context-not-sentence"
+    }
+  }) &&
+  acknowledgedExplanationIds.includes("l1-context-not-sentence");
 ```
+
+No prediction field is inspected.
 
 Failure reason when false:
 
-> “Predict the third request, then prove it by reusing the same session.”
+> “Read the third row, then choose what made it cheap.”
 
 Evidence on pass:
 
-- “Prediction locked before send: **Blue — about 1¢**.”
+- “After the reveal: **It read the saved context; only the task sentence was new.**”
 - “Third request: **34,738 read · 0 written**.”
-- “Cold writes: **1 of 3 requests**.”
+- “Three requests produced three ledger rows.”
 
 Stars:
 
-- **1 star — Saw it happen:** behavioral pass predicate succeeds.
-- **2 stars — Called the color:** pass, correct prediction, and no `DISCARD_CONTEXT`.
+- **1 star — Read the evidence:** the behavioral pass predicate succeeds.
+- **2 stars — Kept the thread:** pass and `l1-r3` resolves with `readTok=34,738`, `writeTok=0`, and `cold=false`.
 - **3 stars — Three in a row:** two-star predicate, exactly one cold write and two reads, no rewind, and spend `≤ $0.2347878`.
 
-Reference configuration produces three stars from seed `1001`. The anti-pattern discards before request three, produces two cold writes, spends `$0.4327944`, and fails the behavioral predicate even if its budget were increased.
+Prediction selection and correctness affect none of the three predicates.
+
+The reference route is winnable from seed `1001` and earns three stars. The clean-chat route produces two cold writes and freezes on its visibly more expensive third request. After rewind, the player can pass without replaying mastered setup.
 
 Result copy:
 
-- Pass headline: **“You called it.”**
+- Pass headline: **“You found the reuse.”**
 - Pass rule: **“The expensive part was the saved context, not the new sentence.”**
-- Fail headline: **“The third request rebuilt the context.”**
+- Fail headline: **“The clean chat rebuilt the context.”**
 - Continue: **Next level**
-- Retry: **Try the third request again**
+- Retry: **Choose the thread again**
 
 ## 11. Toasts
 
 | ID | Trigger | Exact copy |
 |---|---|---|
 | `l1-first-write` | `l1-r1` settles | “First request: Claude saved **34,738 tokens** of context. **WRITE · $0.210264**.” |
-| `l1-first-read` | `l1-r2` settles | “Same saved context. **READ · $0.012263**.” |
-| `l1-third-reveal` | `REVEAL_PREDICTION` after `l1-r3` | “Three different requests. One saved context.” |
-| `l1-discarded` | `DISCARD_CONTEXT` | “Session discarded. Saved context cleared.” |
-| `l1-frozen` | `FREEZE_FAILURE` | “That cleared context had to be written again.” |
+| `l1-first-read` | `l1-r2` settles | “Same saved context. **READ · $0.0122634**.” |
+| `l1-third-reveal` | Reference `REVEAL_PREDICTION` | “Three different requests. One saved context.” |
+| `l1-clean-chat` | `DISCARD_CONTEXT` from **Open a clean chat** | “Clean chat opened. The previous saved context stays behind.” |
+| `l1-frozen` | `FREEZE_FAILURE` | “That related request had to write the context again.” |
 
-Vocabulary timing:
+Vocabulary:
 
-- `token`: first needed at `l1-r1`; definition: “A small chunk of text you’re billed for.”
-- `write`: first needed at `l1-r1`; attached to `l1-first-write`.
-- `read`: first needed at `l1-r2`; attached to `l1-first-read`.
-- TTL copy is withheld; expiry is not this level’s concept.
+- `token`
+  - First needed: `l1-r1`
+  - Definition: “A small chunk of text you’re billed for.”
+  - Toast: `l1-first-write`
+- `write`
+  - First needed: `l1-r1`
+  - Definition: “Saving new reusable context at its write rate.”
+  - Toast: `l1-first-write`
+- `read`
+  - First needed: `l1-r2`
+  - Definition: “Reusing saved context at its read rate.”
+  - Toast: `l1-first-read`
+
+No player-facing copy introduces TTL or expiry.
 
 ## 12. QA gate
 
 Real-browser click-through assertions:
 
-1. Within `2s` `[ESTIMATE]`, **Send** is keyboard- and pointer-operable; no instruction card blocks it.
-2. Before `l1-r1`, no copy reveals that later requests will be blue, cheaper, cached, or reused.
-3. Clicking first **Send** dispatches one `SEND_REQUEST`, creates one `LedgerRow`, one tape row, and one `CacheEntry`.
-4. `l1-r1` prices to exactly `$0.210264` from `C1`, `C3`, and `C6`.
-5. Clicking second **Send** adds exactly one row; `l1-r2` prices to `$0.0122634`.
-6. The third `SEND_REQUEST` cannot dispatch before `COMMIT_PREDICTION`.
-7. Selection alone does not unlock sending; commitment does.
-8. Reference `l1-r3` prices to `$0.0122604`, reads `34,738`, writes `0`, and refreshes the live `CacheEntry` (`C12`).
-9. `REVEAL_PREDICTION` cannot dispatch before both commitment and the priced third row.
-10. Each priced request maps to exactly one ledger row and one tape row; `DISCARD_CONTEXT` maps to neither.
-11. Every real request cost is positive and equals `PRICE_REQUEST`.
-12. No positive price displays as `$0.0000`; detailed hover values retain sufficient precision.
-13. Static final tape bars render without hover and preserve ledger order.
-14. `TapeRenderer` segments equal the priced request buckets; no decorative segment is counted as a request.
-15. Output costs remain available in `HoverPriceCalculator` even if output width is visually deemphasized.
-16. Discarding after `l1-r2` visibly clears `MainCachePanel` without changing the wallet.
-17. Sending after discard produces the red `$0.210267` request, negative wallet, and immediate causal freeze.
-18. Freeze occurs only after the decisive red row and wallet consequence are visible.
-19. **Undo discard** restores the checkpoint byte-identically: two rows, `$0.0774726`, live cache, no committed prediction.
-20. Rewind creates no duplicate ledger rows and does not replay either mastered send.
-21. Reference seed/configuration is winnable and earns three stars.
-22. Anti-pattern seed/configuration fails the behavioral gate independently of budget.
-23. Pointer and keyboard paths produce equivalent `Action[]`.
-24. Reduced-motion mode produces identical final state, tape, pricing, reveal order, and gate evidence.
-25. Refresh/replay from seed `1001` and the saved `Action[]` reproduces byte-identical state.
+1. `"01-red-or-blue"` validates against the canonical `LevelId` union.
+2. `"write-vs-read"` validates against the canonical `ConceptId` registry; `prerequisiteConceptIds` is exactly `[]`.
+3. All four `interactionPatterns` values are canonical kebab-case IDs; no uppercase `PATTERN_*` alias appears.
+4. Within `2s` `[ESTIMATE]`, first **Send** is keyboard- and pointer-operable; no instruction card blocks it.
+5. Before `l1-r1`, no copy reveals that later requests will be blue, cheaper, read, cached, or reused.
+6. First **Send** dispatches one `SEND_REQUEST`, creates one `LedgerRow`, one tape row, and one live `CacheEntry`.
+7. `l1-r1` prices to exactly `$0.210264` from `C1`, `C3`, and `C34`.
+8. Second **Send** adds exactly one ledger/tape row; `l1-r2` prices to `$0.0122634`.
+9. `l1-r2` reads `34,738`, writes `0`, and refreshes the live entry under `C12`.
+10. The third route controls appear only after `l1-r2` evidence is visible.
+11. **Keep working here** and **Open a clean chat** are both keyboard- and pointer-operable and both can complete the test request.
+12. **Open a clean chat** dispatches `DISCARD_CONTEXT` as an ordinary thread-management action, not a control labeled as failure.
+13. `DISCARD_CONTEXT` creates no ledger row and changes no wallet value.
+14. After either route choice, the third `SEND_REQUEST` cannot dispatch before `COMMIT_PREDICTION`.
+15. Prediction selection alone does not unlock sending; commitment does.
+16. No correctness treatment appears before the selected route’s third request is priced and rendered.
+17. Reference `l1-r3` prices to `$0.0122604`, reads `34,738`, writes `0`, and refreshes the cache.
+18. Clean-chat `l1-r3-clean` prices to `$0.210267`, reads `0`, writes `34,738`, and creates the third ledger/tape row.
+19. A wrong prediction changes no score, star, wallet, failure predicate, gate result, or request resolution.
+20. The one-star gate does not inspect `prediction.optionId`, `correctOptionId`, or prediction correctness.
+21. The gate observes `ACK_EXPLANATION { explanationId: "l1-context-not-sentence" }` after `l1-reveal-third-reference`.
+22. An explanation action before the reveal cannot satisfy the gate.
+23. Incorrect explanation choices create no request and no economic penalty; the player can inspect the tape and retry.
+24. Each priced request maps to exactly one `LedgerRow` and one tape row.
+25. Every real request cost is positive and equals `PRICE_REQUEST`.
+26. No positive price displays as `$0.0000`; sufficiently precise values appear in detailed views.
+27. Static final tape bars render without hover and preserve ledger order.
+28. `UI_TAPE_RENDERER` segments equal the priced buckets; no decorative segment is treated as a request.
+29. `outTok` contributes to every row’s canonical segment width and total visual weight.
+30. The `$0.001800` output contribution remains available in `UI_HOVER_PRICE_CALCULATOR`.
+31. Freeze occurs only after `l1-r3-clean`, its `$0.210267` cost, and the `$0.0122604` valid alternative are visible.
+32. Failure rule validation asserts `actualUsd=$0.210267 > validAlternativeUsd=$0.0122604`.
+33. The route choice is reachable: clean thread offers organization/isolation while same chat retains reusable context.
+34. **Choose the thread again** restores the checkpoint byte-identically: two rows, wallet `$0.0774726`, live cache, no route, and no committed prediction.
+35. Rewind creates no duplicate rows and does not replay either mastered send.
+36. Reference seed/configuration is winnable and earns three stars regardless of prediction correctness.
+37. The anti-pattern action path freezes independently of budget-only gate logic.
+38. `UI_COUNTERFACTUAL_OVERLAY` remains unavailable before a meaningful completed attempt.
+39. The post-attempt comparison uses the same seed and authoritative `$0.0122604`, `$0.210267`, and `$0.1980066` values.
+40. Pointer and keyboard paths produce equivalent `Action[]`.
+41. Reduced-motion mode produces identical final state, pricing, reveal order, tape geometry, and gate evidence.
+42. Refresh/replay from seed `1001` and saved `Action[]` reproduces byte-identical `ReducerState`, ledger, wallet, and result.
+43. Each authoritative request count, token count, cost, total, and threshold has only one implementable value.
+44. `MAIN_PREFIX_HEY` is cited as `C34`; the level does not define a competing main-prefix constant.
 
 ## 13. Reference-bar justification
 
-The screen puts one inviting control under the cursor immediately, lets the player feel a dramatic red wallet hit, then contrasts it with a surprisingly small blue hit without explaining the cause beforehand. The third request converts observation into a committed prediction; only the resulting tape reveals whether the player’s model is right. The discard branch makes the causal dependency tactile, freezes at the exact costly consequence, and rewinds to the last meaningful choice in one click. That sequence—act, notice, predict, reveal, perturb, recover—delivers one discovery with the immediacy and restraint expected of the reference bar.
+The screen opens on one inviting action and lets the first wallet hit land before naming anything. A second related request then produces the surprising blue contrast through play, not explanation. The player applies that evidence to an ordinary workspace choice—keep related work together or give it a tidy clean thread—commits a prediction, and only then sees the third request settle.
 
-Assumption: the level uses the measured `34,738`-token main prefix (`C6`) instead of the plan’s uncited `22,527`-token draft figure, so every economic claim traces to the canonical constants. Tiny request and output counts, wallet, seed, and presentation timings are explicitly tagged `[FICTION]` or `[ESTIMATE]`.
+The route choice is plausible rather than a purpose-built failure button: a clean thread has a recognizable organization benefit, while the same chat preserves economically useful context for this related ticket. Choosing the clean thread exposes a genuine, visible consequence, freezes only after the ledger proves it is more expensive, and rewinds directly to the thread decision.
+
+Finally, the one-star gate asks for a causal explanation after the reveal. The pre-reveal guess remains psychologically useful but economically and mechanically non-punitive. The rhythm is act, notice, choose, predict, reveal, explain, and—if necessary—rewind, preserving the surprise while requiring demonstrated understanding.
+
+Assumption: this level uses the measured `MAIN_PREFIX_HEY = 34,738` tokens (`C34`). Tiny request/output sizes, wallet, seed, and presentation timings remain explicitly `[FICTION]` or `[ESTIMATE]`. The clean-chat benefit is intentionally qualitative workspace organization; both routes complete the task, while the visible ledger supplies the level’s economic teaching consequence.
