@@ -19,6 +19,9 @@
     type Effort,
   } from "./macroPricing.js";
   import type { Model } from "../engine/types.js";
+  import CopyButton from "../setup/CopyButton.svelte";
+  import EnvDiagnose from "../setup/EnvDiagnose.svelte";
+  import { recipeById, type RecipeId } from "../setup/recipes.js";
 
   interface Props {
     onback: () => void;
@@ -202,6 +205,10 @@
       ...macroSections.map((section) => [`macro-${section.id}`, !tldr]),
     ]);
   }
+
+  function articleRecipe(id: string) {
+    return recipeById[(id === "main-context" ? "delegate" : id) as RecipeId];
+  }
 </script>
 
 <svelte:head><title>Claude Code — Explained</title></svelte:head>
@@ -245,6 +252,7 @@
           <button class="expand" aria-expanded={Boolean(expanded[`micro-${section.id}`])} onclick={() => toggle(`micro-${section.id}`)}>
             <b>&gt;</b> {expanded[`micro-${section.id}`] ? "Close detail" : "Deep dive"}
           </button>
+          <CopyButton recipe={articleRecipe(section.id)} compact />
         </div>
         <LeverWidget
           script={section.script} offScript={section.offScript} onScript={section.onScript}
@@ -282,6 +290,7 @@
           <button class="expand" aria-expanded={Boolean(expanded[`macro-${section.id}`])} onclick={() => toggle(`macro-${section.id}`)}>
             <b>&gt;</b> {expanded[`macro-${section.id}`] ? "Close detail" : "Deep dive"}
           </button>
+          <CopyButton recipe={articleRecipe(section.id)} compact />
         </div>
         {#if section.id === "main-context"}<ContextCostWidget />{/if}
         {#if section.id === "delegate"}<WorkdaySessionWidget />{/if}
@@ -294,6 +303,12 @@
       <button onclick={ontd}>Open Tokenloons TD on the map <span>→</span></button>
     </section>
   {/if}
+
+  <section class="article-diagnose">
+    <small>YOUR TURN</small>
+    <h2>How good is YOUR setup?</h2>
+    <EnvDiagnose />
+  </section>
 </main>
 
 <style>
@@ -309,5 +324,6 @@
   .macro-widget{margin:28px 0 70px}
   .macro-lesson{margin:65px 0!important;border-bottom:2px dashed #d4d0c6}.macro-lesson .section-copy{margin-bottom:48px}.crosslink{display:block;margin:40px auto 90px;border:0;background:none;color:#8c4a0a;font-weight:950;font-size:1rem;text-decoration:underline;text-underline-offset:4px;cursor:pointer}
   .cta{margin:70px 0 100px;border:3px solid #20201d;border-radius:25px 19px 28px 18px;padding:34px;display:flex;align-items:center;gap:30px;background:#fff6c7;box-shadow:10px 11px 0 #f2c94c}.cta div{flex:1}.cta>button{border:2px solid #20201d;border-radius:14px;background:#20201d;color:white;padding:16px 20px;font-weight:900;cursor:pointer;white-space:nowrap;box-shadow:5px 5px 0 #e57970;transition:transform .2s}.cta>button:hover{transform:translate(-2px,-2px)}.cta>button span{font-size:1.4rem;margin-left:8px}.macro-cta{background:#eaf5ff;box-shadow:10px 11px 0 #9dccee}
+  .article-diagnose{margin:110px 0 40px;padding-top:55px;border-top:3px solid #20201d}.article-diagnose>small{display:block;text-align:center;color:#a85e13;font-weight:950;letter-spacing:.13em;font-size:.72rem}.article-diagnose>h2{text-align:center;font-size:clamp(2rem,5vw,3.6rem);line-height:1;margin:8px 0 24px;letter-spacing:-.045em}
   @media(max-width:650px){.article{width:min(100% - 18px,940px)}nav span{display:none}header{min-height:450px}header>div:not(.article-switch){font-size:.95rem}.doodle{right:2%;top:15%;width:40px;height:40px;font-size:1.4rem}.article-switch button{min-width:90px}.reading-mode{top:12px;right:0}.article-intro{margin:20px auto 55px}section.lesson{margin:60px 0 90px}.section-copy{margin-left:6px}.section-copy>p{font-size:.94rem}.cta{padding:23px 18px;display:block}.cta>button{width:100%;margin-top:22px}}
 </style>

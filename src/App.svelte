@@ -2,6 +2,7 @@
   import ArticleScreen from "./article/ArticleScreen.svelte";
   import SandboxScreen from "./sandbox/SandboxScreen.svelte";
   import TDScreen from "./td/TDScreen.svelte";
+  import Cheatsheet from "./setup/Cheatsheet.svelte";
 
   type Experience = "home" | "article" | "sandbox" | "td";
 
@@ -68,6 +69,8 @@
     <footer>
       <span aria-hidden="true">↳</span> Pick a door. You can always come back.
     </footer>
+
+    <Cheatsheet />
   </main>
 {/if}
 
