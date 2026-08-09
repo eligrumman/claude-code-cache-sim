@@ -132,6 +132,12 @@ export interface GameState {
   l1Route?: "same-chat" | "isolated";
   l1PredictionCommitted?: boolean;
   l1ExplanationAcknowledged?: boolean;
+  // Redesigned L2's schedule profile, prediction gate, and post-reveal
+  // understanding check. Undefined outside the dedicated L2 scenario.
+  l2Profile?: "coffee" | "standup";
+  l2PredictionCommitted?: boolean;
+  l2FollowupRevealed?: boolean;
+  l2ExplanationAcknowledged?: boolean;
 }
 
 export type Action =
@@ -149,7 +155,12 @@ export type Action =
   | { type: "ADVANCE"; min: number }
   | { type: "CHOOSE_L1_ROUTE"; route: "same-chat" | "isolated" }
   | { type: "COMMIT_L1_PREDICTION" }
-  | { type: "ACK_L1_EXPLANATION"; correct: boolean };
+  | { type: "ACK_L1_EXPLANATION"; correct: boolean }
+  | { type: "SEND_L2_CHECK" }
+  | { type: "CHOOSE_L2_PROFILE"; profile: "coffee" | "standup" }
+  | { type: "COMMIT_L2_PREDICTION" }
+  | { type: "REVEAL_L2_FOLLOWUP" }
+  | { type: "ACK_L2_EXPLANATION"; correct: boolean };
 
 // Save/replay format (Section 5.5): seed + action list only.
 export interface SaveFile {

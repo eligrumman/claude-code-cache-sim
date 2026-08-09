@@ -20,6 +20,7 @@ import {
   SCOPE_BUDGET,
   SCOPE_DAYS,
   DAY_LEN_MIN,
+  MAIN_PREFIX_HEY,
 } from "../engine/constants.js";
 import type { Config, Model } from "../engine/types.js";
 import type {
@@ -154,9 +155,26 @@ export function buildL1Standup(): UnitInstance {
   };
 }
 
+export function buildL2Blocker(): UnitInstance {
+  return {
+    id: "u2-blocker-standup",
+    kind: "STANDUP",
+    ticket: 1,
+    deps: [],
+    status: "queued",
+    cause: null,
+    hours: 1.5,
+    workIn: 0,
+    outTok: 0,
+    free: true,
+    label: "Clear Bob's blocker",
+  };
+}
+
 // Build the unit queue, expanding rework deterministically from model quality.
 // Ported exactly from the mock (including PRNG consumption order).
 export function buildQueue(cfg: Config, seed: number, scenario?: string): UnitInstance[] {
+  if (scenario === "l2-beat-the-clock") return [buildL2Blocker()];
   if (scenario === "l1-red-or-blue") return buildL1RedBlueTasks();
   if (scenario === "l1-onboarding") return buildL1Tasks();
   const pr = makePrng(seed ^ 0x5151);
@@ -199,7 +217,13 @@ export function initGame(
   scenario?: string,
 ): GameState {
   const cfg: Config = { ...DEFAULT_CFG, ...cfgOverride };
-  const budget = scenario === "l1-red-or-blue" ? 0.30 : scenario === "l1-onboarding" ? 0.55 : SCOPE_BUDGET[scope];
+  const budget = scenario === "l2-beat-the-clock"
+    ? 0.65
+    : scenario === "l1-red-or-blue"
+      ? 0.30
+      : scenario === "l1-onboarding"
+        ? 0.55
+        : SCOPE_BUDGET[scope];
   // LevelDef.clockCapMin (GAME_PLAN.md Section C.1) overrides the default
   // scope-day clock so a level's scripted queue (hours + idle gaps) has room
   // to actually finish under interactive step-by-step play, not just under
@@ -252,6 +276,10 @@ export function initGame(
     l1Route: undefined,
     l1PredictionCommitted: false,
     l1ExplanationAcknowledged: false,
+    l2Profile: undefined,
+    l2PredictionCommitted: false,
+    l2FollowupRevealed: false,
+    l2ExplanationAcknowledged: false,
   };
 }
 
@@ -464,6 +492,43 @@ function runUnit(st: GameState, u: UnitInstance): void {
   }
 }
 
+// L2's two byte-identical checks are requests rather than work units. They
+// share one canonical main-session cache key; only reducer-owned idle time can
+// change the second row from a live read into an expired rewrite.
+function sendL2Check(st: GameState): void {
+  const requestNo = st.ledger.length + 1;
+  const request: UnitInstance = {
+    id: requestNo === 1 ? "R2_1" : "R2_2",
+    kind: "TASK",
+    ticket: 1,
+    deps: [],
+    status: "queued",
+    cause: null,
+    hours: 0,
+    workIn: 0,
+    outTok: 0,
+    label: requestNo === 1 ? "Opening check" : "Identical follow-up",
+  };
+  const row = emit(
+    st,
+    request,
+    "main",
+    0,
+    "l2-main",
+    st.cfg.orchestratorModel,
+    0,
+    0,
+    st.clockMin,
+    0,
+    "l2-main",
+    MAIN_PREFIX_HEY,
+  );
+  accrueInline(st, row);
+  st.ledger.push(row);
+  st.wallet -= row.usd;
+  st.lastRequests = [row];
+}
+
 // ---- HAND_CODE (mock handCode) ----
 function handCode(st: GameState, u: UnitInstance): void {
   st.clockMin += u.hours * 60 * MANUAL_MULT_GAME;
@@ -518,7 +583,11 @@ export function checkEnd(st: GameState): void {
     st.ended = { result: "loss", lossId: "L7" };
     return;
   }
-  if (allDone && (st.scenario !== "l1-red-or-blue" || st.l1ExplanationAcknowledged)) {
+  const lessonComplete =
+    (st.scenario !== "l1-red-or-blue" || st.l1ExplanationAcknowledged) &&
+    (st.scenario !== "l2-beat-the-clock" ||
+      (st.ledger.length === 2 && st.l2FollowupRevealed && st.l2ExplanationAcknowledged));
+  if (allDone && lessonComplete) {
     st.ended = { result: "win" };
   }
 }
@@ -548,6 +617,16 @@ export function step(state: GameState, action: Action): GameState {
         break;
       }
       const u = st.units[st.idx];
+      if (st.scenario === "l2-beat-the-clock") {
+        const canRunBlocker =
+          st.l2Profile === "standup"
+            ? st.ledger.length === 1
+            : st.l2Profile === "coffee" &&
+              st.ledger.length === 2 &&
+              st.l2FollowupRevealed === true &&
+              st.l2ExplanationAcknowledged === true;
+        if (!canRunBlocker) break;
+      }
       if (
         st.scenario === "l1-red-or-blue" &&
         u?.id === "l1-r3" &&
@@ -561,6 +640,9 @@ export function step(state: GameState, action: Action): GameState {
     }
     case "ADVANCE": {
       if (st.ended) break;
+      if (st.scenario === "l2-beat-the-clock") {
+        if (st.l2Profile !== "coffee" || st.ledger.length !== 1 || st.clockMin !== 0 || action.min !== 20) break;
+      }
       st.clockMin += action.min;
       break;
     }
@@ -579,6 +661,45 @@ export function step(state: GameState, action: Action): GameState {
     case "ACK_L1_EXPLANATION": {
       if (st.scenario === "l1-red-or-blue" && st.idx === 3 && action.correct) {
         st.l1ExplanationAcknowledged = true;
+        checkEnd(st);
+      }
+      break;
+    }
+    case "SEND_L2_CHECK": {
+      if (st.ended || st.scenario !== "l2-beat-the-clock") break;
+      if (st.ledger.length === 0 && !st.l2Profile) {
+        sendL2Check(st);
+      } else if (st.ledger.length === 1 && st.l2Profile && st.l2PredictionCommitted) {
+        const blocker = st.units[0];
+        const scheduleReady =
+          (st.l2Profile === "coffee" && st.clockMin === 20 && blocker?.status === "queued") ||
+          (st.l2Profile === "standup" && st.clockMin === 90 && blocker?.status === "done");
+        if (scheduleReady) sendL2Check(st);
+      }
+      checkEnd(st);
+      break;
+    }
+    case "CHOOSE_L2_PROFILE": {
+      if (st.scenario === "l2-beat-the-clock" && st.ledger.length === 1 && !st.l2Profile) {
+        st.l2Profile = action.profile;
+      }
+      break;
+    }
+    case "COMMIT_L2_PREDICTION": {
+      if (st.scenario === "l2-beat-the-clock" && st.ledger.length === 1 && st.l2Profile) {
+        st.l2PredictionCommitted = true;
+      }
+      break;
+    }
+    case "REVEAL_L2_FOLLOWUP": {
+      if (st.scenario === "l2-beat-the-clock" && st.ledger.length === 2 && st.l2PredictionCommitted) {
+        st.l2FollowupRevealed = true;
+      }
+      break;
+    }
+    case "ACK_L2_EXPLANATION": {
+      if (st.scenario === "l2-beat-the-clock" && st.l2FollowupRevealed && action.correct) {
+        st.l2ExplanationAcknowledged = true;
         checkEnd(st);
       }
       break;
@@ -664,6 +785,43 @@ export function runL1Anti(seed = 1): GameState {
   st = step(st, { type: "COMMIT_L1_PREDICTION" });
   st = step(st, { type: "RUN_UNIT", unitId: "l1-r3" });
   st = step(st, { type: "ACK_L1_EXPLANATION", correct: true });
+  return st;
+}
+
+export const L2_CFG: Partial<Config> = {
+  orchestratorModel: "sonnet",
+  who: "inline",
+  prompts: "identical",
+  oneHourFlag: true,
+  keepWarm: false,
+};
+
+export function initL2(seed = 2002): GameState {
+  return initGame(seed, "session", L2_CFG, 180, "l2-beat-the-clock");
+}
+
+export function runL2Coffee(seed = 2002): GameState {
+  let st = initL2(seed);
+  st = step(st, { type: "SEND_L2_CHECK" });
+  st = step(st, { type: "CHOOSE_L2_PROFILE", profile: "coffee" });
+  st = step(st, { type: "ADVANCE", min: 20 });
+  st = step(st, { type: "COMMIT_L2_PREDICTION" });
+  st = step(st, { type: "SEND_L2_CHECK" });
+  st = step(st, { type: "REVEAL_L2_FOLLOWUP" });
+  st = step(st, { type: "ACK_L2_EXPLANATION", correct: true });
+  st = step(st, { type: "RUN_UNIT", unitId: "u2-blocker-standup" });
+  return st;
+}
+
+export function runL2Standup(seed = 2002): GameState {
+  let st = initL2(seed);
+  st = step(st, { type: "SEND_L2_CHECK" });
+  st = step(st, { type: "CHOOSE_L2_PROFILE", profile: "standup" });
+  st = step(st, { type: "RUN_UNIT", unitId: "u2-blocker-standup" });
+  st = step(st, { type: "COMMIT_L2_PREDICTION" });
+  st = step(st, { type: "SEND_L2_CHECK" });
+  st = step(st, { type: "REVEAL_L2_FOLLOWUP" });
+  st = step(st, { type: "ACK_L2_EXPLANATION", correct: true });
   return st;
 }
 

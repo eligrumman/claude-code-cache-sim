@@ -11,6 +11,9 @@ import {
   runL1Anti,
   L1_CFG,
   L1_RED_BLUE_LABELS,
+  initL2,
+  runL2Coffee,
+  runL2Standup,
 } from "./step.js";
 import type { Action, SaveFile } from "./types.js";
 import type { Config } from "../engine/types.js";
@@ -214,5 +217,79 @@ describe("redesigned L1: real cache tradeoff", () => {
     const st = runL1Reference();
     const labels = st.ledger.map((row) => st.units.find((u) => u.id === row.unitId)?.label);
     expect(labels).toEqual(L1_RED_BLUE_LABELS);
+  });
+});
+
+describe("redesigned L2: idle expiry schedule tradeoff", () => {
+  it("prices the opening check as a canonical 1-hour Sonnet cache write", () => {
+    const s0 = initL2();
+    const st = step(s0, { type: "SEND_L2_CHECK" });
+    expect(st.ledger).toHaveLength(1);
+    expect(st.ledger[0]).toMatchObject({
+      unitId: "R2_1", readTok: 0, inputTok: 0, writeTok: 34_738,
+      writeTier: "1h", outTok: 0, cold: true,
+    });
+    expect(st.ledger[0].usd).toBeCloseTo(0.208428, 12);
+    expect(st.wallet).toBeCloseTo(0.441572, 12);
+    expect(st.cache.entries["l2-main"]).toMatchObject({ prefixTok: 34_738, lastTouchMin: 0 });
+  });
+
+  it("Coffee preserves the live entry, spends less, and completes at minute 110", () => {
+    const st = runL2Coffee();
+    expect(st.l2Profile).toBe("coffee");
+    expect(st.ledger[1]).toMatchObject({
+      unitId: "R2_2", readTok: 34_738, inputTok: 0, writeTok: 0, outTok: 0, cold: false,
+    });
+    expect(st.ledger[1].usd).toBeCloseTo(0.0104214, 12);
+    expect(totalSpent(st)).toBeCloseTo(0.2188494, 12);
+    expect(st.cache.entries["l2-main"].lastTouchMin).toBe(20);
+    expect(st.clockMin).toBe(110);
+    expect(st.units[0].status).toBe("done");
+    expect(st.ended).toEqual({ result: "win" });
+  });
+
+  it("Standup clears real work first, expires the entry, and completes at minute 90", () => {
+    const st = runL2Standup();
+    expect(st.l2Profile).toBe("standup");
+    expect(st.ledger[1]).toMatchObject({
+      unitId: "R2_2", readTok: 0, inputTok: 0, writeTok: 34_738, outTok: 0, cold: true,
+    });
+    expect(st.ledger[1].usd).toBeCloseTo(0.208428, 12);
+    expect(totalSpent(st)).toBeCloseTo(0.416856, 12);
+    expect(st.clockMin).toBe(90);
+    expect(st.units[0].status).toBe("done");
+    expect(st.ended).toEqual({ result: "win" });
+  });
+
+  it("locks profiles and gates the follow-up behind a committed prediction", () => {
+    let st = initL2();
+    st = step(st, { type: "SEND_L2_CHECK" });
+    st = step(st, { type: "CHOOSE_L2_PROFILE", profile: "coffee" });
+    st = step(st, { type: "CHOOSE_L2_PROFILE", profile: "standup" });
+    expect(st.l2Profile).toBe("coffee");
+    st = step(st, { type: "ADVANCE", min: 20 });
+    st = step(st, { type: "SEND_L2_CHECK" });
+    expect(st.ledger).toHaveLength(1);
+    st = step(st, { type: "COMMIT_L2_PREDICTION" });
+    st = step(st, { type: "SEND_L2_CHECK" });
+    expect(st.ledger).toHaveLength(2);
+  });
+
+  it("requires a correct post-reveal explanation without punishing wrong attempts", () => {
+    let st = initL2();
+    st = step(st, { type: "SEND_L2_CHECK" });
+    st = step(st, { type: "CHOOSE_L2_PROFILE", profile: "standup" });
+    st = step(st, { type: "RUN_UNIT", unitId: "u2-blocker-standup" });
+    st = step(st, { type: "COMMIT_L2_PREDICTION" });
+    st = step(st, { type: "SEND_L2_CHECK" });
+    st = step(st, { type: "ACK_L2_EXPLANATION", correct: true });
+    expect(st.ended).toBeNull();
+    st = step(st, { type: "REVEAL_L2_FOLLOWUP" });
+    const economics = JSON.stringify({ ledger: st.ledger, wallet: st.wallet, clockMin: st.clockMin });
+    st = step(st, { type: "ACK_L2_EXPLANATION", correct: false });
+    expect(JSON.stringify({ ledger: st.ledger, wallet: st.wallet, clockMin: st.clockMin })).toBe(economics);
+    expect(st.ended).toBeNull();
+    st = step(st, { type: "ACK_L2_EXPLANATION", correct: true });
+    expect(st.ended).toEqual({ result: "win" });
   });
 });

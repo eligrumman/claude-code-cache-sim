@@ -123,3 +123,53 @@ describe("redesigned L1 live flow", () => {
     expect(l2.className).toContain("unlocked");
   });
 });
+
+async function enterUnlockedL2() {
+  await finishRoute("same");
+  await click("Back to map");
+  await click("L2");
+}
+
+describe("redesigned L2 live flow", () => {
+  it("opens directly on the check without revealing the expiry answer", async () => {
+    render(App);
+    await enterUnlockedL2();
+    expect(screen.getByText("Bob's login fix needs one more check.")).toBeInTheDocument();
+    expect(screen.getByText("Run check")).toBeInTheDocument();
+    expect(screen.queryByText(/expires after 60 idle minutes/i)).not.toBeInTheDocument();
+  });
+
+  it("Coffee produces the exact live-read bill, clears the blocker, and passes with three stars", async () => {
+    render(App);
+    await enterUnlockedL2();
+    await click("Run check");
+    expect(screen.getAllByText("$0.2084280").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("TTL · 60:00")).toBeInTheDocument();
+    await click("Coffee · 20 min · check first");
+    expect(screen.getByText("TTL · 40:00")).toBeInTheDocument();
+    await fireEvent.click(screen.getByLabelText("Blue — read"));
+    await click("Lock prediction");
+    await click("Send identical check");
+    expect(screen.getAllByText("$0.0104214").length).toBeGreaterThanOrEqual(2);
+    await click("Only the idle gap changed whether the saved entry was still live.");
+    await click("Clear blocker · 90 min");
+    expect(screen.getByText(/Passed - ★★★/)).toBeInTheDocument();
+    expect(screen.getByText(/saved \$0\.1980066/)).toBeInTheDocument();
+  });
+
+  it("Standup produces the exact expired rewrite and passes for finishing twenty minutes early", async () => {
+    render(App);
+    await enterUnlockedL2();
+    await click("Run check");
+    await click("Standup · 90 min · blocker first");
+    expect(screen.getByText("Blocker cleared")).toBeInTheDocument();
+    expect(screen.getByText("TTL · 0:00")).toBeInTheDocument();
+    await fireEvent.click(screen.getByLabelText("Red — write"));
+    await click("Lock prediction");
+    await click("Send identical check");
+    expect(screen.getAllByText("$0.2084280").length).toBeGreaterThanOrEqual(2);
+    await click("Only the idle gap changed whether the saved entry was still live.");
+    expect(screen.getByText(/Passed - ★★★/)).toBeInTheDocument();
+    expect(screen.getByText(/20 min of release-deadline slack/)).toBeInTheDocument();
+  });
+});

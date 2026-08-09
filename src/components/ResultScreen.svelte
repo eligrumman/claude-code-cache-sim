@@ -32,6 +32,13 @@
       {outcome.handCoded > 0 ? `${outcome.handCoded} unit(s) hand-coded.` : "Nothing hand-coded."}
     </p>
     <p class="msg">{outcome.reason}</p>
+    {#if level === "L2"}
+      <p class="msg chip">
+        {outcome.finalState.l2Profile === "coffee"
+          ? "Coffee finished at minute 110 and saved $0.1980066 versus Standup."
+          : "Standup finished at minute 90 with 20 min of release-deadline slack."}
+      </p>
+    {/if}
     <p class="sub">{def.teaches}</p>
 
     <div class="row-btns">

@@ -5,6 +5,7 @@
   import LearnScreen from "./components/LearnScreen.svelte";
   import PlayScreen from "./components/PlayScreen.svelte";
   import L1PlayScreen from "./components/L1PlayScreen.svelte";
+  import L2PlayScreen from "./components/L2PlayScreen.svelte";
   import ResultScreen from "./components/ResultScreen.svelte";
   import SessionStream from "./components/SessionStream.svelte";
   import {
@@ -33,16 +34,16 @@
     screen = toMap();
   }
   function goEnter(id: LevelId) {
-    // Redesigned L1 teaches through live requests, so it opens directly on
-    // the first Send instead of routing through the generic A/B learn screen.
-    screen = id === "L1" ? toPlay(id) : enterLevel(id);
+    // Redesigned L1/L2 teach through live requests, so they bypass the generic
+    // A/B learn screen and open on their first playable action.
+    screen = id === "L1" || id === "L2" ? toPlay(id) : enterLevel(id);
   }
   function goPlay(id: LevelId) {
     screen = toPlay(id);
   }
   function goRetry(id: LevelId) {
-    // Mirror goEnter: retrying L1 restarts its dedicated live-request flow.
-    screen = id === "L1" ? toPlay(id) : retryLevel(id);
+    // Mirror goEnter: retrying either redesign restarts its dedicated flow.
+    screen = id === "L1" || id === "L2" ? toPlay(id) : retryLevel(id);
   }
   function goFreeplay() {
     // Section B.1: Free Play uses the current unlocked toolset. Use the
@@ -78,12 +79,17 @@
   {:else if screen.id === "play"}
     {@const def = LEVEL_BY_ID[screen.level]}
     <h1 style="margin:0 0 4px">{def.id} - {def.title}</h1>
-    {#if screen.level !== "L1"}
+    {#if screen.level !== "L1" && screen.level !== "L2"}
       <p class="sub" style="margin-top:0">{def.objective}</p>
     {/if}
     {#if screen.level === "L1"}
       <L1PlayScreen
         onfinish={(st, handCoded) => finishLevel(screen.level, st, handCoded)}
+        onabandon={goMap}
+      />
+    {:else if screen.level === "L2"}
+      <L2PlayScreen
+        onfinish={(st, handCoded) => finishLevel("L2", st, handCoded)}
         onabandon={goMap}
       />
     {:else}

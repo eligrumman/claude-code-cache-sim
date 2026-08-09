@@ -8,7 +8,7 @@
 
 import type { Config, Model } from "../engine/types.js";
 import type { GameState, HiddenCosts, Scope } from "./types.js";
-import { runScript, L1_CFG } from "./step.js";
+import { runScript, L1_CFG, L2_CFG } from "./step.js";
 
 export type LevelId =
   | "L1" | "L2" | "L3" | "L4" | "L5" | "L6"
@@ -37,7 +37,7 @@ export type ControlId =
 export type ScenarioId =
   | "default" | "dev-only" | "dev-marathon" | "fanout8" | "fanout8-slow"
   | "gaps" | "two-halves" | "week7starts" | "spawn12" | "mcp-required"
-  | "l1-onboarding" | "l1-red-or-blue";
+  | "l1-onboarding" | "l1-red-or-blue" | "l2-beat-the-clock";
 
 // GAME_PLAN.md Section C.3 - the scripted LEARN replay (without-tool vs with-tool).
 export interface LearnBeat {
@@ -150,34 +150,62 @@ export const LEVELS: LevelDef[] = [
   {
     id: "L2",
     tier: 1,
-    title: "Pick Your Fighter",
-    objective: "Ship the DEV wave under budget by picking the right model.",
+    title: "One More Check",
+    objective: "Finish Bob's next check and clear his blocker before release.",
     unlocks: "devModel",
-    introducedControls: ["devModel", "handCode"],
-    teaches: "output is 5x; fable $50/M is where budgets die (C4)",
+    introducedControls: ["devModel", "handCode", "advanceTime"],
+    teaches: "Saved context expires after 60 idle minutes; the next identical request then writes it again.",
     scope: "session",
-    seed: 2,
-    budgetUsd: 2.0,
-    cfgOverride: {},
-    scenario: "dev-only",
+    seed: 2002,
+    budgetUsd: 0.65,
+    clockCapMin: 180,
+    cfgOverride: L2_CFG,
+    cfgLocked: [
+      "orchestratorModel", "planModel", "devModel", "who", "prompts", "width",
+      "oneHourFlag", "keepWarm", "keepWarmMin", "hook", "skills", "skillsMode",
+      "memoryFiles", "mcp",
+    ],
+    scenario: "l2-beat-the-clock",
     learn: {
       copy: [
-        "Same DEV wave, two models.",
-        "Output tokens are priced at 5x - the model's $/M out is where the bill lives.",
+        "L2 teaches through a live interruption choice and two identical checks.",
       ],
-      withoutCfg: { devModel: "fable" },
-      withCfg: { devModel: "sonnet" },
+      withoutCfg: L2_CFG,
+      withCfg: L2_CFG,
       scope: "session",
-      seed: 2,
-      chip: (a, b) => `cheap model != cheap output (C28 WORK_OUT=44,000): $${spentUsd(a).toFixed(2)} vs $${spentUsd(b).toFixed(2)}`,
+      seed: 2002,
+      chip: () => "",
     },
-    referenceCfg: { devModel: "sonnet" },
-    antiCfg: { devModel: "fable" },
-    failLesson: { bucket: "none", cite: "C4", line: "output is 5x (fable $50/M out)" },
+    referenceCfg: L2_CFG,
+    antiCfg: L2_CFG,
+    failLesson: {
+      bucket: "none",
+      cite: "C5",
+      line: "An expired 1-hour prefix costs 20x its live-read input-side rate.",
+    },
+    star2: (st) =>
+      st.ledger.length === 2 && st.units[0]?.status === "done" && st.clockMin <= 110,
+    star3: (st) =>
+      (st.l2Profile === "coffee" && spentUsd(st) <= 0.2188494 + 1e-12 && st.clockMin <= 110) ||
+      (st.l2Profile === "standup" && st.units[0]?.status === "done" && st.clockMin <= 90),
     pass: (st) => {
-      const cost = spentUsd(st);
-      const ok = cost <= 2.0 && st.counts.spawns > 0;
-      return { pass: ok, reason: `spent $${cost.toFixed(2)} (budget $2.00), deliberate model pick required` };
+      const followup = st.ledger.find((row) => row.unitId === "R2_2");
+      const blocker = st.units.find((unit) => unit.id === "u2-blocker-standup");
+      const coffee =
+        st.l2Profile === "coffee" && followup?.readTok === 34_738 && followup.inputTok === 0 &&
+        followup.writeTok === 0 && followup.outTok === 0 && followup.cold === false && st.clockMin <= 110;
+      const standup =
+        st.l2Profile === "standup" && followup?.readTok === 0 && followup.inputTok === 0 &&
+        followup.writeTok === 34_738 && followup.outTok === 0 && followup.cold === true && st.clockMin <= 90;
+      const ok =
+        (coffee || standup) && blocker?.status === "done" && st.ledger.length === 2 &&
+        st.l2FollowupRevealed === true && st.l2ExplanationAcknowledged === true;
+      return {
+        pass: ok,
+        reason: ok
+          ? `${coffee ? "Coffee" : "Standup"} completed the check and blocker while demonstrating how the idle gap changed the identical request.`
+          : "Complete one schedule profile, inspect its follow-up row, and explain what changed it.",
+      };
     },
   },
   {

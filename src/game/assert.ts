@@ -6,7 +6,7 @@ import { priceTable, RATE } from "../engine/pricing.js";
 import { mainBaseTok, subBaseTok } from "../engine/ledgers.js";
 import { simulateRequest } from "../engine/simulate.js";
 import { DEFAULT_CFG } from "../engine/constants.js";
-import { runScript, runL1Reference, runL1Anti, totalSpent } from "./step.js";
+import { runScript, runL1Reference, runL1Anti, runL2Coffee, runL2Standup, totalSpent } from "./step.js";
 import type { Config } from "../engine/types.js";
 
 const GOOD: Partial<Config> = {
@@ -70,6 +70,17 @@ export function bootAssert(): void {
     console.assert(l1antiCold === 2, "L1 isolated has exactly 2 cold main writes, got " + l1antiCold);
     console.assert(l1ref.clockMin === 12, "L1 same-chat finishes in 12 min");
     console.assert(l1anti.clockMin === 4, "L1 isolated finishes in 4 min");
+
+    // Redesigned L2's economy/schedule profiles use the same canonical prefix
+    // and differ only in reducer-owned idle time plus completed blocker work.
+    const l2coffee = runL2Coffee();
+    const l2standup = runL2Standup();
+    eq(totalSpent(l2coffee), 0.2188494, "L2 Coffee spend");
+    eq(totalSpent(l2standup), 0.416856, "L2 Standup spend");
+    console.assert(l2coffee.clockMin === 110, "L2 Coffee finishes at release minute 110");
+    console.assert(l2standup.clockMin === 90, "L2 Standup finishes 20 min early");
+    console.assert(l2coffee.ledger[1]?.readTok === 34738, "L2 Coffee follow-up reads live context");
+    console.assert(l2standup.ledger[1]?.writeTok === 34738, "L2 Standup follow-up rewrites expired context");
 
     console.log(
       "%c[Simulator] boot assertions " + (ok ? "PASSED" : "FAILED"),

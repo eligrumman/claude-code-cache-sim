@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { runScript, runL1Reference, runL1Anti, totalSpent } from "./step.js";
+import { runScript, runL1Reference, runL1Anti, runL2Coffee, runL2Standup, totalSpent } from "./step.js";
 import {
   LEVELS,
   LEVEL_ORDER,
@@ -69,15 +69,16 @@ describe("progression: only the frontier level's chain is unlocked", () => {
 });
 
 describe("ledger-verified gates use real numbers, not cosmetics", () => {
-  it("L2 gate reads spend directly off wallet/budget drain (ledger-derived)", () => {
-    const cheap = runScript(2, "session", { devModel: "sonnet" }, true);
-    const expensive = runScript(2, "session", { devModel: "fable" }, true);
+  it("L2 gate accepts both real cache-expiry profiles and rejects unrelated runs", () => {
+    const coffee = runL2Coffee();
+    const standup = runL2Standup();
+    const unrelated = runScript(2, "session", { devModel: "sonnet" }, true);
     const l2 = LEVEL_BY_ID.L2;
-    // fable should cost strictly more than sonnet for the same scenario (C4: output 5x at $50/M vs $15/M)
-    expect(totalSpent(expensive)).toBeGreaterThan(totalSpent(cheap));
-    const cheapGate = l2.pass(cheap);
-    expect(typeof cheapGate.pass).toBe("boolean");
-    expect(cheapGate.reason).toContain("budget $2.00");
+    expect(l2.pass(coffee).pass).toBe(true);
+    expect(l2.pass(standup).pass).toBe(true);
+    expect(l2.pass(unrelated).pass).toBe(false);
+    expect(totalSpent(coffee)).toBeCloseTo(0.2188494, 12);
+    expect(totalSpent(standup)).toBeCloseTo(0.416856, 12);
   });
 
   it("L5 gate checks subagent cache-write total against the 35,000 tok ceiling (C10/C11)", () => {
@@ -133,6 +134,12 @@ describe("stars", () => {
     expect(st.clockMin).toBe(4);
     expect(st.ledger.filter((r) => r.agent === "main" && r.cold).length).toBe(2);
     expect(starsFor(l1, st, 0)).toBe(3);
+  });
+
+  it("both L2 priorities earn three stars through their distinct reducer-visible benefits", () => {
+    const l2 = LEVEL_BY_ID.L2;
+    expect(starsFor(l2, runL2Coffee(), 0)).toBe(3);
+    expect(starsFor(l2, runL2Standup(), 0)).toBe(3);
   });
 });
 
