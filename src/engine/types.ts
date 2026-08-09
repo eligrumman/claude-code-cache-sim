@@ -66,6 +66,11 @@ export interface SimRequest {
   // (L1_REDESIGN Section 7, gap #1). Omitting it reproduces every existing
   // golden number byte-for-byte.
   growthTok?: number;
+  // Scenario-level requests may name an isolated cache namespace and an
+  // authoritative measured prefix. Omitted for the existing game, preserving
+  // its "main" / "sub:<hash>" keys and calculated base sizes.
+  cacheKey?: string;
+  baseTok?: number;
 }
 
 // ---- Fan-out run shapes (computeRun) ----

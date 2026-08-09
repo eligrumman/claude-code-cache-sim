@@ -33,20 +33,15 @@
     screen = toMap();
   }
   function goEnter(id: LevelId) {
-    // L1's intro cards are rendered inline by L1PlayScreen (Section 4 Beat 0
-    // + Section 7 gap #7 - LearnBeat's A/B replay doesn't fit token-basics
-    // teaching), so entering L1 goes straight to play.
+    // Redesigned L1 teaches through live requests, so it opens directly on
+    // the first Send instead of routing through the generic A/B learn screen.
     screen = id === "L1" ? toPlay(id) : enterLevel(id);
   }
   function goPlay(id: LevelId) {
     screen = toPlay(id);
   }
   function goRetry(id: LevelId) {
-    // Mirror goEnter: L1's intro/play is a single dedicated screen
-    // (L1PlayScreen), it has no generic LearnScreen A/B replay to retry
-    // into. Without this, retryLevel(id) always routes to {id:"learn"},
-    // which for L1 rendered the generic LearnScreen instead of restarting
-    // the actual L1 flow - a dead end back into L1 after a failed attempt.
+    // Mirror goEnter: retrying L1 restarts its dedicated live-request flow.
     screen = id === "L1" ? toPlay(id) : retryLevel(id);
   }
   function goFreeplay() {
@@ -88,7 +83,6 @@
     {/if}
     {#if screen.level === "L1"}
       <L1PlayScreen
-        attempted={campaign.levels.L1.attempts > 0}
         onfinish={(st, handCoded) => finishLevel(screen.level, st, handCoded)}
         onabandon={goMap}
       />

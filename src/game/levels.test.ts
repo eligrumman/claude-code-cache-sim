@@ -12,8 +12,7 @@ import {
 } from "./levels.js";
 import type { GameState } from "./types.js";
 
-// L1's real scripted reference run (L1_REDESIGN Section 3/8): tasks 1-4 back
-// to back, one 20-min coffee, standup last - 1 cold main write, $0.416, 3 stars.
+// L1's same-chat reference route: lower spend, 12 simulated minutes.
 function l1Fixture(): GameState {
   return runL1Reference();
 }
@@ -50,7 +49,7 @@ describe("progression: only the frontier level's chain is unlocked", () => {
 
   it("completing L1 with a passing run unlocks L2 but nothing further", () => {
     let c = newCampaign();
-    // L1 gate (L1_REDESIGN Section 3): all done, spent <= $0.55, <=1 cold main write.
+    // L1 gate: three real requests plus the post-reveal causal explanation.
     const st = l1Fixture();
     c = completeLevel(c, "L1", st, 0);
     expect(isLevelUnlocked(c, "L2")).toBe(true);
@@ -115,24 +114,25 @@ describe("stars", () => {
     if (!l2.pass(st).pass) expect(s).toBe(0);
   });
 
-  it("L1's reference run passes the gate and earns 3 stars (L1_REDESIGN Section 3: $0.416, 1 cold write)", () => {
+  it("L1's same-chat route passes, spends $0.2347878, and earns 3 stars", () => {
     const st = runL1Reference();
     const l1 = LEVEL_BY_ID.L1;
     const gate = l1.pass(st);
     expect(gate.pass).toBe(true);
-    expect(totalSpent(st)).toBeGreaterThanOrEqual(0.411);
-    expect(totalSpent(st)).toBeLessThanOrEqual(0.421);
+    expect(totalSpent(st)).toBeCloseTo(0.2347878, 12);
+    expect(st.clockMin).toBe(12);
     expect(starsFor(l1, st, 0)).toBe(3);
   });
 
-  it("L1's anti run (standup mid-work) fails the cold-write clause even though $0.52 < some naive reading of the budget", () => {
+  it("L1's isolated route also passes: it costs more but finishes in 4 minutes", () => {
     const st = runL1Anti();
     const l1 = LEVEL_BY_ID.L1;
     const gate = l1.pass(st);
-    expect(gate.pass).toBe(false);
-    expect(totalSpent(st)).toBeGreaterThanOrEqual(0.52);
-    expect(totalSpent(st)).toBeLessThanOrEqual(0.53);
+    expect(gate.pass).toBe(true);
+    expect(totalSpent(st)).toBeCloseTo(0.4327944, 12);
+    expect(st.clockMin).toBe(4);
     expect(st.ledger.filter((r) => r.agent === "main" && r.cold).length).toBe(2);
+    expect(starsFor(l1, st, 0)).toBe(3);
   });
 });
 
@@ -157,8 +157,8 @@ describe("G1: LevelDef disclosure/scenario/learn fields (GAME_PLAN.md Section C.
     }
   });
 
-  it("unlockedControls(L1) is exactly L1's introducedControls (run + advanceTime, L1_REDESIGN Section 8)", () => {
-    expect(unlockedControls("L1")).toEqual(["run", "advanceTime"]);
+  it("unlockedControls(L1) is exactly L1's introduced run control", () => {
+    expect(unlockedControls("L1")).toEqual(["run"]);
     expect(unlockedControls("L1")).toEqual(LEVEL_BY_ID.L1.introducedControls);
   });
 

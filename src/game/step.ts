@@ -94,6 +94,29 @@ export const L1_TASK_LABELS = [
   "Update the docs",
 ];
 
+export const L1_RED_BLUE_LABELS = [
+  "Fix the login route",
+  "Add the matching logout route",
+  "Add a test for both routes",
+];
+
+export function buildL1RedBlueTasks(): UnitInstance[] {
+  const freshInput = [12, 14, 13];
+  return L1_RED_BLUE_LABELS.map((label, i) => ({
+    id: `l1-r${i + 1}`,
+    kind: "TASK" as const,
+    ticket: 1 as const,
+    deps: [],
+    status: "queued" as const,
+    cause: null,
+    hours: 0,
+    workIn: freshInput[i],
+    outTok: 120,
+    growthTok: 0,
+    label,
+  }));
+}
+
 export function buildL1Tasks(): UnitInstance[] {
   const tasks: UnitInstance[] = [];
   for (let i = 0; i < 4; i++) {
@@ -134,6 +157,7 @@ export function buildL1Standup(): UnitInstance {
 // Build the unit queue, expanding rework deterministically from model quality.
 // Ported exactly from the mock (including PRNG consumption order).
 export function buildQueue(cfg: Config, seed: number, scenario?: string): UnitInstance[] {
+  if (scenario === "l1-red-or-blue") return buildL1RedBlueTasks();
   if (scenario === "l1-onboarding") return buildL1Tasks();
   const pr = makePrng(seed ^ 0x5151);
   const q = 0.8 / (DEV_Q[cfg.devModel] * DEV_Q[cfg.devModel] * PLAN_Q[cfg.planModel]);
@@ -175,7 +199,7 @@ export function initGame(
   scenario?: string,
 ): GameState {
   const cfg: Config = { ...DEFAULT_CFG, ...cfgOverride };
-  const budget = scenario === "l1-onboarding" ? 0.55 : SCOPE_BUDGET[scope];
+  const budget = scenario === "l1-red-or-blue" ? 0.30 : scenario === "l1-onboarding" ? 0.55 : SCOPE_BUDGET[scope];
   // LevelDef.clockCapMin (GAME_PLAN.md Section C.1) overrides the default
   // scope-day clock so a level's scripted queue (hours + idle gaps) has room
   // to actually finish under interactive step-by-step play, not just under
@@ -224,6 +248,10 @@ export function initGame(
     ratioDen: 0,
     ended: null,
     standup: scenario === "l1-onboarding" ? buildL1Standup() : undefined,
+    scenario,
+    l1Route: undefined,
+    l1PredictionCommitted: false,
+    l1ExplanationAcknowledged: false,
   };
 }
 
@@ -325,8 +353,10 @@ function emit(
   outTok: number,
   nowMin: number,
   growthTok?: number,
+  cacheKey?: string,
+  baseTok?: number,
 ): LedgerRow {
-  const key = agent === "main" ? "main" : "sub:" + promptHash;
+  const key = cacheKey ?? (agent === "main" ? "main" : "sub:" + promptHash);
   const cold = !isLive(st, key, nowMin);
   const { row, cache } = simulateRequest(st.cache, st.cfg, {
     agent,
@@ -337,6 +367,8 @@ function emit(
     nowMin,
     unitId: u.id,
     growthTok,
+    cacheKey,
+    baseTok,
   });
   st.cache = cache;
   const led: LedgerRow = {
@@ -401,6 +433,11 @@ function runUnit(st: GameState, u: UnitInstance): void {
         reqs.push(r);
       }
     }
+  } else if (st.scenario === "l1-red-or-blue") {
+    const cacheKey = u.id === "l1-r3" && st.l1Route === "isolated" ? "l1-clean" : "l1-main";
+    const r = emit(st, u, "main", 0, cacheKey, model, workIn, outTok, st.clockMin, 0, cacheKey, 34_738);
+    accrueInline(st, r);
+    reqs.push(r);
   } else {
     // single requests run on the growing main session.
     const r = emit(st, u, "main", 0, "main", model, workIn, outTok, st.clockMin, u.growthTok);
@@ -422,6 +459,9 @@ function runUnit(st: GameState, u: UnitInstance): void {
   u.status = "done";
   st.idx++;
   st.lastRequests = reqs;
+  if (st.scenario === "l1-red-or-blue" && u.id === "l1-r3") {
+    st.clockMin += st.l1Route === "isolated" ? 4 : 12;
+  }
 }
 
 // ---- HAND_CODE (mock handCode) ----
@@ -478,7 +518,9 @@ export function checkEnd(st: GameState): void {
     st.ended = { result: "loss", lossId: "L7" };
     return;
   }
-  if (allDone) st.ended = { result: "win" };
+  if (allDone && (st.scenario !== "l1-red-or-blue" || st.l1ExplanationAcknowledged)) {
+    st.ended = { result: "win" };
+  }
 }
 
 // step(state, action) -> next state (pure). SIMULATOR_SPEC.md Section 5.3.
@@ -506,6 +548,11 @@ export function step(state: GameState, action: Action): GameState {
         break;
       }
       const u = st.units[st.idx];
+      if (
+        st.scenario === "l1-red-or-blue" &&
+        u?.id === "l1-r3" &&
+        (!st.l1Route || !st.l1PredictionCommitted)
+      ) break;
       if (u && (action.unitId === u.id || action.unitId === "")) {
         runUnit(st, u);
         checkEnd(st);
@@ -515,6 +562,25 @@ export function step(state: GameState, action: Action): GameState {
     case "ADVANCE": {
       if (st.ended) break;
       st.clockMin += action.min;
+      break;
+    }
+    case "CHOOSE_L1_ROUTE": {
+      if (st.scenario === "l1-red-or-blue" && st.idx === 2 && !st.l1Route) {
+        st.l1Route = action.route;
+      }
+      break;
+    }
+    case "COMMIT_L1_PREDICTION": {
+      if (st.scenario === "l1-red-or-blue" && st.idx === 2 && st.l1Route) {
+        st.l1PredictionCommitted = true;
+      }
+      break;
+    }
+    case "ACK_L1_EXPLANATION": {
+      if (st.scenario === "l1-red-or-blue" && st.idx === 3 && action.correct) {
+        st.l1ExplanationAcknowledged = true;
+        checkEnd(st);
+      }
       break;
     }
     case "HAND_CODE": {
@@ -563,10 +629,7 @@ export function totalSpent(st: GameState): number {
   return st.budget - st.wallet;
 }
 
-// ---- L1-onboarding fixed config + scripted reference/anti runs (L1_REDESIGN
-// Section 3/8) - used by levels.ts (referenceCfg/antiCfg) and boot-asserted in
-// assert.ts / step.test.ts. Numbers: reference $0.416 (3 stars), anti $0.525
-// (2 cold main writes -> fails the cold-write gate clause).
+// ---- Redesigned L1 fixed config + scripted economy/parallel routes.
 export const L1_CFG: Partial<Config> = {
   who: "inline",
   hook: "static",
@@ -577,32 +640,30 @@ export const L1_CFG: Partial<Config> = {
 };
 
 export function initL1(seed = 1): GameState {
-  return initGame(seed, "session", L1_CFG, DAY_LEN_MIN, "l1-onboarding");
+  return initGame(seed, "session", L1_CFG, 60, "l1-red-or-blue");
 }
 
-// Tasks 1-4 back-to-back, one 20-min coffee anywhere, standup last: 1 cold
-// main write, $0.416, 3 stars.
+// Same-chat route: the third request reuses l1-main and takes 12 minutes.
 export function runL1Reference(seed = 1): GameState {
   let st = initL1(seed);
-  st = step(st, { type: "RUN_UNIT", unitId: "task0" });
-  st = step(st, { type: "RUN_UNIT", unitId: "task1" });
-  st = step(st, { type: "ADVANCE", min: 20 }); // coffee, well under the 60-min TTL
-  st = step(st, { type: "RUN_UNIT", unitId: "task2" });
-  st = step(st, { type: "RUN_UNIT", unitId: "task3" });
-  st = step(st, { type: "RUN_UNIT", unitId: "standup" });
+  st = step(st, { type: "RUN_UNIT", unitId: "l1-r1" });
+  st = step(st, { type: "RUN_UNIT", unitId: "l1-r2" });
+  st = step(st, { type: "CHOOSE_L1_ROUTE", route: "same-chat" });
+  st = step(st, { type: "COMMIT_L1_PREDICTION" });
+  st = step(st, { type: "RUN_UNIT", unitId: "l1-r3" });
+  st = step(st, { type: "ACK_L1_EXPLANATION", correct: true });
   return st;
 }
 
-// Standup taken between tasks 2 and 3: the 90-min absence outlives the 60-min
-// TTL, so task 3 rebuilds cold. 2 cold main writes, ~$0.525 -> fails the
-// cold-write clause even though the dollar total alone would pass.
+// Isolated parallel route: l1-clean pays a cold write and takes 4 minutes.
 export function runL1Anti(seed = 1): GameState {
   let st = initL1(seed);
-  st = step(st, { type: "RUN_UNIT", unitId: "task0" });
-  st = step(st, { type: "RUN_UNIT", unitId: "task1" });
-  st = step(st, { type: "RUN_UNIT", unitId: "standup" });
-  st = step(st, { type: "RUN_UNIT", unitId: "task2" });
-  st = step(st, { type: "RUN_UNIT", unitId: "task3" });
+  st = step(st, { type: "RUN_UNIT", unitId: "l1-r1" });
+  st = step(st, { type: "RUN_UNIT", unitId: "l1-r2" });
+  st = step(st, { type: "CHOOSE_L1_ROUTE", route: "isolated" });
+  st = step(st, { type: "COMMIT_L1_PREDICTION" });
+  st = step(st, { type: "RUN_UNIT", unitId: "l1-r3" });
+  st = step(st, { type: "ACK_L1_EXPLANATION", correct: true });
   return st;
 }
 

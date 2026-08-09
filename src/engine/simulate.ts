@@ -135,7 +135,7 @@ export function simulateRequest(
   req: SimRequest,
 ): { row: RequestRow; cache: CacheState } {
   const { agent, promptHash, model, workIn, outTok, nowMin } = req;
-  const key = agent === "main" ? "main" : `sub:${promptHash}`;
+  const key = req.cacheKey ?? (agent === "main" ? "main" : `sub:${promptHash}`);
   const entries = { ...cache.entries };
   const existing = entries[key];
   const live = existing && !isExpired(existing, nowMin) ? existing : null;
@@ -158,7 +158,7 @@ export function simulateRequest(
       newPrefix = Math.round(subBaseTok(cfg));
     } else {
       readTok = 0;
-      writeTok = agent === "main" ? mainBaseTok(cfg) : subBaseTok(cfg);
+      writeTok = req.baseTok ?? (agent === "main" ? mainBaseTok(cfg) : subBaseTok(cfg));
       newPrefix = writeTok;
     }
   } else if (agent === "main") {

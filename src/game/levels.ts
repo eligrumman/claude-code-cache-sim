@@ -37,7 +37,7 @@ export type ControlId =
 export type ScenarioId =
   | "default" | "dev-only" | "dev-marathon" | "fanout8" | "fanout8-slow"
   | "gaps" | "two-halves" | "week7starts" | "spawn12" | "mcp-required"
-  | "l1-onboarding";
+  | "l1-onboarding" | "l1-red-or-blue";
 
 // GAME_PLAN.md Section C.3 - the scripted LEARN replay (without-tool vs with-tool).
 export interface LearnBeat {
@@ -97,36 +97,26 @@ function coldBaseCount(st: GameState): number {
 // ---- TIER 1 - PERSONAL ----
 export const LEVELS: LevelDef[] = [
   {
-    // L1_REDESIGN.md - "The First Hour". Replaces the old read-share gate
-    // (GAME_PLAN D's L1 row, Section 8): goal banner, teaching cards+toasts,
-    // a real WHEN-to-take-standup choice, and a moving clock/TTL that expires
-    // the cache into a cold rebuild if you dawdle. Rendered by a dedicated
-    // L1PlayScreen/L1IntroCards pair (App.svelte), not the generic
-    // PlayScreen/LearnScreen - the mechanic (out-of-order standup, live
-    // dawdle drain) doesn't fit the config-strip/unit-board shape the other
-    // 12 levels share.
+    // Redesigned Level 1: two completable third-task routes trade money for
+    // time. The dedicated screen reveals cache vocabulary only after the
+    // corresponding request has produced real ledger evidence.
     id: "L1",
     tier: 1,
-    title: "The First Hour",
-    objective:
-      "Finish Bob's 4 tasks and his 90-minute standup for under $0.55 - the cache makes " +
-      "repeat work 10x cheaper, but it dies 60 minutes after you last use it.",
+    title: "Bob's Login Bug",
+    objective: "Finish Bob's login, logout, and test work, then explain the third bill.",
     unlocks: "run",
-    introducedControls: ["run", "advanceTime"],
-    teaches: "token basics + read 0.1x vs write 20x rebuild penalty, TTL expiry (C1, C5)",
+    introducedControls: ["run"],
+    teaches: "unchanged saved context is a cheap read; an isolated thread must write its own copy",
     scope: "session",
     seed: 1,
-    budgetUsd: 0.55,
-    clockCapMin: 300, // 09:00-14:00, DAY_LEN_MIN
+    budgetUsd: 0.30,
+    clockCapMin: 60,
     cfgOverride: L1_CFG,
-    scenario: "l1-onboarding",
-    // Unused by L1PlayScreen (which renders IntroCards instead) - kept only
-    // so LevelDef's required `learn` field type-checks; App.svelte special-
-    // cases L1's "learn" screen before this is ever read.
+    scenario: "l1-red-or-blue",
+    // L1 opens directly on its first action; this required field is not routed.
     learn: {
       copy: [
-        "L1 teaches with 3 intro cards + in-play toasts instead of an A/B replay (L1_REDESIGN Section 4).",
-        "Rendered by IntroCards.svelte, not this screen.",
+        "L1 teaches through three live requests and a spend-versus-time choice.",
       ],
       withoutCfg: {},
       withCfg: L1_CFG,
@@ -135,25 +125,25 @@ export const LEVELS: LevelDef[] = [
       chip: () => "",
     },
     referenceCfg: L1_CFG,
-    antiCfg: L1_CFG, // anti-pattern here is a choice (standup timing), not a config
+    antiCfg: L1_CFG,
     failLesson: {
       bucket: "none",
-      cite: "L1_REDESIGN Section 3/5",
-      line: "the cache died mid-run and the next request rewrote everything at 2x",
+      cite: "docs/screens/01-red-or-blue.md",
+      line: "finish either thread route, inspect its third row, then explain the bill",
     },
-    star2: (st) => spentUsd(st) <= 0.47,
-    star3: (st) => {
-      const cold = st.ledger.filter((r) => r.agent === "main" && r.cold).length;
-      return spentUsd(st) <= 0.44 && cold === 1;
-    },
+    star2: (st) => st.l1Route === "same-chat" || (st.l1Route === "isolated" && st.clockMin <= 4),
+    star3: (st) => st.l1ExplanationAcknowledged === true,
     pass: (st) => {
-      const allDone = st.idx >= st.units.length && (!st.standup || st.standup.status === "done");
-      const spent = spentUsd(st);
-      const coldMain = st.ledger.filter((r) => r.agent === "main" && r.cold).length;
-      const ok = allDone && spent <= 0.55 && coldMain <= 1;
+      const third = st.ledger[2];
+      const routeSettled =
+        (st.l1Route === "same-chat" && third?.unitId === "l1-r3" && third.readTok === 34_738) ||
+        (st.l1Route === "isolated" && third?.unitId === "l1-r3" && third.writeTok === 34_738);
+      const ok = st.ledger.length === 3 && routeSettled && st.l1ExplanationAcknowledged === true;
       return {
         pass: ok,
-        reason: `spent $${spent.toFixed(2)} / $0.55, ${coldMain} cold main write${coldMain === 1 ? "" : "s"} (need <=1)${allDone ? "" : ", not all done"}`,
+        reason: ok
+          ? "The player connected the third bill to saved-context availability."
+          : "Finish either thread route, read its third row, then explain the bill.",
       };
     },
   },

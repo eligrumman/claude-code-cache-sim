@@ -10,9 +10,8 @@ import {
   runL1Reference,
   runL1Anti,
   L1_CFG,
-  L1_TASK_LABELS,
+  L1_RED_BLUE_LABELS,
 } from "./step.js";
-import { INLINE_GROWTH } from "../engine/constants.js";
 import type { Action, SaveFile } from "./types.js";
 import type { Config } from "../engine/types.js";
 
@@ -138,9 +137,7 @@ describe("step reducer mechanics", () => {
   });
 });
 
-// L1_REDESIGN.md Section 7 gap list: ADVANCE action, growthTok override,
-// out-of-order standup unit.
-describe("ADVANCE action + L1 clock/TTL/expiry (L1_REDESIGN Section 5/7)", () => {
+describe("redesigned L1: real cache tradeoff", () => {
   it("ADVANCE only moves the clock - no cache/ledger side effects", () => {
     const s0 = initGame(42, "session", GOOD);
     const s1 = step(s0, { type: "ADVANCE", min: 37 });
@@ -149,169 +146,73 @@ describe("ADVANCE action + L1 clock/TTL/expiry (L1_REDESIGN Section 5/7)", () =>
     expect(s1.cache).toEqual(s0.cache);
   });
 
-  it("growthTok defaults to INLINE_GROWTH when omitted - every existing golden number is untouched", () => {
-    // Same GOOD-config run with and without an explicit growthTok override at
-    // the default value must be byte-identical.
-    const a = runScript(42, "month", GOOD);
-    const b = runScript(42, "month", GOOD); // no code path here ever sets growthTok
-    expect(totalSpent(a)).toBeCloseTo(totalSpent(b), 10);
-    expect(a.ledger).toEqual(b.ledger);
-  });
-
-  it("a task's growthTok override changes only that unit's warm-write size, never INLINE_GROWTH's default behavior elsewhere", () => {
-    const st = initL1();
-    // task0 cold write is mainBaseTok, unaffected by growthTok.
-    const s1 = step(st, { type: "RUN_UNIT", unitId: "task0" });
-    const s2 = step(s1, { type: "RUN_UNIT", unitId: "task1" });
-    const warm = s2.ledger[1];
-    expect(warm.writeTok).toBe(3000); // task's growthTok, not INLINE_GROWTH (22,000)
-    expect(warm.writeTok).not.toBe(INLINE_GROWTH);
-  });
-
-  it("standup is playable out of order and does not touch the cache (absence, not work)", () => {
+  it("prices the cold first request and warm second request from the canonical engine", () => {
     let st = initL1();
-    st = step(st, { type: "RUN_UNIT", unitId: "task0" });
-    const cacheBefore = st.cache;
-    st = step(st, { type: "RUN_UNIT", unitId: "standup" });
-    expect(st.cache).toEqual(cacheBefore); // no request emitted
-    expect(st.standup?.status).toBe("done");
-    expect(st.clockMin).toBe(30 + 90); // task0 (30 min) + standup (90 min)
-    // task1 is still next - the standup didn't advance idx.
-    expect(st.units[st.idx].id).toBe("task1");
+    st = step(st, { type: "RUN_UNIT", unitId: "l1-r1" });
+    st = step(st, { type: "RUN_UNIT", unitId: "l1-r2" });
+    expect(st.ledger[0]).toMatchObject({ readTok: 0, inputTok: 12, writeTok: 34_738, outTok: 120, cold: true });
+    expect(st.ledger[0].usd).toBeCloseTo(0.210264, 12);
+    expect(st.ledger[1]).toMatchObject({ readTok: 34_738, inputTok: 14, writeTok: 0, outTok: 120, cold: false });
+    expect(st.ledger[1].usd).toBeCloseTo(0.0122634, 12);
+    expect(st.cache.entries["l1-main"].prefixTok).toBe(34_738);
   });
 
-  it("a 90-min absence (standup) expires the 60-min main TTL: the next request is a cold rebuild", () => {
-    let st = initL1();
-    st = step(st, { type: "RUN_UNIT", unitId: "task0" }); // cold write @ tMin 30
-    st = step(st, { type: "RUN_UNIT", unitId: "standup" }); // clock -> 150 (>60 past last touch)
-    st = step(st, { type: "RUN_UNIT", unitId: "task1" });
-    const row = st.ledger[st.ledger.length - 1];
-    expect(row.cold).toBe(true);
-    expect(row.readTok).toBe(0);
-  });
-
-  it("L1 reference run: $0.416, exactly 1 cold main write, PASS, 3 stars", () => {
+  it("same-chat route realizes the spend benefit in state", () => {
     const st = runL1Reference();
-    expect(totalSpent(st)).toBeGreaterThanOrEqual(0.411);
-    expect(totalSpent(st)).toBeLessThanOrEqual(0.421);
+    expect(st.l1Route).toBe("same-chat");
+    expect(st.ledger[2]).toMatchObject({ readTok: 34_738, inputTok: 13, writeTok: 0, cold: false });
+    expect(st.ledger[2].usd).toBeCloseTo(0.0122604, 12);
+    expect(totalSpent(st)).toBeCloseTo(0.2347878, 12);
+    expect(st.clockMin).toBe(12);
     expect(st.ledger.filter((r) => r.agent === "main" && r.cold).length).toBe(1);
     expect(st.ended).toEqual({ result: "win" });
   });
 
-  it("L1 anti run (standup between tasks 2 and 3): ~$0.525, 2 cold main writes, fails the cold-write clause", () => {
+  it("isolated route realizes the time benefit through a separate cold namespace", () => {
     const st = runL1Anti();
-    expect(totalSpent(st)).toBeGreaterThanOrEqual(0.52);
-    expect(totalSpent(st)).toBeLessThanOrEqual(0.53);
+    expect(st.l1Route).toBe("isolated");
+    expect(st.ledger[2]).toMatchObject({ readTok: 0, inputTok: 13, writeTok: 34_738, cold: true });
+    expect(st.ledger[2].usd).toBeCloseTo(0.210267, 12);
+    expect(totalSpent(st)).toBeCloseTo(0.4327944, 12);
+    expect(st.clockMin).toBe(4);
     expect(st.ledger.filter((r) => r.agent === "main" && r.cold).length).toBe(2);
+    expect(st.cache.entries["l1-main"]).toBeDefined();
+    expect(st.cache.entries["l1-clean"]).toBeDefined();
+    expect(st.ended).toEqual({ result: "win" });
   });
-});
 
-// `st.lastRequests` is the exact render model TapeRenderer.play() consumes to
-// draw the "requests on the wire" panel (L1PlayScreen.svelte calls
-// `tape?.play(st.lastRequests)` after every action). These tests assert on
-// that array and its priced rows directly - the render model, not pixels -
-// so a regression like the empty-wire bug (TapeRenderer built against a
-// canvas ref that didn't exist yet) or the $0.0000 bug (a hardcoded `usd: 0`)
-// fails CI without needing a real browser.
-describe("st.lastRequests: the render model behind the requests-on-the-wire tape", () => {
-  it("RUN_UNIT populates lastRequests with at least one row carrying real tokens and cost", () => {
+  it("route choice and prediction have no economic side effects; prediction gates request three", () => {
     let st = initL1();
-    st = step(st, { type: "RUN_UNIT", unitId: "task0" });
-    expect(st.lastRequests.length).toBeGreaterThan(0);
-    for (const row of st.lastRequests) {
-      expect(row.readTok + row.inputTok + row.writeTok).toBeGreaterThan(0);
-      expect(row.usd).toBeGreaterThan(0);
-    }
+    st = step(st, { type: "RUN_UNIT", unitId: "l1-r1" });
+    st = step(st, { type: "RUN_UNIT", unitId: "l1-r2" });
+    const before = JSON.stringify({ ledger: st.ledger, wallet: st.wallet, clockMin: st.clockMin });
+    st = step(st, { type: "CHOOSE_L1_ROUTE", route: "isolated" });
+    expect(JSON.stringify({ ledger: st.ledger, wallet: st.wallet, clockMin: st.clockMin })).toBe(before);
+    st = step(st, { type: "RUN_UNIT", unitId: "l1-r3" });
+    expect(st.ledger).toHaveLength(2);
+    st = step(st, { type: "COMMIT_L1_PREDICTION" });
+    expect(st.ledger).toHaveLength(2);
+    st = step(st, { type: "RUN_UNIT", unitId: "l1-r3" });
+    expect(st.ledger).toHaveLength(3);
   });
 
-  it("a cold write and the following warm read price to different, non-zero amounts (20x apart)", () => {
+  it("does not pass until the post-reveal causal explanation is acknowledged", () => {
     let st = initL1();
-    st = step(st, { type: "RUN_UNIT", unitId: "task0" }); // cold write
-    const coldRow = st.lastRequests[st.lastRequests.length - 1];
-    st = step(st, { type: "RUN_UNIT", unitId: "task1" }); // warm read
-    const warmRow = st.lastRequests[st.lastRequests.length - 1];
-
-    expect(coldRow.usd).toBeGreaterThan(0);
-    expect(warmRow.usd).toBeGreaterThan(0);
-    expect(coldRow.usd).not.toBeCloseTo(warmRow.usd, 4);
-    // A formatted cost string this small must still show non-zero precision -
-    // toFixed(4) on either row must never collapse to "$0.0000".
-    expect(coldRow.usd.toFixed(4)).not.toBe("0.0000");
-    expect(warmRow.usd.toFixed(4)).not.toBe("0.0000");
+    st = step(st, { type: "RUN_UNIT", unitId: "l1-r1" });
+    st = step(st, { type: "RUN_UNIT", unitId: "l1-r2" });
+    st = step(st, { type: "CHOOSE_L1_ROUTE", route: "same-chat" });
+    st = step(st, { type: "COMMIT_L1_PREDICTION" });
+    st = step(st, { type: "RUN_UNIT", unitId: "l1-r3" });
+    expect(st.ended).toBeNull();
+    st = step(st, { type: "ACK_L1_EXPLANATION", correct: false });
+    expect(st.ended).toBeNull();
+    st = step(st, { type: "ACK_L1_EXPLANATION", correct: true });
+    expect(st.ended).toEqual({ result: "win" });
   });
 
-  it("RUN_UNIT on a free unit (or HAND_CODE) clears lastRequests to []; ADVANCE (Coffee) leaves the last tape untouched", () => {
-    let st = initL1();
-    st = step(st, { type: "RUN_UNIT", unitId: "task0" });
-    expect(st.lastRequests.length).toBeGreaterThan(0);
-    const priorRequests = st.lastRequests;
-
-    // ADVANCE (Coffee) is a pure clock advance with no request emitted - it
-    // must not stomp the wire panel's last-drawn tape.
-    st = step(st, { type: "ADVANCE", min: 20 });
-    expect(st.lastRequests).toEqual(priorRequests);
-
-    // The standup, by contrast, explicitly clears it (an absence, not work).
-    st = step(st, { type: "RUN_UNIT", unitId: "standup" });
-    expect(st.lastRequests).toEqual([]);
-  });
-
-  it("the full reference run's every request row has a non-zero, correctly formatted cost", () => {
+  it("keeps three distinct task labels in ledger order", () => {
     const st = runL1Reference();
-    expect(st.ledger.length).toBeGreaterThan(0);
-    for (const row of st.ledger) {
-      expect(row.usd).toBeGreaterThan(0);
-      expect(row.usd.toFixed(4)).not.toBe("0.0000");
-    }
-    expect(totalSpent(st)).toBeCloseTo(0.416, 2);
-  });
-});
-
-// Fix #2/#3 regression coverage (L1PlayScreen's "requests on the wire" is
-// driven by st.ledger filtered to agent === "main", not st.lastRequests,
-// which only ever held the most recent action - the bug the player hit was
-// "only one request visible at a time"): each completed task must add
-// exactly one persistent ledger row, the main-agent row count must grow
-// 1, 2, 3, 4 as tasks run, and every row must be traceable back to a
-// player-facing task label (fix #3: real task names, not "Do next task").
-describe("wire model: ledger rows accumulate per task and carry task labels", () => {
-  it("running each of the 4 L1 tasks adds exactly one main-agent ledger row, growing 1,2,3,4", () => {
-    let st = initL1();
-    const counts: number[] = [];
-    for (const id of ["task0", "task1", "task2", "task3"]) {
-      st = step(st, { type: "RUN_UNIT", unitId: id });
-      counts.push(st.ledger.filter((r) => r.agent === "main").length);
-    }
-    expect(counts).toEqual([1, 2, 3, 4]);
-  });
-
-  it("the standup (free unit, no request) does not add a wire row - only real requests accumulate", () => {
-    const st = runL1Reference(); // ends with the standup last
-    const mainRows = st.ledger.filter((r) => r.agent === "main");
-    expect(mainRows.length).toBe(4); // 4 tasks, no 5th row for the free standup
-    expect(mainRows.some((r) => r.unitId === "standup")).toBe(false);
-  });
-
-  it("each accumulated row's unitId resolves to a real, distinct L1 task label (L1_REDESIGN Section 3), not a generic placeholder", () => {
-    const st = runL1Reference();
-    const mainRows = st.ledger.filter((r) => r.agent === "main");
-    const byUnitId = new Map(st.units.map((u) => [u.id, u.label]));
-    const labelsSeen = mainRows.map((r) => byUnitId.get(r.unitId));
-    expect(labelsSeen).toEqual(L1_TASK_LABELS);
-    // Every label is a real task name (from L1_REDESIGN.md), never null/undefined
-    // or the old generic "Do next task" placeholder text.
-    for (const l of labelsSeen) {
-      expect(l).toBeTruthy();
-      expect(l).not.toMatch(/do next task/i);
-    }
-  });
-
-  it("row order on the wire matches task run order, so the history reads left-to-right / top-to-bottom as it happened", () => {
-    let st = initL1();
-    for (const id of ["task0", "task1", "task2", "task3"]) {
-      st = step(st, { type: "RUN_UNIT", unitId: id });
-    }
-    const order = st.ledger.filter((r) => r.agent === "main").map((r) => r.unitId);
-    expect(order).toEqual(["task0", "task1", "task2", "task3"]);
+    const labels = st.ledger.map((row) => st.units.find((u) => u.id === row.unitId)?.label);
+    expect(labels).toEqual(L1_RED_BLUE_LABELS);
   });
 });

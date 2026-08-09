@@ -126,6 +126,12 @@ export interface GameState {
   // queue because it is playable at any point (L1_REDESIGN Section 7, gap
   // #3). Undefined for every other scenario - fully backward compatible.
   standup?: UnitInstance;
+  // Redesigned L1's only additional state: the selected tradeoff and the
+  // post-reveal causal explanation. Undefined for every other level.
+  scenario?: string;
+  l1Route?: "same-chat" | "isolated";
+  l1PredictionCommitted?: boolean;
+  l1ExplanationAcknowledged?: boolean;
 }
 
 export type Action =
@@ -140,7 +146,10 @@ export type Action =
   // drain, batched into whole sim-minutes right before the next user action -
   // wall-clock time itself never touches the engine, so replay(seed, actions)
   // stays byte-identical (L1_REDESIGN Section 5/7).
-  | { type: "ADVANCE"; min: number };
+  | { type: "ADVANCE"; min: number }
+  | { type: "CHOOSE_L1_ROUTE"; route: "same-chat" | "isolated" }
+  | { type: "COMMIT_L1_PREDICTION" }
+  | { type: "ACK_L1_EXPLANATION"; correct: boolean };
 
 // Save/replay format (Section 5.5): seed + action list only.
 export interface SaveFile {
