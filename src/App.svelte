@@ -11,6 +11,7 @@
   import SessionStream from "./components/SessionStream.svelte";
   import SandboxScreen from "./sandbox/SandboxScreen.svelte";
   import ArticleScreen from "./article/ArticleScreen.svelte";
+  import TDScreen from "./td/TDScreen.svelte";
   import {
     toMap,
     enterLevel,
@@ -33,11 +34,13 @@
   let showStream = $state(false);
   let sandboxOpen = $state(false);
   let articleOpen = $state(false);
+  let tdOpen = $state(false);
 
   function goMap() {
     showStream = false;
     sandboxOpen = false;
     articleOpen = false;
+    tdOpen = false;
     screen = toMap();
   }
   function goEnter(id: LevelId) {
@@ -79,7 +82,9 @@
 </script>
 
 <div class="app">
-  {#if sandboxOpen}
+  {#if tdOpen}
+    <TDScreen onback={goMap} />
+  {:else if sandboxOpen}
     <SandboxScreen onback={goMap} />
   {:else if articleOpen}
     <ArticleScreen onback={goMap} onsandbox={() => { articleOpen = false; sandboxOpen = true; }} />
@@ -90,6 +95,9 @@
       </button>
       <button class="sandbox-entry article-entry" onclick={() => (articleOpen = true)}>
         <span>📖</span><b>The Article</b><small>Learn by playing →</small>
+      </button>
+      <button class="sandbox-entry td-entry" onclick={() => (tdOpen = true)}>
+        <span>🎈</span><b>Tokenloons TD</b><small>Defend your budget →</small>
       </button>
     </div>
     <MapScreen {campaign} onenter={goEnter} onfreeplay={goFreeplay} />
@@ -164,7 +172,7 @@
     />
   {/if}
 
-  {#if !sandboxOpen && !articleOpen}
+  {#if !sandboxOpen && !articleOpen && !tdOpen}
     <p class="footnote">
       Economics use the canonical cost function and the real calibration table. Boot-time
       invariants run in the console. No numbers are faked.
@@ -186,5 +194,7 @@
   .sandbox-entry small { margin-left: auto; color: #6d685c; font-weight: 700; }
   .article-entry { background:#eef9ff; box-shadow:5px 5px 0 #79c9ed; }
   .article-entry:hover { box-shadow:7px 7px 0 #79c9ed; }
+  .td-entry { background:#effbee; box-shadow:5px 5px 0 #62b97c; }
+  .td-entry:hover { box-shadow:7px 7px 0 #62b97c; }
   @media(max-width:650px) { .special-entries { grid-template-columns:1fr; }.sandbox-entry small{font-size:.68rem} }
 </style>
