@@ -5,9 +5,11 @@
 - `id`: `"13-fleet-audit"`
 - `title`: **The Fleet Audit**
 - `tier`: `3`
-- `objective`: **“Five reports. Two remediation slots. Rank what is costing the fleet, then spend them.”**
+- `objective`: **“Five reports landed. Decide what the fleet does before next month closes.”**
 - `concept.id`: `"fleet-leak-triage"`
-- One concept: at fleet scale, remediation must follow recoverable dollars rather than visually prominent token volume.
+- One new concept: at fleet scale, diagnose heterogeneous losses from operational evidence before choosing where limited interventions go.
+- `conceptScope.kind`: `"capstone-integration"`
+- `conceptScope.reusedConceptIds`: all twelve declared prerequisite concepts below.
 - `prerequisiteConceptIds`, in campaign order:
   1. `"write-vs-read"`
   2. `"cache-expiry"`
@@ -21,18 +23,22 @@
   10. `"plan-depth-downstream-cost"`
   11. `"prefix-loadout-sizing"`
   12. `"volatile-prefix-position"`
-- Private designer answer: `idle > delegate > 5m-band > MCP`; never expose this before `SUBMIT_AUDIT_RANKING`.
-- Post-reveal rule: **“Rank recoverable dollars, then target the people who exhibit the cause.”**
-- The pre-reveal ranking and both `PredictionPromptDef` answers are non-punitive. Only remedies applied after the loss-ledger reveal affect the gate or stars.
+- Private designer answer: `idle > delegate > 5m-band > MCP`.
+- Post-reveal rule: **“Match dollars to their evidence, then intervene where the recoverable loss is largest.”**
+- The two `PredictionPromptDef` answers remain non-punitive.
+- The submitted pre-reveal ranking never affects passage, wallet, or failure, but an exact evidence-based ranking is required for the second star.
+- L13 uses the formal `ConceptScope` capstone exemption. Its value-matching, limited intervention, and collateral-targeting beats integrate declared prerequisite concepts rather than introducing undeclared concepts.
 
 ## 2. Objects used
 
 - `LevelDef`
 - `ConceptId`
+- `ConceptScope`
 - `ReducerState`
 - `Action`
 - `StatePredicate`
 - `GateDef`
+- `StarDef`
 - `TokenCount`
 - `Request`
 - `PricedRequest`
@@ -49,7 +55,11 @@
 - `HiddenCosts`
 - `Counts`
 - `AuditCauseSeed`
+- `AuditValueMatchingState`
 - `CounterfactualDef`
+- `FailureRuleDef`
+- `AttemptMetrics`
+- `AttemptResult`
 - `PRICE_REQUEST`
 - `RESOLVE_PREFIX`
 - `UI_TAPE_RENDERER`
@@ -68,20 +78,20 @@
 
 ## 3. Cold-open / narrative
 
-No tutorial card, aggregate recoverable-dollar value, canonical ranking, or remediation answer appears before play.
+No tutorial card, recoverable-dollar value, canonical ordering, value-to-cause answer, or intervention answer appears before play.
 
 | Time | Beat and exact copy |
 |---:|---|
 | `0.0s` | A pager lands on the audit desk: **“FINOPS: Claude spend is up again. Five developer reports attached.”** |
 | `0.2s–0.7s` | Five scripted report-ingest units resolve behind sealed folders. They create the nine priced rows specified in §6; no causal-bucket dollar label is visible. |
-| `0.8s` | Folders marked **Ari · Bea · Cy · Dev · Eli** slide into view. Header: **“Find the leaks. You get two remediation slots before next month closes.”** |
+| `0.8s` | Folders marked **Ari · Bea · Cy · Dev · Eli** slide into view. Header: **“Five reports. Two decisions before next month closes.”** |
 | `1.5s` | Ari’s folder pulses. Copy: **“Open any report.”** All five folders are immediately clickable. |
 | First click | The folder expands into its timeline, `UI_TAPE_RENDERER`, token headline, and symptoms. Its aggregate loss remains masked as **“Recoverable: ?”**. |
-| After all five open | Four cause cards unlock: **Idle rebuilds**, **Prompt drift**, **Short-cache misses**, and **Tool-schema load**. Copy: **“Rank these by dollars recoverable next month.”** |
-| First drag | `CREATE_CHECKPOINT({ checkpointId: "audit-ranking", reason: "decision" })`, then `SET_AUDIT_RANKING`. No correctness feedback appears. |
-| Submit | Button copy: **“Lock ranking.”** Submission opens `fleet-biggest-lever`; the loss ledger remains sealed until that prediction is committed. |
+| After all five open | Four cause cards unlock: **Idle rebuilds**, **Prompt drift**, **Short-cache misses**, and **Tool-schema load**. Copy: **“Put the reports in the order you would investigate.”** |
+| First drag | Dispatch `CREATE_CHECKPOINT({ checkpointId: "audit-ranking", reason: "decision" })`, then `SET_AUDIT_RANKING`. No correctness feedback appears. |
+| Submit | Button copy: **“Lock report order.”** Submission opens `fleet-biggest-lever`; the loss values remain sealed until that prediction is committed. |
 
-Presentation timings and the two-remediation-slot inventory are `[ESTIMATE]`.
+Presentation timings and the two-intervention inventory are `[ESTIMATE]`.
 
 Report copy:
 
@@ -101,9 +111,9 @@ Report copy:
   **“8,800,000 generated tokens. Delivery volume is high; cache warnings are quiet.”**  
   The headline is `200 × 44,000`; the monthly request count is `[FICTION]` and output per task is `C28`.
 
-The reports provide inferable evidence without dollar labels: Ari exposes frequency, Bea exposes the mismatch boundary, Cy exposes timing, Dev exposes loaded-but-unused schemas, and Eli exposes legitimate output volume. The ranking is therefore an evidence-based forecast, not a blind coin flip.
+The reports expose causal evidence without dollar labels: Ari exposes frequency and idle timing, Bea exposes an early identity mismatch, Cy exposes cache-window timing, Dev exposes unused schema load, and Eli exposes legitimate output volume.
 
-Eli’s `8,800,000` is the largest token headline. The UI neither labels it waste nor reveals its `$0.00` recoverable cache loss until the ranking and `fleet-biggest-lever` prediction are locked.
+Eli’s `8,800,000` is the largest token headline. The UI neither labels it waste nor reveals its `$0.00` recoverable cache loss until the player has submitted a complete value-to-cause match.
 
 ## 4. Exact event sequence
 
@@ -117,11 +127,14 @@ Eli’s `8,800,000` is the largest token headline. The UI neither labels it wast
 
    Mutations:
 
-   - Initializes `Clock` at `0m`, with a `6,600m` month cap: `22 × 300m` (`C31`).
-   - Initializes `Wallet.initialUsd = Wallet.remainingUsd = $90.00`, the canonical month budget (`C31`).
-   - Initializes `Wallet.spentUsd = $0.00`.
-   - Initializes all `HiddenCosts` fields to zero, the four masked `AuditCauseSeed` results, an empty audit ranking, no remedies, and no prediction result.
-   - The `$692.00` hidden-loss ledger is not assigned to `Wallet` or `Budget`.
+   - Initializes `clockMin = 0`, `endMin = 6_600`, and `dayLen = 300`: `22 × 300m` (`C31`).
+   - Initializes scalar `budget = 90` and scalar `wallet = 90` (`C31`).
+   - Initializes `attemptMetrics.spentUsd = 0`.
+   - Initializes every `HiddenCosts` field to zero.
+   - Initializes `auditRanking = []`.
+   - Initializes `auditValueMatching.assignmentsByValueId = {}` and `auditValueMatching.locked = false`.
+   - Initializes no remedies, completed audit events, or prediction result.
+   - The `$692.00` hidden-loss ledger is never assigned to `wallet` or `budget`.
 
 2. **Ingest the historical request sample**
 
@@ -141,19 +154,20 @@ Eli’s `8,800,000` is the largest token headline. The UI neither labels it wast
 
    ```text
    ledger.length += 9
-   Wallet.spentUsd = $6.69987735
-   Wallet.remainingUsd = $83.30012265
+   attemptMetrics.requestCount = 9
+   attemptMetrics.spentUsd = $6.69987735
+   wallet = $83.30012265
    ```
 
-   These are billed sample-request costs. They are not the hidden-loss rollup.
+   These are billed sample-request costs, not the hidden-loss rollup.
 
 3. **Inspect reports**
 
    Event: player opens each folder.
 
-   This is presentation-only: it exposes that report’s already-priced rows, timeline, token counts, and symptoms without changing the reducer or charging the wallet again. Reopening a report creates no request.
+   This is presentation-only. It exposes that report’s already-priced rows, timeline, token counts, and symptoms without changing the reducer or charging the wallet again. Reopening a report creates no request.
 
-4. **Draft the audit ranking**
+4. **Draft the pre-reveal ranking**
 
    On the first cause-card move:
 
@@ -170,33 +184,117 @@ Eli’s `8,800,000` is the largest token headline. The UI neither labels it wast
    SET_AUDIT_RANKING({ causeIds })
    ```
 
-   `causeIds` must be a permutation of `["idle", "delegate", "5m-band", "MCP"]`. The draft remains editable and receives no correctness signal.
+   `causeIds` must be a permutation of:
+
+   ```ts
+   ["idle", "delegate", "5m-band", "MCP"]
+   ```
+
+   The draft remains editable and receives no correctness signal.
 
 5. **Commit the pre-reveal forecast**
 
-   Pressing **“Lock ranking”** dispatches:
+   Pressing **“Lock report order”** dispatches:
 
    ```ts
    SUBMIT_AUDIT_RANKING
    OPEN_PREDICTION({ promptId: "fleet-biggest-lever" })
-   SELECT_PREDICTION({ promptId: "fleet-biggest-lever", optionId })
+   SELECT_PREDICTION({
+     promptId: "fleet-biggest-lever",
+     optionId
+   })
    COMMIT_PREDICTION({ promptId: "fleet-biggest-lever" })
    ```
 
-   The ranking and prediction become immutable. Neither correctness value affects score, stars, wallet, failure, or gate passage.
+   The ranking and prediction become immutable.
 
-6. **Reveal the loss ledger**
+   Prediction correctness changes no score, star, wallet, failure, or gate result. The submitted ranking is retained as the evidence for `star2`; it still cannot block passage or cause a freeze.
+
+6. **Reveal four unlabeled values**
 
    Event: player clicks the now-enabled sealed audit meter.
 
    ```ts
    REVEAL_PREDICTION({
      promptId: "fleet-biggest-lever",
-     correctOptionId: "idle"
+     correctOptionId: "different-report"
    })
    ```
 
-   The event `loss-ledger-revealed` completes and exposes:
+   Event `loss-values-revealed` completes.
+
+   Four visually identical value tiles appear in deterministic shuffled order:
+
+   | Reveal position | Opaque `valueId` | Visible tile |
+   |---:|---|---:|
+   | `1` | `loss-v30` | `$30.00` |
+   | `2` | `loss-v575` | `$575.00` |
+   | `3` | `loss-v15` | `$15.00` |
+   | `4` | `loss-v72` | `$72.00` |
+
+   The tiles have no cause name, developer name, bucket name, icon, color association, or spatial alignment with a report. The four cause cards still show **“Recoverable: ?”**.
+
+   The values sum to `$692.00` and ultimately obey `idle > delegate > 5m-band > MCP` (`C17`), but neither the mapping nor the canonical order is displayed.
+
+   A wrong prediction reveals the same four tiles and unlocks the same controls.
+
+7. **Match each value to report evidence**
+
+   Immediately before the first value placement:
+
+   ```ts
+   CREATE_CHECKPOINT({
+     checkpointId: "audit-value-matching",
+     reason: "decision"
+   })
+   ```
+
+   Each tile placement dispatches:
+
+   ```ts
+   SET_AUDIT_VALUE_MATCH({
+     valueId,
+     causeId
+   })
+   ```
+
+   The reducer writes:
+
+   ```text
+   auditValueMatching.assignmentsByValueId[valueId] = causeId
+   ```
+
+   Each value and cause may be used exactly once. Reassignment before submission moves the tile rather than duplicating it.
+
+   Submission is disabled until the assignment is a complete bijection. Button copy:
+
+   **“Submit diagnosis.”**
+
+   Pressing it dispatches:
+
+   ```ts
+   SUBMIT_AUDIT_VALUE_MATCHES
+   ```
+
+   Exact mutations:
+
+   ```text
+   auditValueMatching.locked = true
+   completedEventIds includes "audit-value-matches-submitted"
+   ```
+
+   The correct authored mapping is:
+
+   ```text
+   loss-v575 → idle
+   loss-v72  → delegate
+   loss-v30  → 5m-band
+   loss-v15  → MCP
+   ```
+
+   After submission, solid lines animate from each value to its authored cause. If a submitted line was wrong, it remains briefly as a dotted line while the solid correction appears. This correction is informational: it does not mutate `wallet`, trigger failure, or prevent continuation.
+
+   Event `loss-ledger-revealed` completes only after all four correct cause-dollar joins are visible:
 
    | Cause ID | `HiddenCosts` bucket | Recoverable next month |
    |---|---|---:|
@@ -205,27 +303,35 @@ Eli’s `8,800,000` is the largest token headline. The UI neither labels it wast
    | `5m-band` | `fiveMinuteBandUsd` | `$30.00` `[FICTION]` |
    | `MCP` | `mcpUsd` | `$15.00` `[FICTION]` |
 
-   The buckets sum to the canonical `$692.00` hidden-loss total and obey `idle > delegate > 5m-band > MCP` (`C17`). Eli receives the annotation **“Recoverable by these cache remedies: $0.00.”** It is not a request price.
+   Eli then receives the annotation **“Recoverable by these cache interventions: $0.00.”** It is not a request price.
 
-   A wrong forecast reveals exactly the same evidence and makes exactly the same controls available.
+8. **Create the remediation checkpoint**
 
-7. **Create the remediation checkpoint**
-
-   After the ledger animation completes:
+   After the labeled loss-ledger animation completes:
 
    ```ts
    CREATE_CHECKPOINT({
      checkpointId: "audit-remediation",
      reason: "decision"
    })
-   BEGIN_TRANSFER({ challengeId: "fleet-remediation-transfer" })
+   BEGIN_TRANSFER({
+     challengeId: "fleet-remediation-transfer"
+   })
    ```
 
    Exactly two post-evidence remediation slots unlock.
 
-8. **Apply the first remedy**
+   The developer-versus-fleet target selector is presented as a distinct sub-beat inside each slot:
 
-   Player drops one remedy on a developer or the fleet:
+   1. choose a remedy;
+   2. choose one evidenced developer or the fleet;
+   3. confirm the scope.
+
+   This targeting beat is permitted by L13’s formal `capstone-integration` scope and reuses previously mastered cost-scope reasoning.
+
+9. **Apply the first remedy**
+
+   Player confirms one remedy and scope:
 
    ```ts
    APPLY_REMEDIATION({
@@ -244,34 +350,44 @@ Eli’s `8,800,000` is the largest token headline. The UI neither labels it wast
    | `fanout-width` | `cy` | `$30.00` |
    | `trim-mcp` | `dev` | `$15.00` |
 
-   A mismatched targeted remedy recovers `$0.00` and produces no fake `LedgerRow`. A fleet-wide remedy recovers its matching bucket but atomically adds `4 × $40.00 = $160.00` collateral across the four unaffected developers `[FICTION]`.
+   A mismatched targeted remedy recovers `$0.00` and produces no fake `LedgerRow`.
 
-9. **Resolve an over-broad policy locally**
-
-   If the first remedy targets the fleet, its four collateral markers animate with the same atomic action, then:
-
-   ```ts
-   FREEZE_FAILURE({
-     failureId: "fleet-collateral",
-     causeCode: "BROAD_POLICY_COLLATERAL",
-     message:
-       "One leak, five rollouts. Four unaffected developers add $160.00 collateral.",
-     checkpointId: "audit-remediation"
-   })
-   ```
-
-   Visible comparison:
+   A fleet-wide remedy recovers its matching bucket but atomically adds:
 
    ```text
-   actual collateral = $160.00
-   targeted alternative collateral = $0.00
+   4 × $40.00 = $160.00 collateral [FICTION]
    ```
 
-   The punished route is therefore genuinely `$160.00` more expensive. `UI_REWIND_CONTROL` resumes immediately before the first remedy.
+   across the four unaffected developers.
 
-10. **Apply the second remedy**
+10. **Resolve an over-broad policy locally**
 
-    If unfrozen, the second drop dispatches `APPLY_REMEDIATION` again and fills the final slot.
+    If the first confirmed remedy targets the fleet, its four collateral markers animate with the same actual-attempt action. At event `fleet-collateral-rendered`, dispatch:
+
+    ```ts
+    FREEZE_FAILURE({
+      failure: {
+        failureId: "fleet-collateral",
+        causeCode: "BROAD_POLICY_COLLATERAL",
+        message:
+          "One leak, five rollouts. Four unaffected developers add $160.00 collateral.",
+        checkpointId: "audit-remediation"
+      }
+    })
+    ```
+
+    Visible comparison:
+
+    ```text
+    actual collateral = $160.00
+    targeted alternative collateral = $0.00
+    ```
+
+    The actual route is visibly `$160.00` more expensive. `UI_REWIND_CONTROL` resumes immediately before the first remedy. No reference or counterfactual event dispatches this freeze.
+
+11. **Apply the second remedy**
+
+    If unfrozen, the second confirmed selection dispatches `APPLY_REMEDIATION` again and fills the final slot.
 
     The reference post-evidence order is:
 
@@ -280,51 +396,60 @@ Eli’s `8,800,000` is the largest token headline. The UI neither labels it wast
     normalize-delegation → bea
     ```
 
-    No correctness is inferred from the earlier ranking or prediction.
+    No correctness is inferred from either `PredictionPromptDef`.
 
-11. **Commit the result prediction**
+12. **Commit the result prediction**
 
     Pressing **“Simulate next month”** dispatches:
 
     ```ts
     OPEN_PREDICTION({ promptId: "fleet-next-month" })
-    SELECT_PREDICTION({ promptId: "fleet-next-month", optionId })
+    SELECT_PREDICTION({
+      promptId: "fleet-next-month",
+      optionId
+    })
     COMMIT_PREDICTION({ promptId: "fleet-next-month" })
     ```
 
     No recovery bracket, remaining-loss total, or result comparison animates before commitment.
 
-12. **Reveal the chosen remediation outcome**
+13. **Reveal the chosen remediation outcome**
 
-    The simulation folds resolved causal brackets and leaves untouched brackets visible. It adds no historical `Request`, no `LedgerRow`, and no wallet charge: it is a projection over the already-priced audit evidence and the `AuditCauseSeed` loss ledger.
+    The simulation folds resolved causal brackets and leaves untouched brackets visible. It adds no historical `Request`, `LedgerRow`, or wallet charge. It is a projection over the already-priced report evidence and the `AuditCauseSeed` loss ledger.
 
     For targeted `idle + delegate`:
 
     ```text
-    recoveredUsd = $647.00
-    remainingHiddenLossUsd = $45.00
-    collateralUsd = $0.00
+    recovered = $647.00
+    remaining hidden loss = $45.00
+    collateral = $0.00
     ```
+
+    Event `top-two-targeted-result` completes.
+
+    If the remedies were applied in `idle → delegate` order without replacement or rewind after `loss-ledger-revealed`, event `top-two-targeted-in-order-clean` also completes.
 
     For targeted `5m-band + MCP`:
 
     ```text
-    recoveredUsd = $45.00
-    remainingHiddenLossUsd = $647.00
-    collateralUsd = $0.00
+    recovered = $45.00
+    remaining hidden loss = $647.00
+    collateral = $0.00
     ```
 
-13. **Freeze the economically decisive low-value pair**
+14. **Freeze the economically decisive low-value pair**
 
-    If the player used both slots on targeted `5m-band + MCP`, the first result frame dispatches:
+    If the player used both slots on targeted `5m-band + MCP`, the first actual-attempt result frame is event `low-pair-result` and dispatches:
 
     ```ts
     FREEZE_FAILURE({
-      failureId: "low-value-remediation-pair",
-      causeCode: "HIGHER_RECOVERY_OMITTED",
-      message:
-        "You recovered $45.00. The top two causes could recover $647.00; $602.00 was left on the table.",
-      checkpointId: "audit-remediation"
+      failure: {
+        failureId: "low-value-remediation-pair",
+        causeCode: "HIGHER_RECOVERY_OMITTED",
+        message:
+          "You recovered $45.00. The top two causes could recover $647.00; $602.00 was left on the table.",
+        checkpointId: "audit-remediation"
+      }
     })
     ```
 
@@ -336,27 +461,49 @@ Eli’s `8,800,000` is the largest token headline. The UI neither labels it wast
     excess loss = $602.00
     ```
 
-    Thus `actualUsd = $647.00 > validAlternativeUsd = $45.00`. Other suboptimal pairs reach the result screen without a freeze but fail the behavioral gate.
+    Therefore:
 
-14. **Rewind**
+    ```text
+    actualUsd = $647.00
+    validAlternativeUsd = $45.00
+    actualUsd > validAlternativeUsd
+    ```
+
+    Other suboptimal pairs reach the result screen without a freeze but fail the behavioral gate.
+
+15. **Rewind**
 
     - **“Revise remedies”**
 
       ```ts
-      REWIND_TO_CHECKPOINT({ checkpointId: "audit-remediation" })
+      REWIND_TO_CHECKPOINT({
+        checkpointId: "audit-remediation"
+      })
       ```
 
-      Restores the state immediately before the first remedy while preserving the submitted ranking and revealed evidence.
+      Restores state immediately before the first remedy while preserving report inspection, the submitted ranking, the submitted value matching, and the revealed labeled ledger.
 
-    - **“Rerank causes”**
+    - **“Rematch values”**
 
       ```ts
-      REWIND_TO_CHECKPOINT({ checkpointId: "audit-ranking" })
+      REWIND_TO_CHECKPOINT({
+        checkpointId: "audit-value-matching"
+      })
       ```
 
-      Restores the state before ranking submission while preserving the ingested ledger and opened reports.
+      Restores state immediately before the first value placement while preserving the ingested reports and four unlabeled values. Correct join lines revealed after submission are removed.
 
-15. **Complete and unlock comparisons**
+    - **“Reorder reports”**
+
+      ```ts
+      REWIND_TO_CHECKPOINT({
+        checkpointId: "audit-ranking"
+      })
+      ```
+
+      Restores state before ranking submission while preserving the ingested ledger and opened reports.
+
+16. **Complete and unlock comparisons**
 
     On an unfrozen outcome:
 
@@ -365,20 +512,35 @@ Eli’s `8,800,000` is the largest token headline. The UI neither labels it wast
       promptId: "fleet-next-month",
       correctOptionId: derivedFromAppliedRemedies
     })
+    ```
+
+    Event `next-month-result-revealed` completes, then:
+
+    ```ts
     COMPLETE_ATTEMPT
     ```
 
-    `COMPLETE_ATTEMPT` evaluates only the post-evidence remediation actions. Reference and anti-pattern comparisons remain unavailable until this event completes.
+    `attemptResult.spentUsd` snapshots the authoritative `budget - wallet` derivation. Reference and anti-pattern comparisons remain unavailable until `COMPLETE_ATTEMPT`.
 
-    Afterward:
+    After completion:
 
     ```ts
-    REQUEST_COUNTERFACTUAL({ comparisonId: "fleet-reference" })
-    REVEAL_COUNTERFACTUAL({ comparisonId: "fleet-reference" })
+    REQUEST_COUNTERFACTUAL({
+      comparisonId: "fleet-reference"
+    })
+    REVEAL_COUNTERFACTUAL({
+      comparisonId: "fleet-reference"
+    })
 
-    REQUEST_COUNTERFACTUAL({ comparisonId: "fleet-anti-pattern" })
-    REVEAL_COUNTERFACTUAL({ comparisonId: "fleet-anti-pattern" })
+    REQUEST_COUNTERFACTUAL({
+      comparisonId: "fleet-anti-pattern"
+    })
+    REVEAL_COUNTERFACTUAL({
+      comparisonId: "fleet-anti-pattern"
+    })
     ```
+
+    These informational actions cannot mutate the actual attempt or dispatch `FREEZE_FAILURE`.
 
 ## 5. Level data
 
@@ -388,14 +550,45 @@ const LEVEL_13: LevelDef = {
   tier: 3,
   title: "The Fleet Audit",
   objective:
-    "Five reports. Two remediation slots. Rank what is costing the fleet, then spend them.",
+    "Five reports landed. Decide what the fleet does before next month closes.",
 
   concept: {
     id: "fleet-leak-triage",
     privateDesignerSummary:
-      "At fleet scale, diagnose heterogeneous leaks and remediate in descending recoverable dollars.",
+      "At fleet scale, diagnose heterogeneous losses from evidence before assigning limited interventions.",
     postRevealRule:
-      "Rank recoverable dollars, then target the people who exhibit the cause."
+      "Match dollars to their evidence, then intervene where the recoverable loss is largest.",
+    solutionVocabulary: [
+      "rank",
+      "ranking",
+      "sort",
+      "match",
+      "matching",
+      "recoverable dollar",
+      "remediation",
+      "remedy",
+      "target",
+      "largest cause",
+      "top two"
+    ]
+  },
+
+  conceptScope: {
+    kind: "capstone-integration",
+    reusedConceptIds: [
+      "write-vs-read",
+      "cache-expiry",
+      "prefix-reuse",
+      "shared-subagent-window",
+      "byte-identical-prefix",
+      "ttl-tier-tradeoff",
+      "keep-warm-breakeven",
+      "inline-vs-subagent-routing",
+      "workload-cost-mix",
+      "plan-depth-downstream-cost",
+      "prefix-loadout-sizing",
+      "volatile-prefix-position"
+    ]
   },
 
   prerequisiteConceptIds: [
@@ -454,6 +647,7 @@ const LEVEL_13: LevelDef = {
     auditCauses: [
       {
         id: "idle",
+        valueId: "loss-v575",
         label: "Idle rebuilds",
         developerId: "ari",
         bucket: "idleRebuildUsd",
@@ -464,6 +658,7 @@ const LEVEL_13: LevelDef = {
       },
       {
         id: "delegate",
+        valueId: "loss-v72",
         label: "Prompt drift",
         developerId: "bea",
         bucket: "delegateUsd",
@@ -474,6 +669,7 @@ const LEVEL_13: LevelDef = {
       },
       {
         id: "5m-band",
+        valueId: "loss-v30",
         label: "Short-cache misses",
         developerId: "cy",
         bucket: "fiveMinuteBandUsd",
@@ -489,6 +685,7 @@ const LEVEL_13: LevelDef = {
       },
       {
         id: "MCP",
+        valueId: "loss-v15",
         label: "Tool-schema load",
         developerId: "dev",
         bucket: "mcpUsd",
@@ -555,7 +752,39 @@ const LEVEL_13: LevelDef = {
   failureRules: [
     {
       id: "low-value-remediation-pair",
-      predicate: LOW_VALUE_PAIR_AFTER_REVEAL,
+      predicate: {
+        id: "low-value-pair-after-ledger",
+        kind: "all",
+        predicates: [
+          {
+            id: "l13-ledger-visible-for-low-pair",
+            kind: "event-completed",
+            eventId: "loss-ledger-revealed"
+          },
+          {
+            id: "l13-cy-remedy-observed",
+            kind: "action-observed",
+            actionType: "APPLY_REMEDIATION",
+            afterEventId: "loss-ledger-revealed",
+            match: {
+              target: "developer",
+              targetId: "cy",
+              remediationId: "fanout-width"
+            }
+          },
+          {
+            id: "l13-dev-remedy-observed",
+            kind: "action-observed",
+            actionType: "APPLY_REMEDIATION",
+            afterEventId: "loss-ledger-revealed",
+            match: {
+              target: "developer",
+              targetId: "dev",
+              remediationId: "trim-mcp"
+            }
+          }
+        ]
+      },
       decisiveEventId: "low-pair-result",
       causeCode: "HIGHER_RECOVERY_OMITTED",
       message:
@@ -567,7 +796,15 @@ const LEVEL_13: LevelDef = {
     },
     {
       id: "fleet-collateral",
-      predicate: FLEET_REMEDIATION_AFTER_REVEAL,
+      predicate: {
+        id: "fleet-remediation-after-ledger",
+        kind: "action-observed",
+        actionType: "APPLY_REMEDIATION",
+        afterEventId: "loss-ledger-revealed",
+        match: {
+          target: "fleet"
+        }
+      },
       decisiveEventId: "fleet-collateral-rendered",
       causeCode: "BROAD_POLICY_COLLATERAL",
       message:
@@ -584,7 +821,13 @@ const LEVEL_13: LevelDef = {
       id: "audit-ranking",
       createBeforeEventId: "ranking-first-change",
       reason: "decision",
-      resumeLabel: "Rerank causes"
+      resumeLabel: "Reorder reports"
+    },
+    {
+      id: "audit-value-matching",
+      createBeforeEventId: "value-match-first-change",
+      reason: "decision",
+      resumeLabel: "Rematch values"
     },
     {
       id: "audit-remediation",
@@ -596,8 +839,17 @@ const LEVEL_13: LevelDef = {
 
   gate: {
     predicateId: "fleet-top-two-post-evidence-remediation",
-    evidenceRevealEventIds: ["loss-ledger-revealed"],
+    evidenceRevealEventIds: [
+      "loss-values-revealed",
+      "loss-ledger-revealed"
+    ],
     postEvidenceActionRequirements: [
+      {
+        id: "value-matching-submitted-after-values",
+        kind: "action-observed",
+        actionType: "SUBMIT_AUDIT_VALUE_MATCHES",
+        afterEventId: "loss-values-revealed"
+      },
       {
         id: "idle-remedy-after-ledger",
         kind: "action-observed",
@@ -623,6 +875,11 @@ const LEVEL_13: LevelDef = {
     ],
     behavioralRequirements: [
       {
+        id: "audit-value-matches-submitted",
+        kind: "event-completed",
+        eventId: "audit-value-matches-submitted"
+      },
+      {
         id: "top-two-recovered",
         kind: "event-completed",
         eventId: "top-two-targeted-result"
@@ -637,37 +894,140 @@ const LEVEL_13: LevelDef = {
 
   pass: st => ({
     pass:
+      st.completedEventIds.includes("audit-value-matches-submitted") &&
       st.completedEventIds.includes("top-two-targeted-result") &&
       st.completedEventIds.includes("next-month-result-revealed"),
     reason:
-      "Both largest causes were remediated on their evidenced developers after the dollar reveal.",
+      "The player completed the value diagnosis, then applied both largest remedies to their evidenced developers.",
     evidence: [
+      "value-matching-submitted-after-values",
       "idle-remedy-after-ledger",
       "delegate-remedy-after-ledger",
-      "top-two-targeted-result"
+      "top-two-recovered",
+      "simulation-completed"
     ]
   }),
 
   star2: {
-    label: "Apply the $575 remedy before the $72 remedy",
+    label: "Forecast all four causes in the correct order before values appear",
     predicate: {
-      id: "descending-remediation-order",
-      kind: "event-completed",
-      eventId: "top-two-targeted-in-order"
+      id: "exact-pre-reveal-ranking",
+      kind: "all",
+      predicates: [
+        {
+          id: "l13-rank-0-idle",
+          kind: "compare",
+          path: "auditRanking.0",
+          op: "eq",
+          value: "idle"
+        },
+        {
+          id: "l13-rank-1-delegate",
+          kind: "compare",
+          path: "auditRanking.1",
+          op: "eq",
+          value: "delegate"
+        },
+        {
+          id: "l13-rank-2-five-minute",
+          kind: "compare",
+          path: "auditRanking.2",
+          op: "eq",
+          value: "5m-band"
+        },
+        {
+          id: "l13-rank-3-mcp",
+          kind: "compare",
+          path: "auditRanking.3",
+          op: "eq",
+          value: "MCP"
+        },
+        {
+          id: "l13-star2-pass-result",
+          kind: "event-completed",
+          eventId: "top-two-targeted-result"
+        }
+      ]
     },
     reason:
-      "The post-evidence remediation order follows descending recoverable dollars."
+      "The initial report evidence was sufficient to forecast the complete loss order."
   },
 
   star3: {
-    label: "Exact targeted order with no replacement or rewind",
+    label: "Match every value and transfer the top two cleanly",
     predicate: {
-      id: "clean-fleet-audit",
-      kind: "event-completed",
-      eventId: "top-two-targeted-in-order-clean"
+      id: "exact-diagnosis-and-clean-transfer",
+      kind: "all",
+      predicates: [
+        {
+          id: "l13-star3-rank-0-idle",
+          kind: "compare",
+          path: "auditRanking.0",
+          op: "eq",
+          value: "idle"
+        },
+        {
+          id: "l13-star3-rank-1-delegate",
+          kind: "compare",
+          path: "auditRanking.1",
+          op: "eq",
+          value: "delegate"
+        },
+        {
+          id: "l13-star3-rank-2-five-minute",
+          kind: "compare",
+          path: "auditRanking.2",
+          op: "eq",
+          value: "5m-band"
+        },
+        {
+          id: "l13-star3-rank-3-mcp",
+          kind: "compare",
+          path: "auditRanking.3",
+          op: "eq",
+          value: "MCP"
+        },
+        {
+          id: "l13-match-v575-idle",
+          kind: "compare",
+          path:
+            "auditValueMatching.assignmentsByValueId.loss-v575",
+          op: "eq",
+          value: "idle"
+        },
+        {
+          id: "l13-match-v72-delegate",
+          kind: "compare",
+          path:
+            "auditValueMatching.assignmentsByValueId.loss-v72",
+          op: "eq",
+          value: "delegate"
+        },
+        {
+          id: "l13-match-v30-five-minute",
+          kind: "compare",
+          path:
+            "auditValueMatching.assignmentsByValueId.loss-v30",
+          op: "eq",
+          value: "5m-band"
+        },
+        {
+          id: "l13-match-v15-mcp",
+          kind: "compare",
+          path:
+            "auditValueMatching.assignmentsByValueId.loss-v15",
+          op: "eq",
+          value: "MCP"
+        },
+        {
+          id: "l13-clean-targeted-order",
+          kind: "event-completed",
+          eventId: "top-two-targeted-in-order-clean"
+        }
+      ]
     },
     reason:
-      "The player transferred the revealed evidence directly into a clean targeted plan."
+      "The player diagnosed every unlabeled value and transferred that evidence into the clean targeted plan without replacement or rewind."
   },
 
   referenceCfg: {
@@ -722,9 +1082,11 @@ const LEVEL_13: LevelDef = {
 
 `AUDIT_REPORT_UNITS`, `AUDIT_CONTEXTS`, and `AUDIT_PREFIX_STACKS` instantiate only the nine request IDs and token buckets in §6. They introduce no additional priced requests.
 
-`referenceCfg` maps, through the `AuditCauseSeed.remediationIds`, to targeted Ari and Bea remedies. `antiCfg` maps to targeted Cy and Dev remedies. Target bindings are scenario evidence, not extra `Config` keys.
+Each `AuditCauseSeed.valueId` is opaque. Presentation looks up its display amount only after `loss-values-revealed`; `AuditValueMatchingState` stores IDs rather than comparing floating-point dollar values.
 
-The `$90.00` `budgetUsd` is the month spend budget from `C31`. The `$692.00` amount exists only as the hidden-loss decomposition from `C17`; it is never assigned to `budgetUsd`, `Wallet.initialUsd`, or `Wallet.remainingUsd`.
+`referenceCfg` maps through `AuditCauseSeed.remediationIds` to targeted Ari and Bea remedies. `antiCfg` maps to targeted Cy and Dev remedies. Target bindings are scenario evidence, not extra `Config` keys.
+
+The scalar `$90.00` `budget` is the month spend budget from `C31`. The `$692.00` amount exists only as the hidden-loss decomposition from `C17`; it is never assigned to `budget` or `wallet`.
 
 ## 6. Pricing walkthrough
 
@@ -770,13 +1132,14 @@ Traceability:
 
 The sampled request spend and hidden-loss ledger are different quantities:
 
-- Month `Budget.capUsd`: `$90.00` (`C31`).
-- Sampled API spend: `$6.69987735`.
+- Scalar month `budget`: `$90.00` (`C31`).
+- Sampled API spend and `attemptMetrics.spentUsd`: `$6.69987735`.
+- Scalar `wallet` after ingest: `$83.30012265`.
 - Baseline hidden loss: `$692.00` (`C17`).
 - Three-star reference: recover `$647.00`; remaining hidden loss `$45.00`; collateral `$0.00`.
 - Anti-pattern: recover `$45.00`; remaining hidden loss `$647.00`; excess hidden loss versus reference `$602.00`.
 
-No hidden-loss recovery mutates `Wallet`. No positive request renders as `$0.0000`; exact values remain unrounded in state.
+No hidden-loss recovery mutates `wallet`. No positive request renders as `$0.0000`; exact values remain unrounded in state.
 
 ## 7. Tape sequence
 
@@ -803,11 +1166,13 @@ Per-report presentation:
 5. Cy renders wave one cold, waves two and three warm, and wave four cold after the shared `5m` entry expires (`C27`).
 6. Dev renders the `16,295`-token `PB_MCP` rewrite (`C24`).
 7. Eli renders one legitimate output-heavy request and the separate monthly `8,800,000`-output-token headline.
-8. After `fleet-biggest-lever` commits, causal labels animate onto the four brackets: `$575`, `$72`, `$30`, `$15`.
-9. Aha frame: Eli’s monthly token headline remains largest while Ari’s smaller-looking request evidence receives the largest recoverable-dollar bracket.
-10. During the result reveal, chosen causal brackets fold to `$0.00`; untouched brackets remain.
-11. A fleet-wide remedy paints four collateral markers before `FREEZE_FAILURE`.
-12. Reference and anti-pattern overlays remain locked until `COMPLETE_ATTEMPT`.
+8. After `fleet-biggest-lever` commits, the four dollar tiles animate into a neutral tray in order `$30`, `$575`, `$15`, `$72`; no cause label appears.
+9. During value matching, player-created lines connect tiles to cause cards without correctness color.
+10. After `SUBMIT_AUDIT_VALUE_MATCHES`, the authored cause-dollar joins animate. Incorrect submitted joins remain briefly dotted so the correction is legible.
+11. Aha frame: Eli’s monthly token headline remains visually largest while Ari’s quieter evidence receives the `$575.00` bracket.
+12. During result reveal, chosen causal brackets fold to `$0.00`; untouched brackets remain.
+13. A fleet-wide remedy paints four collateral markers before the actual-attempt `FREEZE_FAILURE`.
+14. Reference and anti-pattern overlays remain locked until `COMPLETE_ATTEMPT`.
 
 `UI_TAPE_RENDERER` uses the canonical USD-proportional `WireSegment` geometry:
 
@@ -821,9 +1186,15 @@ The output segment is always included:
 outputUsd = outTok × 5 × MODEL_IN[model] / 1,000,000
 ```
 
-For `ari-warm` and `eli-warm`, output contributes `$0.66000000 / $0.68842140 = 95.8715%` of the row’s visual width (`C1`, `C3`, `C28`). Output labels may be delayed, but `outTok` is never omitted from bar geometry. This prevents the output-heavy capstone from visually implying that cache input is most of the bill.
+For `ari-warm` and `eli-warm`, output contributes:
 
-Every priced tape row maps one-to-one to a `LedgerRow`. Monthly brackets, token headlines, recoverable-dollar annotations, and collateral markers are annotations, never extra requests.
+```text
+$0.66000000 / $0.68842140 = 95.8715%
+```
+
+of the row’s visual width (`C1`, `C3`, `C28`). Output labels may be delayed, but `outTok` is never omitted from bar geometry.
+
+Every priced tape row maps one-to-one to a `LedgerRow`. Monthly brackets, value tiles, token headlines, recoverable-dollar annotations, matching lines, and collateral markers are annotations, never extra requests.
 
 ## 8. Prediction prompts
 
@@ -831,21 +1202,21 @@ Every priced tape row maps one-to-one to a `LedgerRow`. Monthly brackets, token 
 
 Question:
 
-**“Which cause will return the most dollars if fixed next month?”**
+**“Will the biggest token headline also hide the biggest recoverable loss?”**
 
 Options:
 
-- `idle` — **“Ari’s idle rebuilds”**
-- `delegate` — **“Bea’s changing prompts”**
-- `5m-band` — **“Cy’s late waves”**
-- `MCP` — **“Dev’s tool schemas”**
-- `tokens` — **“Eli’s token mountain”**
+- `same-report` — **“Yes—the largest token total will also lead the loss.”**
+- `different-report` — **“No—a quieter report will hide more.”**
+- `near-tie` — **“The top two will be nearly tied.”**
 
-Correct option: `idle`.
+Correct option: `different-report`.
 
 Commit copy: **“Lock my call.”**
 
-The loss-ledger reveal is disabled until commitment. Correctness affects only the post-reveal comparison caption.
+The value reveal is disabled until commitment. The revealed answer distinguishes visible volume from recoverable loss without identifying which cause owns any of the four dollar values.
+
+Correctness affects only the post-reveal comparison caption.
 
 ### `fleet-next-month`
 
@@ -855,9 +1226,9 @@ Question:
 
 Options:
 
-- `targeted-top-two` — **“Remove the two largest recoverable losses”**
-- `some-savings` — **“Save money, but leave a larger cause untouched”**
-- `collateral` — **“Recover a leak but spread policy cost across the fleet”**
+- `targeted-top-two` — **“Remove the two largest recoverable losses.”**
+- `some-savings` — **“Save money, but leave a larger cause untouched.”**
+- `collateral` — **“Recover a leak but spread policy cost across the fleet.”**
 
 The correct option derives from the submitted remediation plan. For the reference plan it is `targeted-top-two`.
 
@@ -867,9 +1238,9 @@ No outcome bracket or result tape animates before commitment. Correctness never 
 
 ### Low-value remediation pair
 
-Reachable route: after the dollar reveal, the player uses both targeted slots on Cy and Dev.
+Reachable route: after `loss-ledger-revealed`, the player uses both targeted slots on Cy and Dev.
 
-Decisive event: the first result frame compares the submitted two-slot plan with the visible top-two alternative.
+Decisive actual-attempt event: `low-pair-result`, the first result frame for the submitted two-slot plan.
 
 Visible economics:
 
@@ -898,9 +1269,9 @@ Destination: `audit-remediation`.
 
 ### Over-broad policy
 
-Reachable route: after the dollar reveal, the player applies any matching remedy to the fleet rather than its evidenced developer.
+Reachable route: after `loss-ledger-revealed`, the player confirms any matching remedy with `target: "fleet"` instead of its evidenced developer.
 
-Decisive event: the atomic `APPLY_REMEDIATION` action paints its first unaffected report and shows all four collateral markers.
+Decisive actual-attempt event: `fleet-collateral-rendered`, produced by the same atomic `APPLY_REMEDIATION` action that paints the first unaffected report and all four collateral markers.
 
 Visible economics:
 
@@ -925,48 +1296,79 @@ Rewind copy: **“Target this fix.”**
 
 Destination: `audit-remediation`.
 
-Both freezes preserve report inspection, the submitted ranking, and the revealed dollar evidence. Neither predicate may inspect prediction correctness or the correctness of the pre-reveal ranking.
+Both freezes preserve report inspection, the submitted ranking, the submitted value matching, and revealed dollar evidence. Neither predicate inspects either prediction’s selection or correctness.
+
+No `REQUEST_COUNTERFACTUAL`, `REVEAL_COUNTERFACTUAL`, reference event, or anti-pattern event may dispatch either freeze.
 
 ## 10. Gate & stars
 
-The behavioral pass predicate is:
+The behavioral pass condition is:
 
 ```text
-loss ledger revealed
-AND, after that reveal:
+"loss-values-revealed" completed
+AND
+SUBMIT_AUDIT_VALUE_MATCHES observed after "loss-values-revealed"
+AND
+"audit-value-matches-submitted" completed
+AND
+"loss-ledger-revealed" completed
+AND, after "loss-ledger-revealed":
   targeted keep-warm-policy applied to Ari
 AND
   targeted normalize-delegation applied to Bea
 AND
-  next-month result revealed
+"top-two-targeted-result" completed
 AND
-  recoveredUsd >= $647.00
-AND
-  collateralUsd <= $0.00
+"next-month-result-revealed" completed
 ```
 
-The exact pre-reveal ranking is not a pass condition. Either prediction may be wrong. Budget alone can never pass the level.
+The gate and `pass(st)` read only canonical reducer state and legal `StatePredicate` forms:
 
-- **1 star:** the behavioral pass predicate above, in either targeted remediation order; remedy replacement or rewind is allowed.
-- **2 stars:** 1-star conditions plus post-evidence remediation order `idle → delegate`.
-- **3 stars:** 2-star conditions plus no remedy replacement and no rewind after `loss-ledger-revealed`.
+```ts
+const pass = (st: ReducerState): GateResult => ({
+  pass:
+    st.completedEventIds.includes("audit-value-matches-submitted") &&
+    st.completedEventIds.includes("top-two-targeted-result") &&
+    st.completedEventIds.includes("next-month-result-revealed"),
+  reason:
+    "The player completed the value diagnosis, then applied both largest remedies to their evidenced developers.",
+  evidence: [
+    "value-matching-submitted-after-values",
+    "idle-remedy-after-ledger",
+    "delegate-remedy-after-ledger",
+    "top-two-recovered",
+    "simulation-completed"
+  ]
+});
+```
 
-All scoring evidence comes from `APPLY_REMEDIATION` or later post-evidence events. `COMMIT_PREDICTION`, prediction option identity, prediction correctness, and the submitted pre-reveal ranking do not appear in the gate, stars, failure predicates, wallet mutations, or `pass(st)`.
+No invented recovery or collateral state path appears in the gate. Exact recovery and collateral values are deterministic consequences of the observed `APPLY_REMEDIATION` actions and authored `AuditCauseSeed`s.
+
+- **1 star:** pass the behavioral gate. Ranking or value-match accuracy may be imperfect; both predictions may be wrong.
+- **2 stars:** pass and submit the exact pre-reveal ranking `idle → delegate → 5m-band → MCP`.
+- **3 stars:** satisfy the two-star ranking, match all four unlabeled values exactly, and apply targeted Ari then Bea remedies without replacement or rewind after `loss-ledger-revealed`.
+
+The pre-reveal ranking therefore has a truthful scoring consequence: its accuracy controls the second star. It never controls passage, wallet, or failure.
+
+`COMMIT_PREDICTION`, selected prediction option IDs, and prediction correctness appear in no gate, star, failure predicate, wallet mutation, or `pass(st)` decision.
 
 ## 11. Toasts
 
 | Trigger | Exact copy |
 |---|---|
-| First report opens | **“Reports show activity. Your ranking forecasts recoverable dollars.”** |
-| Eli opens | **“Big token totals can be real work. Diagnose before calling them waste.”** |
-| Ranking submit attempted with fewer than four causes | **“Rank every cause before opening the loss ledger.”** |
-| Ranking locks | **“Forecast locked. Make one call before the dollars open.”** |
-| Loss ledger reveals | **“$575 of $692 hides in one cause.”** (`C14`, `C17`) |
-| Wrong pre-reveal forecast reveals | **“Forecast recorded. The remedies—not the guess—show what you learned.”** |
-| Remediation controls unlock | **“Evidence is open. Spend two remedies.”** |
+| First report opens | **“Reports show activity. Look for frequency, identity, timing, and load.”** |
+| Eli opens | **“Big token totals can be real work. Keep reading.”** |
+| Ranking submit attempted with fewer than four causes | **“Place all four reports before locking the order.”** |
+| Ranking locks | **“Report order locked. Make one call before the ledger opens.”** |
+| Unlabeled values reveal | **“Four values. No labels. Match each one to its report evidence.”** |
+| First value moves | **“Each value and cause can be used once.”** |
+| Value submission attempted before a complete bijection | **“Every value needs one cause.”** |
+| Exact value matching reveals | **“All four diagnoses hold.”** |
+| Inexact value matching reveals | **“Compare the dotted calls with the evidence-backed joins.”** |
+| Remediation controls unlock | **“Evidence is joined. You have two remedies.”** |
 | Targeted remedy matches its developer | **“Target matched: one remedy touches one causal bucket.”** |
 | Targeted remedy mismatches | **“No matching evidence in this report.”** |
-| Fleet-wide remedy selected | **“Fleet-wide reaches four unaffected developers too.”** |
+| Fleet scope opens | **“Fleet-wide reaches four unaffected developers too.”** |
 | Reference simulation removes the idle bucket | **“272 rebuilds removed from next month.”** (`C13`) |
 | Second reference remedy lands | **“Top two recovered: $647.00. Remaining hidden loss: $45.00.”** |
 | Anti-pattern result | **“You fixed $45.00 and left $647.00 recoverable.”** |
@@ -978,48 +1380,71 @@ Real-browser click-through must assert:
 
 1. The first report is clickable within two seconds; no Learn screen precedes it.
 2. `ENTER_LEVEL` uses `"13-fleet-audit"`, and `concept.id` plus all twelve prerequisites resolve through the canonical registries.
-3. `budgetUsd`, `Wallet.initialUsd`, and `Budget.capUsd` are `$90.00` (`C31`), never `$692.00`.
-4. The four hidden-loss buckets sum to `$692.00` (`C17`) and never mutate `Wallet`.
-5. The scripted ingest creates exactly nine `LedgerRow`s and exactly nine priced tape rows.
-6. The nine rows spend exactly `$6.69987735`, leaving `$83.30012265` in the month wallet.
-7. Every real request has `usd > 0`; no positive value renders as `$0.0000`.
-8. Each request total exactly matches `PRICE_REQUEST` using `C1` and `C3`.
-9. `UI_TAPE_RENDERER` rows equal ledger rows in count, order, request ID, token buckets, and USD.
-10. Every tape segment uses `segment.usd / row.usd`; `outTok` contributes to every row’s geometry.
-11. Static final bars still show output width without requiring hover.
-12. No recoverable dollar, canonical ordering, correct prediction, remedy answer, or Eli `$0.00` appears before `SUBMIT_AUDIT_RANKING` and `COMMIT_PREDICTION("fleet-biggest-lever")`.
-13. `SET_AUDIT_RANKING` accepts only a four-cause permutation.
-14. `REVEAL_PREDICTION` is rejected before its matching `COMMIT_PREDICTION`.
-15. An incorrect pre-reveal ranking changes no score, star, wallet, failure, or gate result.
-16. An incorrect `fleet-biggest-lever` or `fleet-next-month` answer changes no score, star, wallet, failure, or gate result.
-17. Remedies remain disabled until `loss-ledger-revealed`.
-18. Two and only two remediation slots may be committed.
-19. Each targeted remedy/developer pair deterministically produces the specified recovery; mismatches recover zero and create no fake `LedgerRow`.
-20. Ari’s bracket contains `272` rebuilds and rolls up to `$575.00`.
-21. The causal order is exactly `idle > delegate > 5m-band > MCP`.
-22. Eli’s `8,800,000` output-token headline is visually largest, while no cache remedy is credited with recovering legitimate output.
-23. Targeted Ari and Bea remedies applied after the reveal pass even if the earlier ranking and both predictions were wrong.
-24. A correct pre-reveal ranking followed by wrong remediations fails.
-25. Targeted `5m-band + MCP` freezes with `actualUsd = $647.00`, `validAlternativeUsd = $45.00`, and a visible `$602.00` difference.
-26. A fleet-wide remedy freezes with `actualUsd = $160.00`, `validAlternativeUsd = $0.00`, and four visible `$40.00` collateral markers.
-27. No harmless, equal-cost, or cheaper route dispatches `FREEZE_FAILURE`.
-28. `REWIND_TO_CHECKPOINT("audit-remediation")` preserves the locked ranking and revealed evidence.
-29. `REWIND_TO_CHECKPOINT("audit-ranking")` unlocks ranking while preserving the ingested request sample.
-30. The reference run is winnable and yields `$647.00` recovery, `$45.00` remaining hidden loss, and `$0.00` collateral.
-31. The anti-pattern yields `$45.00` recovery, `$647.00` remaining hidden loss, and `$602.00` excess loss versus reference.
-32. Reference and anti-pattern overlays cannot reveal before `COMPLETE_ATTEMPT`.
-33. Two stars require the post-evidence order `idle → delegate`; three stars add no replacement or rewind.
-34. Keyboard and pointer paths produce equivalent ranking, prediction, remediation, and rewind actions.
-35. Reduced-motion mode produces the same final evidence and exact values.
-36. Every authoritative quantity has one implementable value; no superseded price, alternate budget, or unreachable result branch appears.
-37. The pre-reveal ranking remains a live evidence-based decision: all four reports expose causal frequency, identity, timing, or load evidence without dollar answers.
+3. `conceptScope.kind === "capstone-integration"`.
+4. `conceptScope.reusedConceptIds` exactly equals `prerequisiteConceptIds`; no undeclared concept is integrated.
+5. Scalar `budget` and initial scalar `wallet` are `$90.00` (`C31`), never `$692.00`.
+6. The four hidden-loss buckets sum to `$692.00` (`C17`) and never mutate `wallet`.
+7. The scripted ingest creates exactly nine `LedgerRow`s and exactly nine priced tape rows.
+8. The nine rows spend exactly `$6.69987735`, set `attemptMetrics.spentUsd` to `$6.69987735`, and leave scalar `wallet = $83.30012265`.
+9. After completion, `attemptResult.spentUsd = $6.69987735`.
+10. Every real request has `usd > 0`; no positive value renders as `$0.0000`.
+11. Each request total exactly matches `PRICE_REQUEST` using `C1` and `C3`.
+12. `UI_TAPE_RENDERER` rows equal ledger rows in count, order, request ID, token buckets, and USD.
+13. Every tape segment uses `segment.usd / row.usd`; `outTok` contributes to every row’s geometry.
+14. Static final bars still show output width without requiring hover.
+15. No recoverable dollar, canonical ordering, correct value matching, remedy answer, or Eli `$0.00` appears before `SUBMIT_AUDIT_RANKING` and `COMMIT_PREDICTION("fleet-biggest-lever")`.
+16. `SET_AUDIT_RANKING` accepts only a four-cause permutation.
+17. `REVEAL_PREDICTION` is rejected before its matching `COMMIT_PREDICTION`.
+18. `loss-values-revealed` displays exactly `$30.00`, `$575.00`, `$15.00`, and `$72.00` in that order.
+19. Every revealed dollar uses its opaque `AuditCauseSeed.valueId`; none is visually labeled or aligned to a cause before `SUBMIT_AUDIT_VALUE_MATCHES`.
+20. `SET_AUDIT_VALUE_MATCH` writes only `auditValueMatching.assignmentsByValueId[valueId]`.
+21. Each value and cause can be used once; submission requires a complete bijection.
+22. The exact authored mapping is `loss-v575 → idle`, `loss-v72 → delegate`, `loss-v30 → 5m-band`, and `loss-v15 → MCP`.
+23. An inaccurate value matching reveals corrections but changes no wallet or failure state.
+24. The pre-reveal ranking does not affect passage, wallet, or failure.
+25. The exact pre-reveal ranking is required for two stars, so ranking accuracy has a truthful scoring consequence.
+26. An incorrect `fleet-biggest-lever` or `fleet-next-month` prediction changes no score, star, wallet, failure, or gate result.
+27. Remedies remain disabled until `loss-ledger-revealed`.
+28. Two and only two remediation slots may be committed.
+29. Remedy choice and scope confirmation are visually separate, keyboard-reachable sub-beats.
+30. Each targeted remedy/developer pair deterministically produces the specified recovery; mismatches recover zero and create no fake `LedgerRow`.
+31. Ari’s bracket contains `272` rebuilds and rolls up to `$575.00`.
+32. The causal order is exactly `idle > delegate > 5m-band > MCP`.
+33. Eli’s `8,800,000` output-token headline is visually largest, while no cache remedy is credited with recovering legitimate output.
+34. Targeted Ari and Bea remedies applied after `loss-ledger-revealed` pass even if the earlier ranking, value matching, and both predictions were wrong.
+35. Exact ranking alone followed by wrong remediations fails.
+36. Exact value matching alone followed by wrong remediations fails.
+37. Targeted `5m-band + MCP` freezes during the actual attempt with `actualUsd = $647.00`, `validAlternativeUsd = $45.00`, and a visible `$602.00` difference.
+38. A fleet-wide remedy freezes during the actual attempt with `actualUsd = $160.00`, `validAlternativeUsd = $0.00`, and four visible `$40.00` collateral markers.
+39. No harmless, equal-cost, or cheaper route dispatches `FREEZE_FAILURE`.
+40. No counterfactual, reference, or anti-pattern request or reveal dispatches `FREEZE_FAILURE`.
+41. `REWIND_TO_CHECKPOINT("audit-remediation")` preserves ranking, value matching, and labeled loss evidence.
+42. `REWIND_TO_CHECKPOINT("audit-value-matching")` preserves the reports and unlabeled values but removes submitted assignments and corrected joins.
+43. `REWIND_TO_CHECKPOINT("audit-ranking")` unlocks ranking while preserving the ingested request sample.
+44. The reference run is winnable and yields `$647.00` recovery, `$45.00` remaining hidden loss, and `$0.00` collateral.
+45. The anti-pattern yields `$45.00` recovery, `$647.00` remaining hidden loss, and `$602.00` excess loss versus reference.
+46. Reference and anti-pattern overlays cannot reveal before `COMPLETE_ATTEMPT`.
+47. Two stars require the exact pre-reveal ranking.
+48. Three stars require the exact ranking, exact `AuditValueMatchingState` assignments, and `top-two-targeted-in-order-clean`.
+49. Every gate, star, and failure predicate uses a declared `ReducerState` path and a legal `StatePredicate` kind or comparison op.
+50. No predicate uses `op: "contains"` or an object-shaped wallet/budget path.
+51. Keyboard and pointer paths produce equivalent ranking, value-matching, prediction, remediation, and rewind actions.
+52. Reduced-motion mode produces the same final evidence and exact values.
+53. Every authoritative quantity has one implementable value; no superseded price, alternate budget, or unreachable result branch appears.
+54. The diagnosis remains evidence-based: all four reports expose causal frequency, identity, timing, or load evidence without their dollar answers.
+55. `title` and `objective` contain none of `concept.solutionVocabulary`, satisfying mandatory QA assertion #21.
+56. The cold-open does not disclose the matching, canonical ordering, winning targets, or collateral outcome.
 
 ## 13. Reference-bar justification
 
-The screen opens as an unexplained, tactile audit desk: the player handles reports before receiving terminology or aggregate answers. Each report supplies enough causal evidence to support a reasoned forecast, while Eli’s legitimate output mountain creates a tempting but falsifiable visual heuristic. The player must commit both a complete ranking and a largest-lever prediction before the dollars animate.
+The screen opens as an unexplained, tactile audit desk: the player handles reports before receiving aggregate answers. Each report supplies enough causal evidence to support a reasoned forecast, while Eli’s legitimate output mountain creates a tempting but falsifiable visual heuristic.
 
-The reveal does not punish the forecast. It turns the newly visible loss ledger into a transfer challenge: two scarce remedies must be attached to concrete developers. That post-evidence action—not the pre-reveal guess—controls passage. Targeting a lower-value pair produces a visible `$647.00` versus `$45.00` remaining-loss comparison, while an over-broad policy exposes `$160.00` of real collateral at the exact action that causes it. Both failures rewind locally without replaying report inspection.
+The reveal shows four dollar values without labels, developer adjacency, colors, or cause icons. The player must connect each value to frequency, identity, timing, or load evidence. This makes the capstone decision a diagnosis rather than a mechanical sort of already-labeled numbers. The exact initial ranking also controls the second star, so the copy does not oversell a consequence-free interaction.
 
-The request tape remains economically truthful in an output-heavy capstone because `outTok` contributes its `5x` price to every bar’s geometry. The `$90.00` wallet separately tracks priced API requests, while the `$692.00` audit ledger tracks recoverable organizational loss. Reference and anti-pattern outcomes appear only after the player owns an attempt.
+After the diagnosis is submitted, two scarce remedies transfer the revealed evidence into action. Targeting a lower-value pair produces a visible `$647.00` versus `$45.00` remaining-loss comparison. Confirming fleet scope exposes `$160.00` of collateral at the actual action that causes it. Both failures rewind locally without replaying mastered report inspection.
 
-Significant assumption: the `$72.00`, `$30.00`, and `$15.00` bucket split, the `$40.00` per-developer collateral, and Eli’s `200` monthly requests are calibrated `[FICTION]`. They preserve the `C17` total and ordering while keeping the remediation and targeting consequences visibly distinct.
+L13 explicitly uses the formal `ConceptScope` capstone exemption. The scope selector and collateral consequence are a legible sub-beat that integrates declared prerequisite reasoning; they do not silently add a second undeclared concept. The exemption does not relax surprise protection, economic truth, prediction non-punishment, causal failure, or post-evidence gating.
+
+The request tape remains economically truthful in an output-heavy capstone because `outTok` contributes its `5x` price to every bar’s geometry. The scalar `$90.00` wallet separately tracks priced API requests, while the `$692.00` audit ledger tracks recoverable organizational loss. Reference and anti-pattern outcomes appear only after the player owns an attempt and remain informational.
+
+Significant assumption: the `$72.00`, `$30.00`, and `$15.00` bucket split, the `$40.00` per-developer collateral, and Eli’s `200` monthly requests are calibrated `[FICTION]`. They preserve the `C17` total and ordering while keeping diagnosis and targeting consequences visibly distinct.

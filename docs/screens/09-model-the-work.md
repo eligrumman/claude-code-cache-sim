@@ -647,6 +647,7 @@ If an invalid client forces `COMPLETE_ATTEMPT` before `l9-transfer-output-cost`,
 - **Pass / 1 star:** After `l9-reveal-review`, the player dispatches `BEGIN_TRANSFER { challengeId: "l9-cost-transfer" }`, then acknowledges `l9-transfer-output-cost`.
 - **2 stars:** Pass plus acknowledge `l9-cause-output-rate` after Codegen evidence is visible.
 - **3 stars:** Two-star predicate, first attempt, and authoritative spend at or below `$0.74`.
+- **3-star threshold — Reference-run ceiling:** `$0.74` is the cent-aligned ceiling above the authoritative Sonnet reference spend of `$0.7335`, preventing display rounding from denying the fixed reference route.
 - Spending below the threshold without the post-evidence transfer action does not pass.
 - No gate or star reads a prediction option, prediction correctness, or equality with `correctOptionId`.
 - Every prediction sequence may be entirely wrong while the same post-evidence actions still earn three stars.

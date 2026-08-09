@@ -485,9 +485,8 @@ const L6: LevelDef = {
     label: "Named the tradeoff",
     predicate: {
       id: "l6-acknowledged-cause",
-      kind: "compare",
+      kind: "includes",
       path: "acknowledgedExplanationIds",
-      op: "contains",
       value: "monday-premium-no-rebuild"
     },
     reason:

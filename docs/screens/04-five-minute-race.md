@@ -7,15 +7,20 @@
 - **tier:** `1`
 - **objective:** “Eight jobs are queued. Choose how many launch together, then beat the clock.”
 - **concept.id:** `shared-subagent-window`
+- **conceptScope:** `{ kind: "single", reusedConceptIds: [] }`
+- **concept.solutionVocabulary:** `["cache", "shared prefix", "coordinator", "fan-out", "warm read", "cold write", "four-at-a-time", "width 4", "fewer waves"]`
 - **privateDesignerSummary:** Short-lived shared subagent prefixes make serial-wave count valuable, while coordinating too many simultaneous jobs has its own priced cost.
 - **prerequisiteConceptIds:** `["cache-expiry", "prefix-reuse"]`
 - **postRevealRule:** “Fewer waves preserve more shared-prefix reuse, but launching everything together can create expensive coordination.”
 - **unlock:** `width`
 
-The five-minute expiry, the cheapest width, and the direction of the tradeoff remain hidden until the player completes a priced attempt.
+The five-minute expiry, coordinator pressure, cheapest width, and direction of the tradeoff remain hidden until priced evidence appears. The title and objective frame the situation without using any registered solution vocabulary.
 
 ## 2. Objects used
 
+- `ReducerState`
+- `AttemptMetrics`
+- `AttemptResult`
 - `Request`
 - `PricedRequest`
 - `PrefixStack`
@@ -31,6 +36,10 @@ The five-minute expiry, the cheapest width, and the direction of the tradeoff re
 - `Budget`
 - `PRICE_REQUEST`
 - `RESOLVE_PREFIX`
+- `FailureRuleDef`
+- `GateDef`
+- `StarDef`
+- `StatePredicate`
 - `UI_TAPE_RENDERER`
 - `UI_TTL_DRAIN_BAR`
 - `UI_PREFIX_STACK_VISUALIZER`
@@ -54,21 +63,21 @@ No instruction card.
 | `0.0s` `[ESTIMATE]` | Eight face-down job cards snap into a queue beneath: **“Eight jobs. One shared setup. The clock starts when the first job leaves.”** |
 | `0.4s` `[ESTIMATE]` | An undrained `UI_TTL_DRAIN_BAR` appears with `5:00`; it is not yet labeled “TTL.” |
 | `0.8s` `[ESTIMATE]` | The width control appears: **“Launch together: 1 2 3 4 5 6 7 8”**. Default `1`; keyboard focus lands on it. |
-| `1.2s` `[ESTIMATE]` | Secondary copy: **“Larger groups leave fewer groups waiting. Every group also needs a coordinator.”** This exposes the existence of a tradeoff without revealing its direction or optimum. |
-| `≤2.0s` `[ESTIMATE]` | The player can change width. Cards regroup into deterministic waves; no requests, colors, prices, or wallet mutations occur. |
-| first width change | Primary button becomes **“Lock prediction”**. |
+| `1.2s` `[ESTIMATE]` | Secondary copy: **“Larger groups leave fewer groups waiting.”** |
+| `≤2.0s` `[ESTIMATE]` | The player can change or confirm the width. Cards regroup into deterministic waves; no requests, colors, prices, or wallet mutations occur. |
+| first width confirmation | Primary button becomes **“Lock prediction.”** |
 
-Pre-play UI must not show the cheapest width, reference tape, cold-write count, coordinator formula, or any “wider is cheaper”/“narrower is cheaper” claim.
+The cold open does not mention coordinators or their cost. Pre-play UI must not show the reference tape, cheapest width, cold-write count, coordinator formula, or any “wider is cheaper”/“narrower is cheaper” claim.
 
 ## 4. Exact event sequence
 
-The authored slow-race scenario uses six simulated minutes between wave starts. Because cache reads refresh idle TTL, each wave may reuse within itself, but the next wave begins after the five-minute entry has genuinely expired. All dollar symbols below resolve only through the single authoritative walkthrough in §6.
+The authored scenario uses six simulated minutes between wave starts. A same-wave read refreshes the shared entry, but no work occurs during the six-minute inter-wave gap. The next wave therefore begins after the five-minute idle lifetime has expired. All prices resolve only through `PRICE_REQUEST` and the authoritative walkthrough in §6.
 
 1. **`e1-enter` — Enter the level**
    - Trigger: route opens.
    - Action: `ENTER_LEVEL { type: "ENTER_LEVEL", levelId: "04-five-minute-race" }`.
-   - Mutates: `ReducerState`, `Clock`, `Wallet`, `Budget`, queued `UnitInstance`s, nine `ExecutionContext`s, and seeded `PrefixStack`s.
-   - Numbers: eight jobs `[FICTION]`; `BASE_IDENTICAL=26,237 tok` (`C10`); subagent TTL `5m` (`C1`).
+   - Mutates: `ReducerState`, scalar `wallet`, scalar `budget`, queued `UnitInstance`s, nine `ExecutionContext`s, seeded `PrefixStack`s, `attemptMetrics`, and attempt-local evidence.
+   - Numbers: eight jobs `[FICTION]`; `BASE_IDENTICAL=26,237 tok` (`C10`); subagent idle lifetime `5m` (`C1`).
 
 2. **`e2-checkpoint` — Preserve the launch decision**
    - Trigger: first width interaction.
@@ -77,7 +86,7 @@ The authored slow-race scenario uses six simulated minutes between wave starts. 
    - Economic effect: none.
 
 3. **`e3-set-width` — Group the queue**
-   - Trigger: player selects width `w`.
+   - Trigger: player selects or confirms width `w`.
    - Action: `SET_FANOUT_WIDTH { type: "SET_FANOUT_WIDTH", width: w }`.
    - Mutates: `cfg.width` and deterministic wave grouping.
    - Numbers: `w ∈ {1…8}`; wave sizes are the ordered partition of eight jobs into groups of at most `w`; `waveCount=ceil(8/w)`.
@@ -89,11 +98,11 @@ The authored slow-race scenario uses six simulated minutes between wave starts. 
      1. `OPEN_PREDICTION { type: "OPEN_PREDICTION", promptId: "L4-last-wave-color" }`
      2. `SELECT_PREDICTION { type: "SELECT_PREDICTION", promptId: "L4-last-wave-color", optionId }`
      3. `COMMIT_PREDICTION { type: "COMMIT_PREDICTION", promptId: "L4-last-wave-color" }`
-   - Mutates: `phase`, `prediction`.
+   - Mutates: `phase` and `prediction`.
    - Economic effect: none. Launch is unavailable until commitment.
 
-5. **`e5-send-coordinator` — Price a wave’s coordination**
-   - Trigger: a committed launch reaches the start of a wave containing `s` jobs.
+5. **`e5-send-coordinator` — Price the current group’s coordination**
+   - Trigger: a committed launch reaches a wave containing `s` jobs.
    - Action: `SEND_REQUEST { type: "SEND_REQUEST", request: coordinatorRequest }`.
    - Request:
      - context: `MAIN_SESSION_CONTEXT` `"L4-coordinator"`;
@@ -101,44 +110,59 @@ The authored slow-race scenario uses six simulated minutes between wave starts. 
      - `freshInputTok=COORD_INPUT_TOK`;
      - `expectedOutputTok=COORD_OUT(s)`;
      - `sentAtMin=waveOrdinal × WAVE_GAP_MIN`.
-   - Mutates: one `Request`, one `LedgerRow`, `lastRequests`, `Wallet`, and tape payload.
-   - The request is a real width cost. Its output grows superlinearly with simultaneous group size and is priced with the `outTok × 5` model (`C1`, `C3`).
+   - Mutates: one `Request`, one `LedgerRow`, `lastRequests`, scalar `wallet`, `attemptMetrics.spentUsd`, `attemptMetrics.requestCount`, and tape payload.
+   - The first occurrence reveals the coordinator card and `L4-coordinator-output` toast. Coordinator output grows superlinearly with group size and is priced at the Sonnet output rate (`C1`, `C3`).
 
-6. **`e6-send-wave-jobs` — Send the jobs**
-   - Trigger: the coordinator request resolves.
-   - Action: one ordered `SEND_REQUEST` per job in the wave.
-   - First job in every wave:
+6. **`e6-send-wave-jobs` — Send each job in the current wave**
+   - Trigger: the current wave’s coordinator resolves.
+   - Action: one ordered `SEND_REQUEST` per job. Each concrete event instance is named `e6-send-L4-J{n}`.
+   - First worker in a wave:
      - `readTok=0`;
      - `writeTok=BASE_IDENTICAL`;
      - `inputTok=WORK_IN`;
      - `outTok=WORK_OUT`;
      - `writeTier="5m"`.
-   - Remaining jobs at the same `sentAtMin`:
+   - Remaining workers at the same `sentAtMin`:
      - `readTok=BASE_IDENTICAL`;
      - `writeTok=0`;
      - `inputTok=WORK_IN`;
      - `outTok=WORK_OUT`.
-   - Mutates: each job’s `Request`, shared-prefix `CacheEntry`, one `LedgerRow` per request, `Wallet`, counts, and tape.
-   - Sources: identical spawn prefix (`C10`), calibrated job workload (`C28`), Sonnet pricing and output rate (`C1`, `C3`).
+   - Mutates per worker: `Request`, shared-prefix `CacheEntry`, one `LedgerRow`, scalar `wallet`, `attemptMetrics`, `counts`, and tape.
+   - Sources: identical spawn prefix (`C10`), calibrated job workload (`C28`), Sonnet rates (`C1`, `C3`).
+   - Immediately after each worker `SEND_REQUEST` resolves, the reducer evaluates `L4_FIRST_LATE_COLD_FAILURE`.
+   - Under `cfg.width=1`, `e6-send-L4-J2` resolves at `clockMin=6` as the first cold late-wave worker. That actual economic action satisfies the failure rule and immediately dispatches:
+     ```ts
+     {
+       type: "FREEZE_FAILURE",
+       failure: {
+         failureId: "L4-first-late-cold",
+         causeCode: "FIRST_LATE_WAVE_REWRITE",
+         message:
+           "Job 2 arrived at 6:00—after the shared setup expired—so 26,237 tokens were rewritten instead of read.",
+         checkpointId: "L4-before-width"
+       }
+     }
+     ```
+   - No later request is dispatched after this freeze.
 
 7. **`e7-advance-wave` — Let the next group wait**
-   - Trigger: queued jobs remain after a wave.
+   - Trigger: queued jobs remain after a completed, non-frozen wave.
    - Action: `ADVANCE { type: "ADVANCE", min: WAVE_GAP_MIN }`.
-   - Mutates: `Clock` and derived `UI_TTL_DRAIN_BAR` state only.
-   - The previous wave’s last touch occurred at its start. At the next start, idle time exceeds the `5m` TTL, so the prior shared entry is expired under `C1`/`C12`.
-   - Repeat `e5`–`e7` until all eight jobs complete.
+   - Mutates: `clockMin` and derived `UI_TTL_DRAIN_BAR` state only.
+   - The previous wave’s final touch occurred at its start. At the next start, idle time is `6m`, exceeding the `5m` lifetime under `C1` and `C12`.
+   - Repeat `e5`–`e7` until all eight jobs complete or an actual worker request triggers the freeze.
 
-8. **`e8-reveal-actual` — Reveal the player’s run**
-   - Trigger: eighth job resolves.
+8. **`e8-reveal-actual` — Reveal the completed player run**
+   - Trigger: the eighth job resolves on a non-frozen branch.
    - Action: `REVEAL_PREDICTION { type: "REVEAL_PREDICTION", promptId: "L4-last-wave-color", correctOptionId: resolvedLastWaveOption }`.
-   - Mutates: `prediction.revealed`, `phase`, completed-event evidence.
-   - The tape now shows every coordinator, cold write, within-wave read, input, and output segment.
+   - Mutates: `prediction.revealed`, `phase`, and `completedEventIds`.
+   - The tape shows every coordinator, cold write, within-wave read, input, and output segment.
+   - A width-1 branch cannot reach this event; its committed prediction remains unrevealed and is cleared by rewind.
    - Prediction correctness changes no wallet, score, star, freeze, or gate field.
 
 9. **`e9-open-reference-prediction` — Predict the comparison**
-   - Trigger: the player requests **“Compare another grouping.”**
+   - Trigger: after `e8-reveal-actual`, the player requests **“Compare another grouping.”**
    - Action: `OPEN_PREDICTION { type: "OPEN_PREDICTION", promptId: "L4-width4-cost" }`.
-   - Preconditions: `e8-reveal-actual` completed.
    - Mutates: second prediction state only.
 
 10. **`e10-commit-reference-prediction` — Commit before comparison**
@@ -149,52 +173,35 @@ The authored slow-race scenario uses six simulated minutes between wave starts. 
     - Economic effect: none.
 
 11. **`e11-reveal-reference` — Reveal width 4**
-    - Trigger: second prediction is committed.
+    - Trigger: the second prediction is committed.
     - Actions:
       1. `REQUEST_COUNTERFACTUAL { type: "REQUEST_COUNTERFACTUAL", comparisonId: "L4-actual-vs-width4" }`
       2. `REVEAL_COUNTERFACTUAL { type: "REVEAL_COUNTERFACTUAL", comparisonId: "L4-actual-vs-width4" }`
       3. `REVEAL_PREDICTION { type: "REVEAL_PREDICTION", promptId: "L4-width4-cost", correctOptionId: resolvedReferenceOption }`
-    - Mutates: comparison and prediction evidence only; actual ledger and wallet remain unchanged.
-    - Counterfactual uses the same seed and workload with `cfg.width=4`.
-    - Aha pairing: the player’s Job 2 cold row at width `1` is paired with width 4’s Job 2 warm row; coordinator-output rows remain alongside the pair so “maximum width” is not presented as free.
+    - Mutates: comparison evidence, prediction evidence, and `completedEventIds` only.
+    - Actual ledger, wallet, `attemptMetrics`, `clockFrozen`, and `frozenFailure` remain unchanged.
+    - The comparison uses the same seed and workload with `cfg.width=4`.
+    - This event is strictly informational. It never evaluates a `FailureRuleDef` and never dispatches `FREEZE_FAILURE`.
 
-12. **`e12-freeze-too-narrow` — Freeze the visible multiple**
-    - Trigger: `e11-reveal-reference` completes and the attempted width was `1`.
-    - Action:
-      ```ts
-      {
-        type: "FREEZE_FAILURE",
-        failure: {
-          failureId: "L4-eight-cold-waves",
-          causeCode: "TOO_MANY_COLD_WAVES",
-          message:
-            "Eight one-job waves bought eight coordinators and rewrote the shared prefix eight times.",
-          checkpointId: "L4-before-width"
-        }
-      }
-      ```
-    - Mutates: `Clock.frozen`, `frozenFailure`.
-    - The actual and valid-alternative totals, fourfold cold-write multiple, and decisive final late-wave row are already visible.
-    - No failure predicate inspects either prediction.
-
-13. **`e13-explain` — Demonstrate understanding**
+12. **`e12-explain` — Demonstrate understanding**
     - Trigger: a non-frozen attempt has revealed `e11-reveal-reference`.
     - Action: `ACK_EXPLANATION { type: "ACK_EXPLANATION", explanationId }`.
     - Mutates: `acknowledgedExplanationIds`.
     - Correct option: `"L4-balance-waves-and-coordination"`.
-    - This post-evidence explanation choice, not either pre-reveal prediction, is the behavioral gate action.
+    - This post-evidence action, not either prediction, is the behavioral gate action.
 
-14. **`e14-rewind` — Regroup after failure**
+13. **`e13-rewind` — Regroup after failure**
     - Trigger: player presses **“Regroup the jobs.”**
     - Action: `REWIND_TO_CHECKPOINT { type: "REWIND_TO_CHECKPOINT", checkpointId: "L4-before-width" }`.
-    - Mutates: deterministic attempt branch, queue, clock, cache, ledger, wallet, predictions, and failure state.
-    - Restores the moment before width selection without replaying the cold-open.
+    - Mutates: deterministic attempt branch, queue, clock, cache, ledger, wallet, prediction, attempt metrics, and failure state.
+    - Restores the moment before width selection without replaying the cold open.
 
-15. **`e15-complete` — Complete the attempt**
-    - Trigger: correct explanation acknowledged on a non-frozen run.
+14. **`e14-complete` — Complete the attempt**
+    - Trigger: the correct explanation is acknowledged on a non-frozen run.
     - Action: `COMPLETE_ATTEMPT { type: "COMPLETE_ATTEMPT" }`.
-    - Mutates: result and campaign progression.
-    - `pass(st)` evaluates only the post-evidence behavior and completed economic run.
+    - Mutates: `attemptResult` and campaign progression.
+    - `attemptResult.spentUsd` is copied from `attemptMetrics.spentUsd`, which equals `budget - wallet`.
+    - `passLevel04(st)` inspects only declared `ReducerState` fields.
 
 ## 5. Level data
 
@@ -205,6 +212,7 @@ const L4_SEED = 405;                    // [FICTION]
 const L4_BUDGET_USD = 10;               // [FICTION]
 const L4_CLOCK_CAP_MIN = 48;            // [FICTION]
 const L4_JOB_COUNT = 8;                 // [FICTION]
+const L4_JOB_HOURS = 1;                 // [FICTION]
 const WAVE_GAP_MIN = 6;                 // [FICTION]
 const COORD_INPUT_TOK = 5_000;          // [FICTION]
 const COORD_OUT_BASE_TOK = 29_000;      // [FICTION]
@@ -215,13 +223,13 @@ const COORD_OUT = (waveSize: number) =>
   + COORD_OUT_QUAD_TOK * (waveSize - 1) ** 2;
 ```
 
-The quadratic coordinator fixture represents pairwise merge/reconciliation work. It is deliberately calibrated fiction, but every produced token is a real `outTok` bucket priced by `PRICE_REQUEST`.
+The quadratic coordinator fixture represents merge and reconciliation work. Its token counts are calibrated fiction; every produced token is nevertheless a real `outTok` bucket priced by `PRICE_REQUEST`.
 
 Scenario seeds:
 
-- Units `job1` through `job8`: `kind="TASK"`, `ticket=1`, `deps=[]`, `hours=1` `[FICTION]`, `workIn=WORK_IN`, `outTok=WORK_OUT`, `fan=true`, `scripted=true`.
+- Units `job1` through `job8`: `kind="TASK"`, `ticket=1`, `deps=[]`, `hours=L4_JOB_HOURS`, `workIn=WORK_IN`, `outTok=WORK_OUT`, `fan=true`, `scripted=true`.
 - Contexts `sub1` through `sub8`: eight `SubagentContext` seeds with distinct `cacheNamespace`s, identical prefix fixtures, and `sharedPrefixPoolId="L4-shared-spawn"`.
-- Context `"L4-coordinator"`: one `MainSessionContext`; its authored coordinator requests use `cachePolicy="bypass"`.
+- Context `"L4-coordinator"`: one `MainSessionContext`; its coordinator requests use `cachePolicy="bypass"`.
 - Each subagent `PrefixStackSeed` resolves the measured `BASE_IDENTICAL=26,237`-token spawn prefix (`C10`); the level does not redefine its blocks.
 
 ```ts
@@ -236,7 +244,22 @@ const level04: LevelDef = {
     privateDesignerSummary:
       "Short-lived shared subagent prefixes make serial-wave count valuable, while coordinating too many simultaneous jobs has its own priced cost.",
     postRevealRule:
-      "Fewer waves preserve more shared-prefix reuse, but launching everything together can create expensive coordination."
+      "Fewer waves preserve more shared-prefix reuse, but launching everything together can create expensive coordination.",
+    solutionVocabulary: [
+      "cache",
+      "shared prefix",
+      "coordinator",
+      "fan-out",
+      "warm read",
+      "cold write",
+      "four-at-a-time",
+      "width 4",
+      "fewer waves"
+    ]
+  },
+  conceptScope: {
+    kind: "single",
+    reusedConceptIds: []
   },
   prerequisiteConceptIds: ["cache-expiry", "prefix-reuse"],
 
@@ -277,15 +300,79 @@ const level04: LevelDef = {
     allowedCfg: {
       width: [1, 2, 3, 4, 5, 6, 7, 8]
     },
-    estimates: [
-      { label: "seed", value: L4_SEED, tag: "[FICTION]" },
-      { label: "budget USD", value: L4_BUDGET_USD, tag: "[FICTION]" },
-      { label: "clock cap minutes", value: L4_CLOCK_CAP_MIN, tag: "[FICTION]" },
-      { label: "job count", value: L4_JOB_COUNT, tag: "[FICTION]" },
-      { label: "wave gap minutes", value: WAVE_GAP_MIN, tag: "[FICTION]" },
-      { label: "coordinator input tokens", value: COORD_INPUT_TOK, tag: "[FICTION]" },
-      { label: "coordinator output base", value: COORD_OUT_BASE_TOK, tag: "[FICTION]" },
-      { label: "coordinator quadratic output coefficient", value: COORD_OUT_QUAD_TOK, tag: "[FICTION]" }
+    fixtures: [
+      {
+        id: "L4_SEED_FIXTURE",
+        label: "Level seed",
+        semanticRole: "Deterministic L4 scenario seed",
+        value: L4_SEED,
+        unit: "count",
+        tag: "[FICTION]"
+      },
+      {
+        id: "L4_BUDGET_FIXTURE",
+        label: "Attempt budget",
+        semanticRole: "Initial L4 wallet cap",
+        value: L4_BUDGET_USD,
+        unit: "usd",
+        tag: "[FICTION]"
+      },
+      {
+        id: "L4_CLOCK_CAP_FIXTURE",
+        label: "Clock cap",
+        semanticRole: "Maximum simulated minutes in the projected eight-job schedule",
+        value: L4_CLOCK_CAP_MIN,
+        unit: "min",
+        tag: "[FICTION]"
+      },
+      {
+        id: "L4_JOB_COUNT_FIXTURE",
+        label: "Queued jobs",
+        semanticRole: "Number of jobs available for grouping",
+        value: L4_JOB_COUNT,
+        unit: "count",
+        tag: "[FICTION]"
+      },
+      {
+        id: "L4_JOB_HOURS_FIXTURE",
+        label: "Job unit-hours",
+        semanticRole: "UnitSeed hours assigned to each L4 job",
+        value: L4_JOB_HOURS,
+        unit: "count",
+        tag: "[FICTION]"
+      },
+      {
+        id: "L4_WAVE_GAP_FIXTURE",
+        label: "Inter-wave gap",
+        semanticRole: "Idle minutes between consecutive wave starts",
+        value: WAVE_GAP_MIN,
+        unit: "min",
+        tag: "[FICTION]"
+      },
+      {
+        id: "L4_COORD_INPUT_FIXTURE",
+        label: "Coordinator input",
+        semanticRole: "Fresh input tokens for each coordinator request",
+        value: COORD_INPUT_TOK,
+        unit: "tok",
+        tag: "[FICTION]"
+      },
+      {
+        id: "L4_COORD_OUTPUT_BASE_FIXTURE",
+        label: "Coordinator output base",
+        semanticRole: "Base generated output for a coordinator request",
+        value: COORD_OUT_BASE_TOK,
+        unit: "tok",
+        tag: "[FICTION]"
+      },
+      {
+        id: "L4_COORD_OUTPUT_QUAD_FIXTURE",
+        label: "Coordinator output quadratic coefficient",
+        semanticRole: "Generated output added per squared simultaneous-branch distance",
+        value: COORD_OUT_QUAD_TOK,
+        unit: "tok",
+        tag: "[FICTION]"
+      }
     ]
   },
 
@@ -302,11 +389,11 @@ const level04: LevelDef = {
 
   failLesson: {
     bucket: "fiveMinuteBandUsd",
-    cite: "C1, C3, C10",
+    cite: "C1, C3, C10, C28",
     line:
-      "Serial waves can repeatedly rebuild a short-lived shared prefix; unlimited concurrency is not free either."
+      "A late serial wave can rewrite the same shared setup that an in-window job would have read; unlimited concurrency still carries priced coordination."
   },
-  failureRules: [L4_EIGHT_COLD_WAVES_FAILURE],
+  failureRules: [L4_FIRST_LATE_COLD_FAILURE],
   checkpoints: [
     {
       id: "L4-before-width",
@@ -370,6 +457,11 @@ const L4_GATE: GateDef = {
       eventId: "e8-reveal-actual"
     },
     {
+      id: "L4-reference-completed",
+      kind: "event-completed",
+      eventId: "e11-reveal-reference"
+    },
+    {
       id: "L4-not-frozen",
       kind: "compare",
       path: "frozenFailure",
@@ -395,11 +487,45 @@ const L4_GATE: GateDef = {
 };
 ```
 
-`passLevel04` is pure and returns pass only when all `L4_GATE` predicates hold. Prediction option, correctness, and commitment are not inspected.
+`ACK_EXPLANATION` is reducer-valid only after causal evidence is visible, so the state-backed `pass(st)` projection remains pure and does not require an invented action-history field:
+
+```ts
+function passLevel04(st: ReducerState): GateResult {
+  const workCompleted =
+    st.completedEventIds.includes("e8-reveal-actual");
+  const referenceCompleted =
+    st.completedEventIds.includes("e11-reveal-reference");
+  const explanationAcknowledged =
+    st.acknowledgedExplanationIds.includes(
+      "L4-balance-waves-and-coordination"
+    );
+
+  const pass =
+    workCompleted
+    && referenceCompleted
+    && st.frozenFailure === null
+    && explanationAcknowledged;
+
+  return {
+    pass,
+    reason: pass
+      ? "The completed run was followed by the causal balance explanation."
+      : "Complete the run, inspect the comparison, and explain the balance.",
+    evidence: [
+      `actual=${workCompleted}`,
+      `reference=${referenceCompleted}`,
+      `notFrozen=${st.frozenFailure === null}`,
+      `explained=${explanationAcknowledged}`
+    ]
+  };
+}
+```
+
+Neither `passLevel04` nor any declarative predicate inspects prediction selection, commitment, or correctness.
 
 ## 6. Pricing walkthrough
 
-All worker requests use Sonnet (`C3`), the measured identical shared spawn prefix (`C10`), the calibrated worker input/output fixture (`C28`), and `CACHE_TIER_5M` (`C1`).
+All workers use Sonnet (`C3`), the measured identical shared spawn prefix (`C10`), calibrated worker input/output (`C28`), and `CACHE_TIER_5M` (`C1`).
 
 Named worker prices:
 
@@ -423,6 +549,17 @@ P_2C6W = 2 × P_COLD_JOB + 6 × P_WARM_JOB
        = $5.66800410
 ```
 
+The failure’s request-local comparison uses the same Job 2 input and output on both sides. Only the shared-prefix bucket changes:
+
+```text
+P_FIRST_LATE_EXCESS =
+  P_COLD_JOB − P_WARM_JOB
+= $0.77638875 − $0.68587110
+= $0.09051765
+```
+
+This comparison traces to `C1`, `C3`, `C10`, and `C28`. It is rendered beside the actual `L4-J2` ledger row before the freeze. It is not a reference run or post-attempt counterfactual.
+
 Coordinator request for wave size `s`:
 
 ```text
@@ -434,11 +571,11 @@ P_COORD(s) =
 + outTok   × $15/M
 ```
 
-The `$15/M` output rate is Sonnet’s `5x` output multiplier (`C1`, `C3`). Coordinator token counts are `[FICTION]`; their price is not fictional once passed to `PRICE_REQUEST`.
+The `$15/M` output rate is Sonnet’s `5x` output multiplier (`C1`, `C3`). Coordinator token counts are `[FICTION]`; their price becomes authoritative when passed to `PRICE_REQUEST`.
 
-This is the level’s only authoritative price table:
+This is the level’s only authoritative full-schedule projection table:
 
-| Width | Wave sizes | Requests | Cold writes | Warm reads | Coordinator subtotal | Full total |
+| Width | Wave sizes | Full-route requests | Cold writes | Warm reads | Coordinator subtotal | Full-route total |
 |---:|---|---:|---:|---:|---:|---:|
 | `1` | `1+1+1+1+1+1+1+1` | `16` | `8` | `0` | `$3.60000000` | `$9.81111000` |
 | `2` | `2+2+2+2` | `12` | `4` | `4` | `$1.98000000` | `$7.82903940` |
@@ -449,17 +586,9 @@ This is the level’s only authoritative price table:
 | `7` | `7+1` | `10` | `2` | `6` | `$2.52000000` | `$8.18800410` |
 | `8` | `8` | `9` | `1` | `7` | `$2.65500000` | `$8.23248645` |
 
-Authoritative comparison:
+The width-1 row is a deterministic pricing projection required for anti-pattern verification; the playable width-1 branch freezes after its fourth ledger row and does not execute the remaining projected requests.
 
-```text
-width-1 excess = $9.81111000 − $7.37800410
-               = $2.43310590
-
-width-1 multiple = $9.81111000 / $7.37800410
-                 ≈ 1.33×
-```
-
-Width `1` therefore produces four times the reference cold writes and a bill approximately `33%` higher. Width `8` avoids a cold wave but pays enough superlinear coordinator output to remain more expensive than width `4`. The mechanic is a live balance, not a dial-to-maximum.
+Width `4` is the three-star reference at `$7.37800410`. Width `8` avoids one cold wave but pays enough superlinear coordinator output to cost more than width `4`. The central decision is therefore a U-curve, not a dial-to-maximum.
 
 `PRICE_REQUEST` stores unrounded values. Normal currency labels may round to cents; hover equations retain enough precision to distinguish every positive bucket.
 
@@ -472,38 +601,53 @@ For reference width `4`, the exact tape order is:
 1. `L4-C1`: **Coordinator · Wave 1 · 0:00** — `input COORD_INPUT_TOK | output COORD_OUT(4)`.
 2. `L4-J1`: **Job 1 · 0:00** — `write BASE_IDENTICAL | input WORK_IN | output WORK_OUT`.
 3. `L4-J2`: **Job 2 · 0:00** — `read BASE_IDENTICAL | input WORK_IN | output WORK_OUT`.
-4. `L4-J3`: **Job 3 · 0:00** — same warm worker buckets.
-5. `L4-J4`: **Job 4 · 0:00** — same warm worker buckets.
+4. `L4-J3`: **Job 3 · 0:00** — warm worker buckets.
+5. `L4-J4`: **Job 4 · 0:00** — warm worker buckets.
 6. `L4-C2`: **Coordinator · Wave 2 · 6:00** — `input COORD_INPUT_TOK | output COORD_OUT(4)`.
 7. `L4-J5`: **Job 5 · 6:00** — cold worker buckets.
 8. `L4-J6`: **Job 6 · 6:00** — warm worker buckets.
 9. `L4-J7`: **Job 7 · 6:00** — warm worker buckets.
 10. `L4-J8`: **Job 8 · 6:00** — warm worker buckets.
 
-For width `1`, the exact pattern is eight repetitions of:
+For playable width `1`, the exact emitted tape before failure is:
 
-1. coordinator row for wave size `1`;
-2. one cold worker row;
-3. `ADVANCE` before the next repetition, except after Job 8.
+1. `L4-C1`: **Coordinator · Wave 1 · 0:00**.
+2. `L4-J1`: **Job 1 · 0:00** — cold worker buckets.
+3. `L4-C2`: **Coordinator · Wave 2 · 6:00**.
+4. `L4-J2`: **Job 2 · 6:00** — cold worker buckets; decisive request.
 
-The width-1 tape therefore contains sixteen rows and no warm worker row.
+The fourth row freezes in place. `UI_HOVER_PRICE_CALCULATOR` anchors an adjacent two-line comparison:
+
+- **Arrived at 6:00 · write · `$0.77638875`**
+- **Inside the window · read · `$0.68587110`**
+
+No Job 3 request or later width-1 request is emitted.
 
 ### Aha frame
 
-At `e11-reveal-reference`, pair:
+At `e11-reveal-reference`, completed runs use a width-specific causal pairing:
 
-- actual width-1 `L4-J2` at `6:00`: cold red write;
-- reference width-4 `L4-J2` at `0:00`: warm blue read.
+| Actual width | Actual focus | Width-4 focus | Revealed contrast |
+|---:|---|---|---|
+| `2` | `L4-J3` cold at `6:00` | `L4-J3-reference` warm at `0:00` | Earlier grouping changes a write into a read. |
+| `3` | `L4-J4` cold at `6:00` | `L4-J4-reference` warm at `0:00` | Earlier grouping changes a write into a read. |
+| `4` | `L4-C1` and `L4-C2` | matching reference rows | Same grouping produces the same tape and total. |
+| `5` | `L4-J6` cold | `L4-J6-reference` warm | Regrouping changes the shared-prefix bucket while coordinator cost also changes. |
+| `6` | `L4-J7` cold | `L4-J7-reference` warm | Regrouping changes the shared-prefix bucket while coordinator cost also changes. |
+| `7` | `L4-J8` cold | `L4-J8-reference` warm | Regrouping changes the shared-prefix bucket while coordinator cost also changes. |
+| `8` | `L4-J5` warm plus `L4-C1` | `L4-J5-reference` cold plus both reference coordinators | One wave saves a write, but its larger coordinator costs more than that saving. |
 
-Hold the paired outline for `700ms` `[ESTIMATE]`, then show:
+Width `1` has no post-attempt aha frame because its actual request already caused a local freeze.
 
-**“Same job. Same setup. Earlier wave changed a rewrite into a read.”**
+Hold the paired outline for `700ms` `[ESTIMATE]`. For widths `2`, `3`, `5`, `6`, and `7`, show:
 
-Keep the coordinator rows visible beside the pair and follow with:
+**“Same job. Same setup. Its place in the grouping changed a rewrite into a read.”**
 
-**“But the widest group asks its coordinator to merge more branches.”**
+Keep coordinator rows visible and follow with:
 
-The `UI_TAPE_RENDERER` canonical visual-weight formula is binding: row length is proportional to authoritative USD, and segment width includes `readTok`, `inputTok`, `writeTok`, and `outTok`. In particular, coordinator violet output uses `outTok × 5`, and worker violet output remains the dominant worker-row segment (`C1`, `C3`, `C28`). Hiding an output label before its toast may not remove its visual weight.
+**“But the largest group asks its coordinator to merge more branches.”**
+
+The `UI_TAPE_RENDERER` canonical visual-weight formula is binding: row length is proportional to authoritative USD, and segment geometry includes `readTok`, `inputTok`, `writeTok`, and `outTok`. Coordinator violet output uses `outTok × 5`, and worker violet output retains its full priced weight (`C1`, `C3`, `C28`).
 
 ```ts
 const L4_TAPE: TapeSpec = {
@@ -516,7 +660,7 @@ const L4_TAPE: TapeSpec = {
       gatedByPredictionId: "L4-last-wave-color"
     }
   ],
-  ahaRequestId: "L4-J2-reference",
+  ahaRequestId: "L4-C1-reference",
   hoverEnabled: true,
   explainOutputPricingFromEventId: "e5-send-coordinator"
 };
@@ -526,22 +670,22 @@ const L4_TAPE: TapeSpec = {
 
 ### `L4-last-wave-color`
 
-**Question:** “When the last wave reaches the wire, what happens to its shared setup?”
+**Question:** “When the last group reaches the wire, what happens to its shared setup?”
 
 - `all-blue` — “Every job reads it”
-- `red-then-blue` — “The first writes it; its wave-mates read it”
+- `red-then-blue` — “The first writes it; its group-mates read it”
 - `all-red` — “Every job writes it”
 
 Resolved correct option:
 
-- singleton final wave: `all-red`;
-- final wave with at least two jobs: `red-then-blue`.
+- singleton final group: `all-red`;
+- final group with at least two jobs: `red-then-blue`.
 
-No option is styled as correct before `e8-reveal-actual`. A wrong answer changes evidence copy only.
+No option is styled as correct before `e8-reveal-actual`. A width-1 failure does not reveal or score the prediction. A wrong answer changes evidence copy only.
 
 ### `L4-width4-cost`
 
-Shown only after the actual attempt completes and before the reference counterfactual appears.
+Shown only after a non-frozen actual attempt completes and before the reference counterfactual appears.
 
 **Question:** “What will four-at-a-time do to the total compared with your run?”
 
@@ -549,21 +693,21 @@ Shown only after the actual attempt completes and before the reference counterfa
 - `same` — “The same total”
 - `higher` — “Higher total”
 
-Resolved correct option is `same` only when the attempted width was `4`; otherwise it is `lower`.
+Resolved correct option is `same` when the attempted width was `4`; for every other completed width it is `lower`.
 
 Reveal copy:
 
-**“Four-at-a-time paid for two cold waves and two moderate coordinators. Narrower runs bought more waves; wider runs bought heavier coordination.”**
+**“Four-at-a-time paid for two cold waves and two moderate coordinators. Narrower runs bought more waves; the widest run bought heavier coordination.”**
 
-Prediction selection, commitment, and correctness are excluded from gates, stars, wallet mutations, and failure predicates.
+Prediction selection, commitment, and correctness are excluded from gate, star, wallet, failure, and `pass(st)` logic.
 
 ## 9. Fail-state
 
 ```ts
-const L4_EIGHT_COLD_WAVES_FAILURE: FailureRuleDef = {
-  id: "L4-eight-cold-waves",
+const L4_FIRST_LATE_COLD_FAILURE: FailureRuleDef = {
+  id: "L4-first-late-cold",
   predicate: {
-    id: "L4-width-one-after-reference",
+    id: "L4-first-late-cold-all",
     kind: "all",
     predicates: [
       {
@@ -574,37 +718,46 @@ const L4_EIGHT_COLD_WAVES_FAILURE: FailureRuleDef = {
         value: 1
       },
       {
-        id: "L4-reference-visible",
+        id: "L4-clock-is-six",
+        kind: "compare",
+        path: "clockMin",
+        op: "eq",
+        value: 6
+      },
+      {
+        id: "L4-job2-request-completed",
         kind: "event-completed",
-        eventId: "e11-reveal-reference"
+        eventId: "e6-send-L4-J2"
       }
     ]
   },
-  decisiveEventId: "e11-reveal-reference",
-  causeCode: "TOO_MANY_COLD_WAVES",
+  decisiveEventId: "e6-send-L4-J2",
+  causeCode: "FIRST_LATE_WAVE_REWRITE",
   message:
-    "Eight one-job waves bought eight coordinators and rewrote the shared prefix eight times.",
+    "Job 2 arrived at 6:00—after the shared setup expired—so 26,237 tokens were rewritten instead of read.",
   checkpointId: "L4-before-width",
   highlightObjectIds: [
-    "L4-J8",
+    "L4-J2",
     "L4-shared-spawn",
-    "L4-width1-cold-write-stack",
-    "L4-actual-vs-width4"
+    "L4-ttl-drain",
+    "L4-J2-cold-vs-live-read"
   ],
-  actualUsd: L4_PRICE.width1.totalUsd,
-  validAlternativeUsd: L4_PRICE.width4.totalUsd
+  actualUsd: P_COLD_JOB,
+  validAlternativeUsd: P_WARM_JOB
 };
 ```
 
-- **Decisive frame:** actual width-1 tape and width-4 reference are simultaneously visible after a completed attempt.
-- **Economic truth:** `actualUsd > validAlternativeUsd`; the actual route shows eight cold writes versus two and a `1.33×` total.
-- **Supporting line:** **“The gap between waves exceeded the five-minute idle lifetime every time.”**
-- **Frozen controls:** clock, width, launch, and all economic actions.
+- **Decisive event:** the actual `SEND_REQUEST` for `L4-J2` at `6:00`, during the run.
+- **Economic truth:** `$0.77638875 > $0.68587110`; the request paid `$0.09051765` more because `26,237` prefix tokens were written rather than read.
+- **Visible comparison:** the actual ledger row and its same-request in-window read price are simultaneously visible before `FREEZE_FAILURE`.
+- **Supporting line:** **“The setup expired at 5:00. Job 2 arrived one minute later.”**
+- **Frozen controls:** clock, width, launch, and every economic action.
 - **Available control:** `UI_REWIND_CONTROL`, labeled **“Regroup the jobs.”**
 - **Rewind target:** `L4-before-width`.
-- **Restored state:** original wallet, empty ledger, queued jobs, `clockMin=0`, no cache entry, no prediction, and no failure. The cold-open animation is not replayed.
-- **Reachability:** `antiCfg={width:1}` deterministically reaches this freeze.
-- Other non-reference widths may finish and receive lower stars; they are not frozen merely for being non-optimal.
+- **Restored state:** original scalar wallet, empty ledger, queued jobs, `clockMin=0`, no cache entry, no prediction, reset `attemptMetrics`, and no failure. The cold-open animation is not replayed.
+- **Reachability:** `antiCfg={width:1}` deterministically freezes after four ledger rows.
+- Widths `2…8` never satisfy this rule and may complete with lower stars.
+- `e11-reveal-reference` is informational and cannot dispatch this or any other freeze.
 
 ## 10. Gate & stars
 
@@ -612,11 +765,11 @@ Passing requires:
 
 - a completed eight-job run;
 - no active `frozenFailure`;
-- both evidence reveals completed;
-- after `e11-reveal-reference`, the player chooses the explanation:
+- `e8-reveal-actual` and `e11-reveal-reference` completed;
+- after `e11-reveal-reference`, the player chooses:
   **“Balance the number of cold waves against the coordinator work inside each wave.”**
 
-The gate does not inspect prediction option, prediction correctness, or budget.
+The gate does not inspect prediction state or budget.
 
 - **1 star:** `L4_GATE` passes.
 - **2 stars:** `L4_GATE` passes and attempted width is within `3…5`.
@@ -631,6 +784,24 @@ const L4_STAR_2: StarDef = {
     id: "L4-star2-all",
     kind: "all",
     predicates: [
+      {
+        id: "L4-star2-run-completed",
+        kind: "event-completed",
+        eventId: "e8-reveal-actual"
+      },
+      {
+        id: "L4-star2-reference-completed",
+        kind: "event-completed",
+        eventId: "e11-reveal-reference"
+      },
+      {
+        id: "L4-star2-not-frozen",
+        kind: "compare",
+        path: "frozenFailure",
+        op: "eq",
+        value: null,
+        observedAfterEventId: "e11-reveal-reference"
+      },
       {
         id: "L4-star2-explained",
         kind: "includes",
@@ -665,6 +836,24 @@ const L4_STAR_3: StarDef = {
     kind: "all",
     predicates: [
       {
+        id: "L4-star3-run-completed",
+        kind: "event-completed",
+        eventId: "e8-reveal-actual"
+      },
+      {
+        id: "L4-star3-reference-completed",
+        kind: "event-completed",
+        eventId: "e11-reveal-reference"
+      },
+      {
+        id: "L4-star3-not-frozen",
+        kind: "compare",
+        path: "frozenFailure",
+        op: "eq",
+        value: null,
+        observedAfterEventId: "e11-reveal-reference"
+      },
+      {
         id: "L4-star3-explained",
         kind: "includes",
         path: "acknowledgedExplanationIds",
@@ -681,7 +870,7 @@ const L4_STAR_3: StarDef = {
     ]
   },
   reason:
-    "Four-at-a-time produced the lowest deterministic total for this queue."
+    "Four-at-a-time produces the lowest deterministic full-run total for this queue."
 };
 ```
 
@@ -690,13 +879,13 @@ Result values:
 ```ts
 const L4_RESULT: ResultSpec = {
   headlinePass: "You found the balance.",
-  headlineFail: "The queue kept rebuilding its setup.",
+  headlineFail: "The next group arrived too late.",
   evidenceLines: [
-    "Waves: {waveCount}",
-    "Cold writes: {coldWriteCount}",
-    "Warm reads: {readCount}",
-    "Coordinator output: {coordinatorOutTok}",
-    "Total: {spentUsd}"
+    "Waves: {waveCountDerivedFromCfgWidth}",
+    "Cold writes: {coldWriteCountDerivedFromLedger}",
+    "Warm reads: {readCountDerivedFromLedger}",
+    "Coordinator output: {coordinatorOutTokDerivedFromLedger}",
+    "Total: {attemptResult.spentUsd}"
   ],
   comparisonIds: ["L4-actual-vs-width4"],
   continueLabel: "Next race",
@@ -704,18 +893,23 @@ const L4_RESULT: ResultSpec = {
 };
 ```
 
+The first four result values are presentation derivations from `cfg.width` and `ledger`; they are not additional reducer fields.
+
 ## 11. Toasts
 
 | id | Trigger | Exact copy |
 |---|---|---|
-| `L4-coordinator-output` | First coordinator row resolves at `e5-send-coordinator` | **“Coordinator output · merging this wave’s jobs · priced at output rate.”** |
+| `L4-coordinator-output` | First coordinator row resolves at `e5-send-coordinator` | **“Coordinator output · merging this group’s jobs · priced at output rate.”** |
 | `L4-shared-prefix` | First worker write resolves | **“Shared prefix saved · 26,237 tokens · five-minute idle lifetime.”** |
-| `L4-first-read` | First same-wave worker reads the shared entry | **“Same setup, same wave · cache read.”** |
-| `L4-wave-wait` | First `ADVANCE` resolves | **“The next wave waits six minutes.”** |
-| `L4-expired` | First later-wave cold write resolves | **“Expired between waves · the shared prefix must be written again.”** |
-| `L4-aha` | `e11-reveal-reference` pairs Job 2 | **“Earlier wave: rewrite became read. Wider wave: coordinator grew.”** |
+| `L4-first-read` | First same-wave worker reads the shared entry | **“Same setup, same group · cache read.”** |
+| `L4-wave-wait` | First `ADVANCE` resolves | **“The next group waits six minutes.”** |
+| `L4-expired` | First later-wave cold write resolves | **“Expired between groups · the shared prefix must be written again.”** |
+| `L4-failure-gap` | `L4_FIRST_LATE_COLD_FAILURE` freezes | **“At 6:00: write `$0.77638875`. Inside the window: read `$0.68587110`.”** |
+| `L4-aha-cache` | `e11-reveal-reference`, actual width `2`, `3`, `5`, `6`, or `7` | **“Regrouped: one rewrite became a read. Coordinator work changed too.”** |
+| `L4-aha-match` | `e11-reveal-reference`, actual width `4` | **“Same grouping, same requests, same total.”** |
+| `L4-aha-coordination` | `e11-reveal-reference`, actual width `8` | **“One wave saved a rewrite. Its larger coordinator cost more than that saving.”** |
 
-`L4-expired` is a cause toast; it remains visible during the failure freeze. Other toasts deduplicate per attempt according to `just-in-time-toast`.
+`L4-expired` and `L4-failure-gap` remain visible during the width-1 freeze. Other toasts deduplicate per attempt according to `just-in-time-toast`.
 
 Just-in-time vocabulary:
 
@@ -724,7 +918,7 @@ const L4_VOCABULARY: VocabularyDef[] = [
   {
     term: "coordinator output",
     definition:
-      "Generated tokens used to reconcile the jobs launched in one wave.",
+      "Generated tokens used to reconcile the jobs launched in one group.",
     firstNeededEventId: "e5-send-coordinator",
     toastId: "L4-coordinator-output"
   },
@@ -732,7 +926,7 @@ const L4_VOCABULARY: VocabularyDef[] = [
     term: "shared prefix",
     definition:
       "The identical spawn setup that jobs in the same live pool can reuse.",
-    firstNeededEventId: "e6-send-wave-jobs",
+    firstNeededEventId: "e6-send-L4-J1",
     toastId: "L4-shared-prefix"
   }
 ];
@@ -743,42 +937,50 @@ const L4_VOCABULARY: VocabularyDef[] = [
 Real-browser pointer and keyboard click-through must assert:
 
 1. The width control is interactive by `2s` `[ESTIMATE]`.
-2. Pre-play UI contains no reference total, cheapest-width claim, cold-write count, coordinator formula, or safe-width answer.
+2. Pre-play UI contains no coordinator reference, reference total, cheapest-width claim, cold-write count, coordinator formula, or safe-width answer.
 3. `ENTER_LEVEL` uses the slug `04-five-minute-race`.
-4. `concept.id` is `shared-subagent-window`; prerequisites are exactly `["cache-expiry", "prefix-reuse"]`.
-5. Changing width dispatches only `SET_FANOUT_WIDTH`; it creates no ledger row and changes no wallet value.
-6. Launch cannot execute until `L4-last-wave-color` is committed.
-7. A wrong prediction changes no score, star, wallet, freeze, gate, or result value.
-8. Six minutes between waves expires a five-minute entry from its last touch; no fixed original-expiry shortcut is used.
-9. Within one wave, the first worker writes `BASE_IDENTICAL` and every later simultaneous worker reads it.
-10. Each wave produces one real coordinator request whose `outTok` matches `COORD_OUT(waveSize)`.
-11. Every request creates exactly one `LedgerRow` and exactly one tape row.
-12. Width `4` produces ten rows, two cold worker writes, six warm worker reads, and passes after the correct post-evidence explanation.
-13. Width `8` has one cold worker write but costs more than width `4` because its coordinator output is larger.
-14. Width `1` produces sixteen rows, eight cold worker writes, and reaches `L4-eight-cold-waves`.
-15. The width-1 freeze occurs only after the actual and valid-alternative totals are visible.
-16. The frozen `actualUsd` is strictly greater than `validAlternativeUsd`.
-17. No economic action or Job request can execute while frozen.
-18. **“Regroup the jobs”** deterministically restores `L4-before-width`.
-19. `referenceCfg={width:4}` passes from `L4_SEED`.
-20. `antiCfg={width:1}` fails through the authored, reachable economic freeze.
-21. The counterfactual is unavailable before a meaningful attempt completes and before `L4-width4-cost` is committed.
-22. `L4_GATE.postEvidenceActionRequirements` observes `ACK_EXPLANATION` after `e11-reveal-reference`.
-23. Neither `COMMIT_PREDICTION` nor prediction correctness appears in gate, star, failure, wallet, or `pass(st)` logic.
-24. Every worker price and coordinator price matches `PRICE_REQUEST` with `C1`/`C3`.
-25. Every positive request cost displays above zero; no positive value renders as `$0.0000`.
-26. Every rendered `WireSegment` matches its authoritative ledger bucket.
-27. `UI_TAPE_RENDERER` row widths and segment geometry include `outTok`; coordinator output is visibly violet and worker output retains its true visual weight.
-28. Static final tape bars preserve colors, segments, and totals without hover.
-29. Pointer and keyboard paths dispatch equivalent width, prediction, explanation, counterfactual, and rewind actions.
-30. Reduced-motion mode reaches byte-identical reducer, ledger, wallet, gate, and result state.
-31. The player can win without undocumented controls.
-32. The document exposes one authoritative price table and contains no superseded price branch.
+4. `concept.id` is `shared-subagent-window`; `conceptScope` is single; prerequisites are exactly `["cache-expiry", "prefix-reuse"]`.
+5. `title` and `objective` contain none of `concept.solutionVocabulary`, including obvious inflections or hyphenated variants.
+6. Changing width dispatches only `SET_FANOUT_WIDTH`; it creates no ledger row and changes no scalar wallet value.
+7. Launch cannot execute until `L4-last-wave-color` is committed.
+8. A wrong prediction changes no score, star, wallet, freeze, gate, or result value.
+9. Six minutes between waves expires a five-minute entry from its last touch; no fixed original-expiry shortcut is used.
+10. Within a wave, the first worker writes `BASE_IDENTICAL` and every later worker at the same `sentAtMin` reads it.
+11. Each wave produces one real coordinator request whose `outTok` matches `COORD_OUT(waveSize)`.
+12. Every request creates exactly one `LedgerRow` and exactly one tape row.
+13. Width `4` produces ten rows, two cold worker writes, six warm worker reads, and passes after the correct post-evidence explanation.
+14. Width `8` has one cold worker write but costs more than width `4` because its coordinator output is larger.
+15. Width `1` emits exactly four rows—two coordinators and two cold workers—before freezing; no Job 3 request is created.
+16. The width-1 freeze occurs during `e6-send-L4-J2` at `clockMin=6`, not after attempt completion.
+17. The freeze displays `P_COLD_JOB=$0.77638875` and `P_WARM_JOB=$0.68587110` beside the actual Job 2 row.
+18. `L4_FIRST_LATE_COLD_FAILURE.actualUsd` is strictly greater than `validAlternativeUsd`.
+19. No economic action can execute while frozen.
+20. **“Regroup the jobs”** deterministically restores `L4-before-width`, including wallet, ledger, clock, cache, prediction, and `attemptMetrics`.
+21. `referenceCfg={width:4}` passes from `L4_SEED`.
+22. `antiCfg={width:1}` reaches the authored in-run economic freeze.
+23. The width-4 counterfactual is unavailable before a meaningful attempt completes and before `L4-width4-cost` is committed.
+24. `e11-reveal-reference` mutates no actual ledger, wallet, attempt metrics, result, or failure state and never dispatches `FREEZE_FAILURE`.
+25. `L4_GATE.postEvidenceActionRequirements` observes `ACK_EXPLANATION` after `e11-reveal-reference`.
+26. Neither `COMMIT_PREDICTION` nor prediction correctness appears in gate, star, failure, wallet, or `pass(st)` logic.
+27. Every failure, gate, and star predicate uses only declared `ReducerState` paths, legal predicate kinds, and legal comparison ops.
+28. Every worker and coordinator price matches `PRICE_REQUEST` with `C1`/`C3`; worker prefix and workload quantities additionally trace to `C10`/`C28`.
+29. Every positive request cost displays above zero; no positive value renders as `$0.0000`.
+30. Every rendered `WireSegment` matches its authoritative ledger bucket.
+31. `UI_TAPE_RENDERER` row widths and segment geometry include `outTok`; coordinator output is visibly violet and worker output retains its true visual weight.
+32. Static final tape bars preserve colors, segments, and totals without hover.
+33. Pointer and keyboard paths dispatch equivalent width, prediction, explanation, comparison, and rewind actions.
+34. Reduced-motion mode reaches byte-identical reducer, ledger, wallet, gate, failure, and result state.
+35. Width totals form the authored U-curve: width `4` is cheaper than both width `1`’s full-route projection and width `8`.
+36. The player can win without undocumented controls.
+37. The document exposes one authoritative full-schedule price table and no superseded failure-total comparison.
+38. Every `[FICTION]` gameplay quantity has a semantically matching `ScenarioFixtureDef`.
 
 ## 13. Reference-bar justification
 
-The screen opens on one tactile act: reshape eight cards into waves. The five-minute clock suggests urgency, while the coordinator card quietly prevents “turn the dial to eight” from becoming a fake choice. The player commits a prediction, then watches their own schedule create cold writes, same-wave reads, and priced coordinator output.
+The screen opens on one tactile act: reshape eight cards into groups against a visible clock. It does not pre-announce coordinator work. The player commits a prediction, then their own launch produces the evidence: cold writes, same-wave reads, and a real coordinator request whose output changes with group size.
 
-Only after that attempt does width `4` appear as a counterfactual. The paired Job 2 rows convert an abstract TTL rule into a visible red-to-blue change, while the retained coordinator rows reveal why maximum concurrency is not free. A too-narrow run freezes only after the tape proves a fourfold cold-write difference and a `1.33×` bill, so the failure is causal and economically true. The gate then asks for a post-evidence causal explanation rather than rewarding a lucky prediction.
+The width-1 anti-pattern now follows the local fail lesson from `GAME_PLAN_V2`: the run freezes on the first cold late-wave worker, while the decisive Job 2 row is still fresh. Its actual `$0.77638875` request is paired directly with the same request’s `$0.68587110` in-window read price. Rewind returns to the width choice without finishing the bad schedule, revealing a reference run, or replaying mastered setup.
 
-That rhythm—touch, predict, consequence, compare, explain, and locally rewind—protects the surprise while making the single width control feel consequential and playful.
+This spec deliberately departs from `GAME_PLAN_V2`’s simpler **“wider fan-out is cheaper”** aha. The added, visibly priced quadratic coordinator output makes the total curve U-shaped: wider groups reduce cold waves, but the largest group is not free. That deviation preserves the short-lived shared-prefix lesson while satisfying the live-tradeoff invariant and preventing width `8` from becoming a strictly dominant answer.
+
+Only a completed non-frozen run can request the width-4 comparison. That comparison remains informational, exposes the U-curve, and asks for a post-evidence causal explanation. The rhythm is therefore touch, predict, consequence, local recovery or completion, compare, and explain.

@@ -1,25 +1,31 @@
-# Level 11 — Pack the Context
+# Level 11 — Monday’s Three Tickets
 
 ## 1. Identity
 
 - `id`: `11-pack-the-context`
-- `title`: **Pack the Context**
+- `title`: **Monday’s Three Tickets**
 - `tier`: `3`
-- `objective`: “Three tickets, three fresh workspaces. Pack one loadout.”
+- `objective`: “Ship the checkout, policy, and customer-sync tickets in three new workspaces.”
 - `concept.id`: `prefix-loadout-sizing`
 - `concept.privateDesignerSummary`: Every always-loaded token is rewritten across independent cold bases; optimize prefix size subject to capability sufficiency.
 - `concept.postRevealRule`: “Pack every required capability—and nothing the tickets do not use.”
+- `concept.solutionVocabulary`: `["pack", "loadout", "prefix", "context", "smallest sufficient", "capability", "unused", "passenger", "skills", "memory", "MCP"]`
+- `conceptScope`: `{ kind: "single", reusedConceptIds: [] }`
 - `prerequisiteConceptIds`: `["prefix-reuse", "workload-cost-mix"]`
 
-The IDs and prerequisite order are the canonical L11 row of the `LevelId` and `ConceptId` registries.
+The title and objective frame the situation without using the registered mechanic or answer vocabulary. The IDs and prerequisite order are the canonical L11 row of the `LevelId` and `ConceptId` registries.
 
 ## 2. Objects used
 
 - `LevelDef`
 - `ReducerState`
+- `AttemptMetrics`
+- `AttemptResult`
 - `Action`
+- `StatePredicate`
 - `LoadoutState`
 - `CapabilitySeed`
+- `Counts`
 - `PREFIX_STACK`
 - `PrefixBlock`
 - `PB_SYSTEM`
@@ -36,16 +42,25 @@ The IDs and prerequisite order are the canonical L11 row of the `LevelId` and `C
 - `LedgerRow`
 - `WireSegment`
 - `Wallet`
+- `LocalAttemptFailure`
+- `FailureRuleDef`
 - `TapeRenderer`
 - `UI_PREFIX_STACK_VISUALIZER`
 - `UI_PREDICTION_PROMPT`
 - `UI_TOAST_SYSTEM`
 - `UI_REWIND_CONTROL`
+- `UI_RESULT_SCREEN`
 - `predict-before-reveal`
+- `fail-freeze-rewind`
 - `just-in-time-toast`
 - `counterfactual-after-attempt`
 
-L11 has no `FREEZE_FAILURE`: an omitted capability creates no priced request, so freezing that cheaper branch would violate the economically-true-freeze contract.
+Skills, memory files, and MCP servers appear inside one compound loadout-packer surface. Their three canonical setter actions remain separate reducer adapters because they mutate different `LoadoutState` arrays and `PrefixBlock`s; they are not rendered as three panels, tabs, setup stages, or independent mechanics.
+
+L11 has two economically distinct unsuccessful outcomes:
+
+- Missing capability dispatches `STOP_LOCAL_ATTEMPT` and stores `LocalAttemptFailure`; it does not freeze.
+- Reusing the exact all-loaded setup after its cost has been exposed may satisfy one narrow `FailureRuleDef` and exercise `fail-freeze-rewind`.
 
 ## 3. Cold-open / narrative
 
@@ -55,104 +70,135 @@ L11 has no `FREEZE_FAILURE`: an omitted capability creates no priced request, so
   - **Checkout fix:** “Find where checkout rejects expired cards and patch it.”
   - **Policy update:** “Change the policy without breaking this repository’s house style.”
   - **Customer sync:** “Map the new account field into the CRM sync.”
-- **0.5s:** The cards show prose only. No capability badge, provider icon, connecting line, recommended item, or correctness color is visible.
-- **1.0s:** `UI_PREFIX_STACK_VISUALIZER` opens beside a packed-token meter. Optional cards scatter onto the desk.
-- **1.5s:** Copy: **“Each workspace starts cold. Pack one loadout for all three.”**
+- **0.5s:** The cards show prose only. No capability badge, provider icon, connecting line, recommended item, correctness color, or price comparison is visible.
+- **1.0s:** `UI_PREFIX_STACK_VISUALIZER` opens beside one desk-sized card tray and a token meter. The tray is a single focus region labeled **Batch setup**.
+- **1.5s:** Copy: **“Three unopened workspaces. Choose one desk setup to take through the batch.”**
 - **2.0s:** The compound loadout packer becomes interactive; **Run tickets** is the primary control. `firstInteractiveBySec = 2` `[ESTIMATE]`.
+
+The single card tray may group cards visually by source using small metadata chips, but selection, removal, keyboard navigation, and token feedback use one shared interaction model.
 
 Available cards:
 
-| Item | Prefix object | Size source | Pre-play card copy |
-|---|---|---|---|
-| Repo Navigator | `PB_SKILLS` invoked body | `SKILL_BODY_TOK` (`C32`) | “Search and trace this repository.” |
-| Release Notes | `PB_SKILLS` invoked body | `SKILL_BODY_TOK` (`C32`) | “Draft public release summaries.” |
-| Team Conventions | `PB_MEMORY` file | `MEMORY_PER_FILE` `[FICTION]` | “This team’s local style and release rules.” |
-| Personal Scratchpad | `PB_MEMORY` file | `MEMORY_PER_FILE` `[FICTION]` | “Personal notes from unrelated work.” |
-| CRM MCP | `PB_MCP` server | `MCP_SIZES[1]` (`C24`, split `[FICTION]`) | “CRM objects and field schemas.” |
-| Browser MCP | `PB_MCP` server | `MCP_SIZES[0]` (`C24`, split `[FICTION]`) | “Operate browser pages.” |
-| Issues MCP | `PB_MCP` server | `MCP_SIZES[2]` (`C24`, split `[FICTION]`) | “Read and update issue records.” |
-| Deploy MCP | `PB_MCP` server | `MCP_SIZES[3]` (`C24`, split `[FICTION]`) | “Inspect and trigger deployments.” |
+| Item | Item ID | Prefix object | Size source | Pre-play card copy |
+|---|---|---|---|---|
+| Repo Navigator | `repo-navigator` | `PB_SKILLS` invoked body | `SKILL_BODY_TOK` (`C32`) | “Search and trace this repository.” |
+| Release Notes | `release-notes` | `PB_SKILLS` invoked body | `SKILL_BODY_TOK` (`C32`) | “Draft public release summaries.” |
+| Team Conventions | `team-conventions` | `PB_MEMORY` file | `MEMORY_PER_FILE` `[FICTION]` | “This team’s local style and release rules.” |
+| Personal Scratchpad | `personal-scratchpad` | `PB_MEMORY` file | `MEMORY_PER_FILE` `[FICTION]` | “Personal notes from unrelated work.” |
+| CRM Field Notes | `crm-field-notes` | `PB_MEMORY` file | `MEMORY_PER_FILE` `[FICTION]` | “Saved CRM field names and mapping examples from last quarter.” |
+| Archived Notes 1–7 | `archived-notes-01`…`07` | seven `PB_MEMORY` files | `7 × MEMORY_PER_FILE` `[FICTION]` | “Archived notes from a different project.” |
+| CRM MCP | `crm-mcp` | `PB_MCP` server | `MCP_SIZES[1]` (`C24`, split `[FICTION]`) | “Inspect current CRM objects and field schemas.” |
+| Browser MCP | `browser-mcp` | `PB_MCP` server | `MCP_SIZES[0]` (`C24`, split `[FICTION]`) | “Operate browser pages.” |
+| Issues MCP | `issues-mcp` | `PB_MCP` server | `MCP_SIZES[2]` (`C24`, split `[FICTION]`) | “Read and update issue records.” |
+| Deploy MCP | `deploy-mcp` | `PB_MCP` server | `MCP_SIZES[3]` (`C24`, split `[FICTION]`) | “Inspect and trigger deployments.” |
 
-The prose supplies inferable evidence without presenting the exact three-star combination as a badge-matching exercise. Capability badges are confirmed only by the first run’s ticket outcomes.
+`CRM Field Notes` occupies one of the ten existing memory fixture slots; adding the decoy does not change `memoryFiles=10`, `MEMORY_PER_FILE`, the anti-pattern prefix, or any price.
 
-No pre-play element states the reference loadout, the smallest-sufficient rule, a dollar comparison, or which cards will be used.
+The decoy makes the first attempt inferential rather than elimination-by-category:
+
+- The customer ticket asks for a **new** account field.
+- `CRM Field Notes` plausibly advertises related field knowledge but explicitly says it is from last quarter.
+- `CRM MCP` advertises the current schema.
+- Only `crm-mcp` appears in `CapabilitySeed.providedBy` for `crm-schema`; `crm-field-notes` receives no hidden exception and cannot satisfy that capability.
+
+A defensive all-loaded choice remains functionally useful because it avoids omission risk, but it repeats more input-side material. A smaller choice lowers repeated writes but requires reasoning from ticket and card prose. Neither route is strictly dominant.
+
+No pre-play element states the reference combination, the exact capability mapping, the smallest-sufficient rule, a dollar comparison, or which cards will be used.
 
 ## 4. Exact event sequence
 
 1. **Enter level** → `ENTER_LEVEL { levelId: "11-pack-the-context" }`.
-   - Initializes `ReducerState`, the session `Wallet`, three distinct cold `MAIN_SESSION_CONTEXT` namespaces, empty optional `LoadoutState`, and the three `PREFIX_STACK` seeds.
-   - Each fixed stack begins with `L11_FIXED_BASE`, whose canonical derivation is `SYSTEM_BASE + CATALOG_RESIDUE`; L11 cites `C33`. The `2,610`-token residue is the engine constant `CATALOG_RESIDUE`, not a standalone use of `C6`.
+   - Initializes `ReducerState`, scalar `wallet` and `budget`, three ordinary cold `MAIN_SESSION_CONTEXT` namespaces, one scripted transfer namespace, empty optional `LoadoutState`, and `Counts.loadoutSubmissionsByFingerprint`.
+   - Each stack begins with `L11_FIXED_BASE`, whose canonical derivation is `SYSTEM_BASE + CATALOG_RESIDUE`; L11 cites `C33`.
+   - The `2,610`-token residue is the engine constant `CATALOG_RESIDUE`, not a standalone use of `C6`.
    - Capability mappings exist in `CapabilitySeed` but remain private to the reducer.
 
-2. **Create the retry boundary** → `CREATE_CHECKPOINT { checkpointId: "cp-loadout", reason: "decision" }`.
-   - The checkpoint is after the cold-open and before any loadout mutation or prediction.
+2. **Create the initial retry boundary** → `CREATE_CHECKPOINT { checkpointId: "cp-loadout", reason: "decision" }`.
+   - The checkpoint is after the cold-open and before any card selection or prediction.
    - No request, cache, ledger, tape, or wallet mutation occurs.
 
-3. **Pack skills** → `SET_SKILL_LOADOUT { skillIds, mode }`.
-   - Mutates `selectedLoadout.skillIds`, `selectedLoadout.skillsMode`, and `PB_SKILLS`.
-   - Invoked mode loads selected bodies; eager mode loads `CATALOG_FULL`.
-   - The packed-token meter updates; no work runs.
+3. **Edit the Batch setup tray** → one or more canonical loadout setter actions:
+   - Selecting or removing a skill card dispatches `SET_SKILL_LOADOUT { skillIds, mode }`.
+   - Selecting or removing a memory card dispatches `SET_MEMORY_LOADOUT { memoryIds }`.
+   - Selecting or removing a connection card dispatches `SET_MCP_LOADOUT { serverIds }`.
+   - These are adapter actions behind one visible control. The tray never asks the player to complete separate “skills,” “memory,” or “MCP” stages.
+   - The actions mutate `selectedLoadout` and the corresponding `PB_SKILLS`, `PB_MEMORY`, or `PB_MCP`.
+   - Invoked mode loads selected skill bodies; eager mode loads `CATALOG_FULL`.
+   - The packed-token meter updates. No work runs.
 
-4. **Pack memory** → `SET_MEMORY_LOADOUT { memoryIds }`.
-   - Mutates `selectedLoadout.memoryIds` and `PB_MEMORY`.
-   - Each selected file contributes `MEMORY_PER_FILE`.
-   - No work runs.
-
-5. **Pack MCP servers** → `SET_MCP_LOADOUT { serverIds }`.
-   - Mutates `selectedLoadout.mcpServerIds` and `PB_MCP`.
-   - Selected sizes come from `MCP_SIZES`.
-   - No work runs.
-
-6. **Predict the selected loadout’s outcome** → `OPEN_PREDICTION`, `SELECT_PREDICTION`, then `COMMIT_PREDICTION` for `pack-outcome`.
+4. **Predict the selected setup’s outcome** → `OPEN_PREDICTION`, `SELECT_PREDICTION`, then `COMMIT_PREDICTION` for `pack-outcome`.
    - The committed option is immutable for this run.
    - **Run tickets** remains disabled until commitment.
    - Selection and correctness affect no wallet, score, stars, failure, or gate value.
 
-7. **Submit Checkout fix** → `SUBMIT_LOADOUT { ticketId: "checkout" }`.
-   - If Repo Navigator is absent, no `Request` is created. Event `ev-loadout-insufficient` confirms badge `repo-navigation`, stops the remaining submissions, and proceeds to the non-economic failed-attempt result in §9.
-   - Otherwise `RESOLVE_PREFIX` and `PRICE_REQUEST` resolve `pack-checkout`; one `CacheEntry` and one `LedgerRow` are created, the `Wallet` is debited, and the ticket becomes complete.
+5. **Submit Checkout fix** → `SUBMIT_LOADOUT { ticketId: "checkout" }`.
+   - The action increments `counts.loadoutSubmissionsByFingerprint` for the exact canonical sorted setup.
+   - If Repo Navigator is absent, no `Request` is created. Event `ev-loadout-insufficient-checkout` confirms `repo-navigation`, dispatches the `STOP_LOCAL_ATTEMPT` outcome in §9, and stops remaining tickets.
+   - Otherwise `RESOLVE_PREFIX` and `PRICE_REQUEST` resolve `pack-checkout`; one `CacheEntry` and one `LedgerRow` are created, `wallet` is debited, `attemptMetrics.spentUsd` and `attemptMetrics.requestCount` update, and the ticket becomes complete.
    - Only after resolution does its `repo-navigation` badge appear and connect to the provider that satisfied it.
 
-8. **Submit Policy update** → `SUBMIT_LOADOUT { ticketId: "policy" }`.
-   - If Team Conventions is absent, no `pack-policy` request exists; `team-conventions` is confirmed and the run stops locally.
+6. **Submit Policy update** → `SUBMIT_LOADOUT { ticketId: "policy" }`.
+   - If Team Conventions is absent, no `pack-policy` request exists; event `ev-loadout-insufficient-policy` confirms `team-conventions` and dispatches the local outcome.
    - Otherwise the second cold namespace produces one independently priced row.
    - After resolution, the ticket confirms `team-conventions`. The first workspace’s cache cannot cross namespaces.
 
-9. **Submit Customer sync** → `SUBMIT_LOADOUT { ticketId: "crm" }`.
-   - If CRM MCP is absent, no `pack-crm` request exists; `crm-schema` is confirmed and the run stops locally.
+7. **Submit Customer sync** → `SUBMIT_LOADOUT { ticketId: "crm" }`.
+   - If CRM MCP is absent, no `pack-crm` request exists; event `ev-loadout-insufficient-crm` confirms `crm-schema` and dispatches the local outcome.
+   - Selecting `crm-field-notes` does not satisfy `crm-schema`. After this stop, the decoy may be labeled **“Related notes; new field absent.”**
    - Otherwise the third cold namespace produces one independently priced row.
    - After resolution, the ticket confirms `crm-schema`.
-   - Event `ev-third-cold-write` is the aha frame: ghost outlines align the three copies of the selected packed prefix.
+   - Event `ev-third-cold-write` is the aha frame: ghost outlines align the three copies of the selected prefix.
 
-10. **Reveal the committed outcome** → `REVEAL_PREDICTION { promptId: "pack-outcome", correctOptionId }`.
-    - Requires the corresponding committed prediction.
-    - Shows correctness styling without changing score or gate state.
-    - A blocked run reveals only requirements reached by that run; future ticket requirements remain unconfirmed.
-    - A completed run fires `ev-reveal-usage`: every selected card is labeled **used by {ticket}** or **unused in this batch**, and the repeated-prefix evidence becomes available.
+8. **Reveal the committed outcome** → `REVEAL_PREDICTION { promptId: "pack-outcome", correctOptionId }`.
+   - Requires the corresponding committed prediction.
+   - Shows correctness styling without changing score or gate state.
+   - A blocked run reveals only requirements reached by that run; future ticket requirements remain unconfirmed.
+   - A completed run fires `ev-reveal-usage`: every selected card is labeled **used by {ticket}** or **unused in this batch**.
+   - For a completed all-loaded run, the post-evidence panel may now display its already-incurred `L11_ANTI_REQUEST_USD` beside the derived confirmed-use preview `L11_REFERENCE_REQUEST_USD`. This is evidence from the actual setup and confirmed card use, not a counterfactual event.
 
-11. **Apply the evidence to the next batch** → `BEGIN_TRANSFER { challengeId: "repack-confirmed" }`.
-    - Copy: **“Three more cold workspaces have the same needs. What stays packed?”**
-    - The player may change the same loadout controls. These mutations define the next-batch plan and never rewrite past `LedgerRow`s.
-    - The player selects an explanation:
+9. **Create the post-evidence retry boundary** → `CREATE_CHECKPOINT { checkpointId: "cp-transfer", reason: "decision" }`.
+   - Created after `ev-reveal-usage` and before any transfer explanation or loadout edit.
+   - Rewinding here preserves the completed first-batch rows, spend, revealed requirements, and usage evidence.
+
+10. **Apply the evidence to the next batch** → `BEGIN_TRANSFER { challengeId: "repack-confirmed" }`.
+    - Copy: **“Three more unopened workspaces have the same tickets. What stays on the desk?”**
+    - The player edits the same compound tray. These mutations define a next-batch plan and never rewrite past `LedgerRow`s.
+    - The player selects one explanation; every option dispatches `ACK_EXPLANATION` with its own ID:
       - `keep-required-remove-unused`: **“Keep every confirmed requirement; remove every confirmed passenger.”**
       - `keep-everything`: **“Keep every optional card, just in case.”**
-      - `strip-everything`: **“Cold starts make packed context useless.”**
-    - Selecting the first option dispatches `ACK_EXPLANATION { explanationId: "keep-required-remove-unused" }`.
-    - The transfer is accepted only when the planned next loadout is Repo Navigator + Team Conventions + CRM MCP in invoked mode.
+      - `strip-everything`: **“New workspaces make the desk setup useless.”**
+    - The transfer is accepted only when the plan is Repo Navigator + Team Conventions + CRM MCP in invoked mode and `keep-required-remove-unused` has been acknowledged.
 
-12. **Complete the scored attempt** → `COMPLETE_ATTEMPT`.
-    - Evaluates the post-evidence gate and stars.
-    - No prediction option or prediction correctness participates.
-    - A completed but bloated priced run can earn one star after the player corrects the next-batch plan; its historical tape and spend remain unchanged.
+11. **Complete a corrected transfer** → `COMPLETE_ATTEMPT`.
+    - Evaluates `L11_GATE` and the star predicates.
+    - No additional priced request is required to accept the corrected plan; the post-evidence setter and explanation actions are the transfer demonstration.
+    - A completed but bloated first batch can earn one star after the player corrects the next-batch plan. Its historical tape and spend remain unchanged.
+    - A completed smallest-sufficient first batch can earn two or three stars according to §10.
 
-13. **Predict the all-loaded counterfactual** → commit `cold-repeat`.
-    - Available only after a capability-complete attempt.
+12. **Reach the narrow repeated-bloat failure** → `SUBMIT_LOADOUT { ticketId: "checkout-transfer" }`.
+    - This action is available only when the first batch completed with the exact all-loaded fingerprint and the player leaves that setup unchanged after `ev-reveal-usage`.
+    - The button copy is **“Run unchanged again.”**
+    - The scripted `checkout-transfer` unit uses a fourth cold `MAIN_SESSION_CONTEXT` and request ID `pack-repeat-checkout`.
+    - The request resolves economically before failure evaluation: `LedgerRow` appends, `wallet` and `attemptMetrics` update, and its wider write segment is visible beside the pinned confirmed-use preview.
+    - The all-loaded fingerprint count advances from `3` ordinary ticket submissions to `4`.
+    - `L11_REPEAT_BLOAT_FAILURE` then dispatches `FREEZE_FAILURE` at `ev-repeat-all-loaded-checkout`.
+    - This event belongs to the player’s actual attempt. It is not a reference or counterfactual event.
+
+13. **Rewind the repeated-bloat failure** → `REWIND_TO_CHECKPOINT { checkpointId: "cp-transfer" }`.
+    - Removes only `pack-repeat-checkout`, its cache entry, its wallet deduction, its fingerprint increment, and post-checkpoint transfer actions.
+    - Preserves the three completed first-batch rows and all evidence revealed before `cp-transfer`.
+    - Returns directly to the compound tray with copy **“Change the next batch.”**
+
+14. **Predict the all-loaded counterfactual** → commit `cold-repeat`.
+    - Available only after a capability-complete `AttemptResult`.
     - The commitment unlocks the comparison request but never satisfies the behavioral gate.
 
-14. **Reveal the counterfactual** → `REQUEST_COUNTERFACTUAL { comparisonId: "all-loaded" }`, then `REVEAL_COUNTERFACTUAL { comparisonId: "all-loaded" }`.
-    - Uses the same seed, tickets, workload, models, and cold namespace topology.
-    - Overlays the reference and all-loaded ledgers without replacing actual state.
-    - It cannot appear before the attempt and `cold-repeat` commitment.
+15. **Reveal the counterfactual** → `REQUEST_COUNTERFACTUAL { comparisonId: "all-loaded" }`, then `REVEAL_COUNTERFACTUAL { comparisonId: "all-loaded" }`.
+    - Uses the same seed, three ordinary tickets, workload, models, and cold namespace topology.
+    - Excludes the scripted `checkout-transfer` failure probe.
+    - Overlays the reference and all-loaded three-row ledgers without replacing actual state.
+    - It cannot appear before attempt completion and `cold-repeat` commitment.
+    - Neither action may dispatch `FREEZE_FAILURE` or mutate `clockFrozen`, wallet, ledger, or `attemptResult`.
 
 ## 5. Level data
 
@@ -160,14 +206,32 @@ No pre-play element states the reference loadout, the smallest-sufficient rule, 
 const level11: LevelDef = {
   id: "11-pack-the-context",
   tier: 3,
-  title: "Pack the Context",
-  objective: "Three tickets, three fresh workspaces. Pack one loadout.",
+  title: "Monday’s Three Tickets",
+  objective:
+    "Ship the checkout, policy, and customer-sync tickets in three new workspaces.",
   concept: {
     id: "prefix-loadout-sizing",
     privateDesignerSummary:
       "Every always-loaded token is rewritten across independent cold bases; optimize prefix size subject to capability sufficiency.",
     postRevealRule:
       "Pack every required capability—and nothing the tickets do not use.",
+    solutionVocabulary: [
+      "pack",
+      "loadout",
+      "prefix",
+      "context",
+      "smallest sufficient",
+      "capability",
+      "unused",
+      "passenger",
+      "skills",
+      "memory",
+      "MCP",
+    ],
+  },
+  conceptScope: {
+    kind: "single",
+    reusedConceptIds: [],
   },
   prerequisiteConceptIds: ["prefix-reuse", "workload-cost-mix"],
 
@@ -231,6 +295,17 @@ const level11: LevelDef = {
         workIn: WORK_IN,
         label: "Customer sync",
       },
+      {
+        id: "checkout-transfer",
+        kind: "TASK",
+        ticket: 4,
+        deps: ["crm"],
+        hours: 1,
+        outTok: WORK_OUT,
+        workIn: WORK_IN,
+        scripted: true,
+        label: "Next-batch checkout",
+      },
     ],
     contexts: [
       {
@@ -253,6 +328,13 @@ const level11: LevelDef = {
         sessionId: "crm-session",
         cacheNamespace: "l11-crm",
         initialPrefixStackId: "l11-prefix-crm",
+      },
+      {
+        id: "ws-checkout-transfer",
+        kind: "main",
+        sessionId: "checkout-transfer-session",
+        cacheNamespace: "l11-checkout-transfer",
+        initialPrefixStackId: "l11-prefix-checkout-transfer",
       },
     ],
     prefixStacks: L11_PREFIX_STACK_SEEDS,
@@ -291,13 +373,28 @@ const level11: LevelDef = {
         ],
         allowedModels: ["sonnet"],
       },
+      {
+        id: "checkout-transfer",
+        label: "Next-batch checkout",
+        role: "dev",
+        unitIds: ["checkout-transfer"],
+        inputTok: WORK_IN,
+        outTok: WORK_OUT,
+        requiredCapabilityIds: ["repo-navigation"],
+        allowedModels: ["sonnet"],
+      },
     ],
     capabilities: [
       {
         id: "repo-navigation",
         label: "Repository navigation",
         providedBy: [{ kind: "skill", itemId: "repo-navigator" }],
-        requiredByWorkloadIds: ["checkout", "policy", "crm"],
+        requiredByWorkloadIds: [
+          "checkout",
+          "policy",
+          "crm",
+          "checkout-transfer",
+        ],
       },
       {
         id: "team-conventions",
@@ -326,23 +423,30 @@ const level11: LevelDef = {
   toasts: L11_TOASTS,
   interactionPatterns: [
     "predict-before-reveal",
+    "fail-freeze-rewind",
     "just-in-time-toast",
     "counterfactual-after-attempt",
   ],
 
   failLesson: {
     bucket: "none",
-    cite: "CapabilitySeed",
+    cite: "CapabilitySeed, C33, C24",
     line:
-      "Removing required context blocks work; unused context completes work but repeats its write cost.",
+      "Missing required context stops work locally; repeating confirmed passengers incurs a visibly larger cold write.",
   },
-  failureRules: [],
+  failureRules: [L11_REPEAT_BLOAT_FAILURE],
   checkpoints: [
     {
       id: "cp-loadout",
       createBeforeEventId: "ev-select-loadout",
       reason: "decision",
       resumeLabel: "Repack before the run",
+    },
+    {
+      id: "cp-transfer",
+      createBeforeEventId: "ev-transfer-choice",
+      reason: "decision",
+      resumeLabel: "Change the next batch",
     },
   ],
 
@@ -358,11 +462,16 @@ const level11: LevelDef = {
     reason: "The completed priced run carried no unused item.",
   },
   star3: {
-    label: "Packed from the prose",
+    label: "Inferred on the first attempt",
     predicate: {
       id: "first-attempt-minimal-under-reference",
       kind: "all",
       predicates: [
+        {
+          id: "priced-run-was-minimal-for-three-stars",
+          kind: "event-completed",
+          eventId: "ev-priced-run-minimal",
+        },
         {
           id: "first-attempt-minimal",
           kind: "event-completed",
@@ -371,14 +480,14 @@ const level11: LevelDef = {
         {
           id: "reference-threshold",
           kind: "compare",
-          path: "wallet.spentUsd",
+          path: "attemptMetrics.spentUsd",
           op: "lte",
           value: L11_REFERENCE_TOTAL_USD,
         },
       ],
     },
     reason:
-      "The first submitted loadout was smallest-sufficient and met the reference threshold.",
+      "The first submitted setup was smallest-sufficient and its completed three-row spend did not exceed the exact reference run.",
   },
 
   referenceCfg: {
@@ -418,7 +527,17 @@ const level11: LevelDef = {
 };
 ```
 
-The `mcp-required` scenario adapter maps `referenceCfg` deterministically to Repo Navigator, Team Conventions, and CRM MCP. Its all-loaded mapping selects the eager catalog, all ten memory files, and all four MCP servers. The compound packer is one screen mechanic even though it dispatches the canonical skill, memory, and MCP control actions.
+The `introducedControls` values enumerate canonical reducer/config adapters, not separate rendered surfaces. The renderer exposes exactly one Batch setup tray, one selection idiom, one token meter, and one primary action.
+
+The `mcp-required` scenario adapter maps `referenceCfg` deterministically to Repo Navigator, Team Conventions, and CRM MCP. Its all-loaded mapping selects the eager catalog, all ten memory files—including `crm-field-notes`—and all four MCP servers.
+
+The adapter assigns the exact all-loaded canonical sorted fingerprint the stable record key `l11-all-loaded`. Each ordinary all-loaded ticket submission increments:
+
+```text
+counts.loadoutSubmissionsByFingerprint["l11-all-loaded"]
+```
+
+from `0` to `1`, `2`, then `3`. Sending `checkout-transfer` unchanged increments it to `4`.
 
 `L11_GATE` is:
 
@@ -464,6 +583,11 @@ const L11_GATE: GateDef = {
           value: "done",
         },
       ],
+    },
+    {
+      id: "usage-evidence-revealed",
+      kind: "event-completed",
+      eventId: "ev-reveal-usage",
     },
     {
       id: "next-loadout-is-smallest-sufficient",
@@ -535,7 +659,104 @@ const L11_GATE: GateDef = {
 };
 ```
 
-`passLevel11` is pure and evaluates only `L11_GATE`; it never reads a prediction option or correctness flag.
+`passLevel11` reads only declared `ReducerState` fields. `ACK_EXPLANATION` for this level is accepted only after `ev-reveal-usage`, so the stored explanation ID cannot be pre-seeded:
+
+```ts
+function passLevel11(st: ReducerState): GateResult {
+  const passed =
+    st.units.checkout.status === "done" &&
+    st.units.policy.status === "done" &&
+    st.units.crm.status === "done" &&
+    st.completedEventIds.includes("ev-reveal-usage") &&
+    st.acknowledgedExplanationIds.includes(
+      "keep-required-remove-unused",
+    ) &&
+    st.selectedLoadout.skillIds.length === 1 &&
+    st.selectedLoadout.skillIds.includes("repo-navigator") &&
+    st.selectedLoadout.skillsMode === "invoke" &&
+    st.selectedLoadout.memoryIds.length === 1 &&
+    st.selectedLoadout.memoryIds.includes("team-conventions") &&
+    st.selectedLoadout.mcpServerIds.length === 1 &&
+    st.selectedLoadout.mcpServerIds.includes("crm-mcp");
+
+  return {
+    pass: passed,
+    reason: passed
+      ? "The next batch retains every confirmed need and no confirmed passenger."
+      : "Use the revealed ticket evidence to revise the next batch.",
+    evidence: passed
+      ? [
+          "ev-reveal-usage",
+          "keep-required-remove-unused",
+          "repo-navigator",
+          "team-conventions",
+          "crm-mcp",
+        ]
+      : [],
+  };
+}
+```
+
+The narrow punitive rule is:
+
+```ts
+const L11_REPEAT_BLOAT_FAILURE: FailureRuleDef = {
+  id: "l11-repeat-all-loaded-after-evidence",
+  predicate: {
+    id: "all-loaded-sent-again-uncorrected",
+    kind: "all",
+    predicates: [
+      {
+        id: "usage-was-revealed",
+        kind: "event-completed",
+        eventId: "ev-reveal-usage",
+      },
+      {
+        id: "eager-catalog-still-selected",
+        kind: "compare",
+        path: "selectedLoadout.skillsMode",
+        op: "eq",
+        value: "eager",
+      },
+      {
+        id: "all-ten-memory-files-still-selected",
+        kind: "compare",
+        path: "selectedLoadout.memoryIds.length",
+        op: "eq",
+        value: 10,
+      },
+      {
+        id: "all-four-mcp-servers-still-selected",
+        kind: "compare",
+        path: "selectedLoadout.mcpServerIds.length",
+        op: "eq",
+        value: 4,
+      },
+      {
+        id: "all-loaded-fingerprint-reached-transfer",
+        kind: "compare",
+        path:
+          'counts.loadoutSubmissionsByFingerprint["l11-all-loaded"]',
+        op: "gte",
+        value: 4,
+      },
+    ],
+  },
+  decisiveEventId: "ev-repeat-all-loaded-checkout",
+  causeCode: "REPEATED_CONFIRMED_BLOAT",
+  message:
+    "You sent the same all-loaded setup again. Its first cold request cost $0.910428 instead of the confirmed-use $0.747024.",
+  checkpointId: "cp-transfer",
+  highlightObjectIds: [
+    "pack-repeat-checkout:write",
+    "confirmed-use-request-preview",
+  ],
+  actualUsd: L11_ANTI_REQUEST_USD,
+  validAlternativeUsd: L11_REFERENCE_REQUEST_USD,
+};
+```
+
+Every predicate above uses a declared state path, a legal `StatePredicate.kind`, and a legal comparison op. No predicate reads prediction correctness or an object-shaped wallet path.
 
 ## 6. Pricing walkthrough
 
@@ -563,7 +784,7 @@ selectedMcpTok    = sum(selected MCP entries from MCP_SIZES)
 
 `L11_FIXED_BASE = SYSTEM_BASE + CATALOG_RESIDUE = 5,360` tokens (`C33`). The level uses the engine constant `CATALOG_RESIDUE`; it does not cite `C6` as the fixed-base quantity.
 
-Every successful workspace is an independent cold namespace:
+Every successful ordinary workspace is an independent cold namespace:
 
 ```text
 readTok  = 0
@@ -606,7 +827,7 @@ L11_ANTI_PREFIX_TOK =
   = 38,738 writeTok
 ```
 
-The eager catalog is `C7`; memory files are `[FICTION]`; the MCP total and fixture split are `C24`.
+The eager catalog is `C7`; the ten memory files—including the decoy—are `[FICTION]`; the MCP total and fixture split are `C24`.
 
 ```text
 L11_ANTI_WRITE_USD  = 38,738 × $6/M  = $0.232428
@@ -631,7 +852,23 @@ L11_BLOAT_RATIO = $0.490212 / $2.241072
                 = 21.873996%
 ```
 
-The core choice therefore has a visible economic tradeoff: all-loaded succeeds functionally but costs about `21.87%` more than the smallest-sufficient loadout.
+The core choice therefore has a visible economic tradeoff: all-loaded succeeds functionally and protects against omission, but costs about `21.87%` more than the smallest-sufficient setup.
+
+### Repeated-bloat failure request
+
+`pack-repeat-checkout` uses the same all-loaded prefix and the same `C28` workload as one ordinary all-loaded request:
+
+```text
+readTok  = 0
+writeTok = 38,738
+inputTok = 6,000
+outTok   = 44,000
+
+actualUsd           = L11_ANTI_REQUEST_USD
+validAlternativeUsd = L11_REFERENCE_REQUEST_USD
+```
+
+Both values already have one authoritative computation above. The failure rule introduces no replacement price or alternate arithmetic.
 
 ### Deficient loadout accounting
 
@@ -643,7 +880,7 @@ For completed rows on a deficient branch, prefix bloat is compared only against 
 
 `TapeSpec.rowSource = "ledger"` and `hoverEnabled = true`.
 
-For the player’s selected prefix `P`, successful rows appear in this order:
+For the player’s selected prefix `P`, ordinary successful rows appear in this order:
 
 1. `pack-checkout`
    - `writeTok=P`, red
@@ -656,7 +893,7 @@ For the player’s selected prefix `P`, successful rows appear in this order:
 
 A deficient run contains only rows for tickets that actually executed; no placeholder row represents the blocked ticket.
 
-`ahaRequestId = "pack-crm"`. When its write segment lands, ghost outlines align the three selected-prefix writes and the meter changes from **“{P} packed”** to **“{P} × 3 cold starts.”**
+`ahaRequestId = "pack-crm"`. When its write segment lands, ghost outlines align the three selected-prefix writes and the meter changes from **“{P} on the desk”** to **“{P} × 3 unopened workspaces.”**
 
 Every `WireSegment`, including output, uses the canonical truthful geometry:
 
@@ -667,27 +904,38 @@ segment.startRatio = prior segment USD / LedgerRow.usd
 
 Thus `outTok` contributes its full `RATE_OUTPUT` cost (`C1`, `C3`, `C28`) from the first rendered row. Hiding an output label never removes the violet segment’s visual weight.
 
-After `cold-repeat` commitment, `all-loaded` overlays the wider anti-pattern write segments beneath the completed player tape. The overlay is unavailable pre-play.
+The repeated-bloat branch appends one fourth actual row:
+
+4. `pack-repeat-checkout`
+   - `writeTok=L11_ANTI_PREFIX_TOK`, red
+   - `inputTok=WORK_IN`, red
+   - `outTok=WORK_OUT`, violet
+   - rendered beside a non-ledger ghost outline for `L11_REFERENCE_PREFIX_TOK`
+   - freezes after the complete row and its two price labels become visible
+
+The ghost outline is comparison evidence, not a request or ledger row.
+
+After `cold-repeat` commitment, `all-loaded` overlays the wider anti-pattern write segments beneath the completed three-row player tape. The overlay is unavailable pre-play and cannot trigger failure.
 
 ## 8. Prediction prompts
 
 ### `pack-outcome`
 
-Shown after the player packs a loadout and before any ticket runs.
+Shown after the player selects a setup and before any ticket runs.
 
-> **What will this exact loadout do across the three tickets?**
+> **What will this exact desk setup do across the three tickets?**
 
-- `complete-tight`: **“Complete all three with little unused context.”**
-- `complete-bloated`: **“Complete all three while unused context repeats.”**
-- `blocked`: **“Stop when a ticket needs something that was not packed.”**
+- `complete-tight`: **“Complete all three with little unused material.”**
+- `complete-bloated`: **“Complete all three while unused material repeats.”**
+- `blocked`: **“Stop when a ticket needs something that is missing.”**
 
-The prompt does not display required badges or identify a correct provider. Correct-state styling appears only after the run stops or completes. Any option may be wrong without affecting score, stars, wallet, failure, or gate passage.
+The prompt does not display required badges or identify a correct provider. `CRM Field Notes` and `CRM MCP` retain neutral styling. Correct-state styling appears only after the run stops or completes. Any option may be wrong without affecting score, stars, wallet, failure, or gate passage.
 
 ### `cold-repeat`
 
 Shown after a capability-complete attempt and before `all-loaded` is revealed.
 
-> **If every optional card is packed for the same three fresh workspaces, which priced bucket grows on all three requests?**
+> **If every optional card travels through the same three new workspaces, which priced bucket grows on all three requests?**
 
 - `writes`: **“The cold prefix writes.”**
 - `outputs`: **“The generated answers.”**
@@ -695,50 +943,98 @@ Shown after a capability-complete attempt and before `all-loaded` is revealed.
 
 Correct option: `writes`. Commitment is required for the reveal; correctness is not required for completion.
 
-The post-evidence `keep-required-remove-unused` explanation in §4 is not a prediction. It is a retriable causal choice after the player has seen actual ticket and tape evidence, and it is the action observed by the behavioral gate.
+The post-evidence `keep-required-remove-unused` explanation is not a prediction. It is a retriable causal choice after actual ticket, usage, and tape evidence, and it is the action observed by the behavioral gate.
 
 ## 9. Fail-state
 
-### Missing capability
+### Missing capability — non-freezing local failed attempt
 
 Decisive event: the first `SUBMIT_LOADOUT` whose ticket requires an absent capability.
 
 One-line cause copy uses the concrete ticket:
 
-- **“Checkout fix stopped: repository navigation was not packed.”**
-- **“Policy update stopped: team conventions were not packed.”**
-- **“Customer sync stopped: the CRM schema was not packed.”**
+- **“Checkout fix stopped: repository navigation was missing.”**
+- **“Policy update stopped: team conventions were missing.”**
+- **“Customer sync stopped: current CRM schema access was missing.”**
+
+The event dispatches:
+
+```ts
+{
+  type: "STOP_LOCAL_ATTEMPT",
+  failure: {
+    outcomeId: "l11-missing-capability",
+    causeCode: missingCapabilityId,
+    message: concreteTicketMessage,
+    stoppedAtEventId: decisiveEventId,
+    checkpointId: "cp-loadout",
+    missingCapabilityIds: [missingCapabilityId],
+  },
+}
+```
 
 Behavior:
 
 - The blocked card shakes once and confirms only its missing capability badge.
+- If `crm-field-notes` was selected without `crm-mcp`, the decoy is marked **“Related notes; new field absent.”**
 - No request or priced placeholder is created for the blocked ticket.
-- Previously completed rows and spend remain visible until the player chooses retry.
+- Previously completed rows and spend remain visible until retry.
 - Remaining ticket requirements stay unconfirmed.
-- `Clock.frozen` remains `false`.
-- No `FREEZE_FAILURE` or `FailureRuleDef` is emitted because the blocked branch has not incurred a higher API cost than successful completion.
-- `REVEAL_PREDICTION` may now show what happened, but prediction correctness remains non-punitive.
-- `COMPLETE_ATTEMPT` records a local unsuccessful attempt.
+- `clockFrozen` remains `false`.
+- `frozenFailure` remains `null`.
+- `ended` remains `null`.
+- `localAttemptFailure` stores the exact `LocalAttemptFailure`.
+- `REVEAL_PREDICTION` may show what happened, but prediction correctness remains non-punitive.
+- `COMPLETE_ATTEMPT` records `attemptResult.outcome = "local-failed"` and the matching `localFailureId`.
 - `UI_REWIND_CONTROL` copy: **“Repack before the run.”**
-- `REWIND_TO_CHECKPOINT { checkpointId: "cp-loadout" }` deterministically removes the abandoned branch’s rows, cache entries, and wallet deductions, retains the attempt count, and returns to the loadout decision without replaying the cold-open.
+- `REWIND_TO_CHECKPOINT { checkpointId: "cp-loadout" }` removes the abandoned branch’s rows, cache entries, and wallet deductions, retains the attempt count, and returns to the tray without replaying the cold-open.
 
-A capability-complete bloated loadout is not stopped: it must finish so its genuine repeated write cost can become evidence. It fails the behavioral gate only if the player refuses to correct the next-batch plan after that evidence.
+No `FailureRuleDef` or `FREEZE_FAILURE` applies to missing capability because that branch has not produced an overpriced request.
 
-This non-freezing stop is intentional: inventing a charged request or freezing a cheaper branch would violate causal accounting and the canonical economically-true-freeze rule.
+### Repeated all-loaded setup — punitive freeze
+
+Decisive event: `ev-repeat-all-loaded-checkout`, immediately after `pack-repeat-checkout` resolves in the player’s actual branch.
+
+Required evidence:
+
+- The initial all-loaded batch completed.
+- `ev-reveal-usage` exposed which cards were passengers.
+- The screen visibly shows `L11_ANTI_REQUEST_USD` and `L11_REFERENCE_REQUEST_USD`.
+- The player leaves the exact all-loaded setup unchanged and selects **Run unchanged again**.
+- The all-loaded fingerprint count reaches `4`.
+
+Cause copy:
+
+> **“You sent the same all-loaded setup again. Its first cold request cost $0.910428 instead of the confirmed-use $0.747024.”**
+
+Behavior:
+
+- The real `pack-repeat-checkout` row lands before the freeze.
+- `FREEZE_FAILURE` sets `clockFrozen = true` and records `L11_REPEAT_BLOAT_FAILURE`.
+- The wider actual write and narrower valid-alternative outline remain visible.
+- Economic controls disable; prediction controls and counterfactual controls do not appear.
+- `UI_REWIND_CONTROL` copy: **“Change the next batch.”**
+- `REWIND_TO_CHECKPOINT { checkpointId: "cp-transfer" }` removes only the repeated request branch and returns directly to the post-evidence decision.
+- The initial three rows, their spend, confirmed badges, and usage evidence remain intact.
+
+A capability-complete bloated first attempt is never frozen merely for exploration. It must finish so its genuine cost becomes evidence. The punitive rule applies only when the exact all-loaded setup is sent again after that evidence.
+
+No reference, anti-pattern, `REQUEST_COUNTERFACTUAL`, or `REVEAL_COUNTERFACTUAL` event may dispatch this failure.
 
 ## 10. Gate & stars
 
 Behavioral pass predicate:
 
 ```text
-all three tickets completed
+checkout, policy, and crm units are done
 AND ev-reveal-usage completed
-AND after ev-reveal-usage the player acknowledged keep-required-remove-unused
-AND the next-batch loadout contains exactly:
+AND after ev-reveal-usage the player acknowledged
+    keep-required-remove-unused
+AND selectedLoadout contains exactly:
     Repo Navigator in invoke mode
     Team Conventions
     CRM MCP
-AND the next-batch loadout contains no additional skill, memory, or MCP item
+AND selectedLoadout contains no additional skill, memory, or MCP item
 ```
 
 Neither `pack-outcome` nor `cold-repeat` commitment, selected option, or correctness appears in `L11_GATE`, `passLevel11`, a star predicate, a wallet mutation, or a failure decision. Predictions gate their reveals only.
@@ -746,32 +1042,35 @@ Neither `pack-outcome` nor `cold-repeat` commitment, selected option, or correct
 Budget alone cannot pass.
 
 - **1 star — Repacked:** the behavioral pass predicate holds.
-- **2 stars — Smallest sufficient:** pass, and event `ev-priced-run-minimal` confirms that the completed priced run itself used the smallest-sufficient loadout.
-- **3 stars — Packed from the prose:** two-star predicate holds, `ev-first-attempt-priced-run-minimal` confirms it happened on the first attempt, and `wallet.spentUsd <= L11_REFERENCE_TOTAL_USD`.
+- **2 stars — Smallest sufficient:** pass, and `ev-priced-run-minimal` confirms that the completed priced run itself used the smallest-sufficient setup.
+- **3 stars — Inferred on the first attempt:** the two-star event holds, `ev-first-attempt-priced-run-minimal` holds, and `attemptMetrics.spentUsd <= L11_REFERENCE_TOTAL_USD` when `COMPLETE_ATTEMPT` evaluates stars.
 
-A bloated first run followed by a correct post-evidence repack earns one star. A corrected smallest-sufficient run after an insufficient attempt can earn two. The first-attempt reference route earns three.
+`COMPLETE_ATTEMPT` then copies `attemptMetrics.spentUsd` into `attemptResult.spentUsd`; no predicate uses `wallet.spentUsd`.
+
+A bloated first run followed by a correct post-evidence revision earns one star. A corrected smallest-sufficient run after an insufficient local attempt can earn two. The first-attempt reference route earns three.
 
 Result copy:
 
 - Pass headline: **“Every ticket shipped.”**
 - One-star evidence: **“The next batch carries only confirmed needs.”**
-- Two-star evidence: **“Three capabilities packed. Three cold starts. No passengers.”**
-- Three-star evidence: **“You inferred the loadout before the badges appeared.”**
-- Deficient-attempt headline: **“One card short.”**
-- Uncorrected-bloat headline: **“The work shipped; the suitcase still has passengers.”**
-- Bloat evidence: **“Unused context added {bloatUsd} across the completed cold writes.”**
+- Two-star evidence: **“Three needs covered. Three cold starts. No passengers.”**
+- Three-star evidence: **“You inferred the setup before the badges appeared.”**
+- Local-failure headline: **“One need was missing.”**
+- Repeated-bloat headline: **“The same passengers came back.”**
+- Uncorrected-bloat headline: **“The work shipped; the desk is still crowded.”**
+- Bloat evidence: **“Unused material added {bloatUsd} across the completed cold writes.”**
 
 ## 11. Toasts
 
 - `toast-prefix-size`
-  - Trigger: first loadout mutation.
-  - Copy: **“Packed prefix: {totalTok} tokens.”**
+  - Trigger: first compound-tray mutation.
+  - Copy: **“Desk setup: {totalTok} tokens.”**
   - Priority: `status`
   - Dedupe: `attempt`
 
 - `toast-cold-one`
   - Trigger: ledger append for `pack-checkout`.
-  - Copy: **“Workspace 1 started cold · WRITE {writeTok}.”**
+  - Copy: **“Workspace 1 opened · WRITE {writeTok}.”**
   - Priority: `teaching`
   - Dedupe: `attempt`
 
@@ -781,20 +1080,26 @@ Result copy:
   - Priority: `cause`
   - Dedupe: `never`
 
+- `toast-decoy-insufficient`
+  - Trigger: `ev-loadout-insufficient-crm` when `crm-field-notes` is selected and `crm-mcp` is absent.
+  - Copy: **“Last quarter’s notes do not contain the new field.”**
+  - Priority: `cause`
+  - Dedupe: `attempt`
+
 - `toast-cold-two`
   - Trigger: ledger append for `pack-policy`.
-  - Copy: **“New workspace, same packed prefix · WRITE again.”**
+  - Copy: **“New workspace, same setup · WRITE again.”**
   - Priority: `teaching`
   - Dedupe: `attempt`
 
 - `toast-multiplied`
   - Trigger: ledger append for `pack-crm`.
-  - Copy: **“{writeTok} packed tokens × 3 cold starts.”**
+  - Copy: **“{writeTok} setup tokens × 3 workspaces.”**
   - Priority: `teaching`
   - Dedupe: `attempt`
 
 - `toast-missing`
-  - Trigger: `ev-loadout-insufficient`.
+  - Trigger: any `ev-loadout-insufficient-*`.
   - Copy: **“Missing capability: {capabilityLabel}. No request was sent.”**
   - Priority: `cause`
   - Dedupe: `never`
@@ -807,7 +1112,13 @@ Result copy:
 
 - `toast-bloat`
   - Trigger: `ev-reveal-usage` when selected items were unused.
-  - Copy: **“Unused here still meant loaded everywhere.”**
+  - Copy: **“Unused here still traveled through every workspace.”**
+  - Priority: `cause`
+  - Dedupe: `attempt`
+
+- `toast-repeat-bloat`
+  - Trigger: ledger append for `pack-repeat-checkout`.
+  - Copy: **“The confirmed passengers were written again.”**
   - Priority: `cause`
   - Dedupe: `attempt`
 
@@ -817,49 +1128,68 @@ Result copy:
   - Priority: `teaching`
   - Dedupe: `level`
 
-No toast identifies a required provider before that requirement is confirmed by play.
+No toast identifies a required provider before evidence. The decoy toast names only why the attempted stale provider failed after the CRM ticket stops.
 
 ## 12. QA gate
 
 Real-browser click-through must assert:
 
-1. The first loadout control is enabled by `ColdOpenDef.firstInteractiveBySec`.
-2. Before the first run, ticket cards contain prose but no capability badges, provider links, correctness colors, reference loadout, bloat delta, or smallest-sufficient rule.
-3. The prose and card descriptions provide inferable evidence; the decision is neither blind nor a dial-to-maximum.
-4. Every loadout setter changes only `LoadoutState` and the corresponding `PrefixBlock`; it creates no request or wallet mutation.
-5. **Run tickets** is disabled until `pack-outcome` is committed.
-6. A wrong `pack-outcome` or `cold-repeat` prediction changes no score, star, wallet, failure, or gate result.
-7. A missing first, second, or third capability stops on that exact ticket and creates no `Request`, `LedgerRow`, tape row, cache mutation, or displayed zero-dollar row.
-8. A missing-capability stop does not dispatch `FREEZE_FAILURE`; L11 contains no economically false freeze.
-9. The missing badge appears only after the corresponding ticket resolves or stops; unreached ticket badges remain hidden.
-10. Retry returns deterministically to `cp-loadout`, restores wallet and cache state for the abandoned branch, retains attempt count, and does not replay the cold-open.
-11. The gate observes `ACK_EXPLANATION` after `ev-reveal-usage`; pre-reveal prediction data is absent from `passLevel11`.
-12. The all-loaded configuration completes the work but fails the behavioral gate until the player removes confirmed passengers from the next-batch plan.
-13. The reference configuration completes all tickets, passes the transfer gate, and earns three stars from the fixed seed.
-14. A successful reference run yields exactly three ledger rows and three `TapeRenderer` rows.
-15. Each rendered row corresponds to one priced request; its non-zero segments match the resolved buckets and sum exactly to `LedgerRow.usd`.
-16. Tape bar and segment widths include output USD from the first row, including in static non-hover rendering.
-17. Every real request has `usd > 0`; no positive cost renders as `$0.0000`.
-18. Reference pricing equals `L11_REFERENCE_REQUEST_USD` per row and `L11_REFERENCE_TOTAL_USD` for the run.
-19. All-loaded pricing equals `L11_ANTI_REQUEST_USD` per row and `L11_ANTI_TOTAL_USD` for the run.
-20. The revealed comparison equals `L11_BLOAT_DELTA_USD`; no second price table or superseded value exists.
-21. All three `MAIN_SESSION_CONTEXT` instances have distinct cache namespaces; every successful row has `readTok=0`.
-22. Missing-capability count and prefix-bloat dollars are distinct evidence types; unfinished work is never assigned an invented API price.
-23. Reference and all-loaded counterfactuals remain hidden until a completed attempt and `cold-repeat` commitment.
-24. Prediction correctness is absent from all gate, star, failure, and budget predicates.
-25. Narrow viewport preserves ticket prose, loadout cards, packed-token meter, and primary action without horizontal page scrolling.
-26. Keyboard-only play can inspect every card, alter each loadout class, commit both predictions, run, acknowledge the post-evidence explanation, repack, reveal the comparison, and retry.
-27. Pointer and keyboard paths dispatch equivalent actions.
-28. Reduced-motion mode produces identical final ledger, tape, badge, comparison, and gate evidence.
-29. Every authoritative quantity resolves to the single computation in §6; no stale or alternative total is implementable.
-30. `id`, `concept.id`, and both prerequisites compile against the canonical registries.
-31. The all-loaded delta exceeds the visible-tradeoff target, while the underpacked route remains a genuine capability risk.
-32. Every `WireSegment.widthRatio` and `startRatio` is derived from USD, so output-heavy requests are not visually misrepresented.
+1. The first Batch setup card is enabled by `ColdOpenDef.firstInteractiveBySec`.
+2. The title and objective contain none of `concept.solutionVocabulary`, including inflections or hyphenated variants.
+3. Before the first run, ticket cards contain prose but no capability badges, provider links, correctness colors, reference setup, bloat delta, or smallest-sufficient rule.
+4. `CRM Field Notes` and `CRM MCP` are both plausible from pre-play prose, while the words **new** and **last quarter** make the optimal first choice inferable rather than blind.
+5. `crm-field-notes` is absent from every `CapabilitySeed.providedBy` entry and cannot satisfy `crm-schema`.
+6. Skills, memory files, and MCP servers render inside one compound focus region with one selection idiom, one token meter, and one primary action; no separate configuration panel or staged sub-puzzle appears.
+7. The underlying setters mutate only `LoadoutState` and their corresponding `PrefixBlock`; they create no request or wallet mutation.
+8. **Run tickets** is disabled until `pack-outcome` is committed.
+9. A wrong `pack-outcome` or `cold-repeat` prediction changes no score, star, wallet, failure, or gate result.
+10. Missing the first, second, or third capability stops on that exact ticket and creates no `Request`, `LedgerRow`, tape row, cache mutation, or displayed zero-dollar row for the blocked ticket.
+11. Selecting only `crm-field-notes` for the CRM need reaches the third-ticket local failure; selecting `crm-mcp` satisfies it.
+12. Every missing-capability stop dispatches `STOP_LOCAL_ATTEMPT`, stores `localAttemptFailure`, and leaves `clockFrozen=false`, `frozenFailure=null`, and `ended=null`.
+13. `COMPLETE_ATTEMPT` after a missing-capability stop produces `attemptResult.outcome="local-failed"` and the matching `localFailureId`.
+14. A missing-capability stop never dispatches `FREEZE_FAILURE`.
+15. The missing badge appears only after the corresponding ticket resolves or stops; unreached ticket badges remain hidden.
+16. Retry returns deterministically to `cp-loadout`, restores wallet and cache state for the abandoned branch, retains attempt count, and does not replay the cold-open.
+17. The gate observes `ACK_EXPLANATION` after `ev-reveal-usage`; pre-reveal prediction data is absent from `passLevel11`.
+18. The all-loaded configuration completes the initial work but fails the behavioral gate until the player removes confirmed passengers from the next-batch plan.
+19. A first all-loaded batch increments `counts.loadoutSubmissionsByFingerprint["l11-all-loaded"]` exactly three times.
+20. Leaving the all-loaded setup unchanged exposes **Run unchanged again** only after `ev-reveal-usage`.
+21. `pack-repeat-checkout` is a real fourth cold request in the player’s actual branch and increments the all-loaded fingerprint count from `3` to `4`.
+22. `L11_REPEAT_BLOAT_FAILURE` fires immediately after that row resolves, with `actualUsd=L11_ANTI_REQUEST_USD` and `validAlternativeUsd=L11_REFERENCE_REQUEST_USD`.
+23. The repeated-bloat decisive frame visibly contains both costs, and `actualUsd > validAlternativeUsd`.
+24. The repeated-bloat rule is unreachable before `ev-reveal-usage` and does not punish the first exploratory all-loaded batch.
+25. Rewind to `cp-transfer` removes the repeated request, its cache mutation, wallet deduction, and fourth fingerprint count while preserving all first-batch rows and evidence.
+26. No `FREEZE_FAILURE` is dispatched from `REQUEST_COUNTERFACTUAL`, `REVEAL_COUNTERFACTUAL`, or reference/anti-pattern processing.
+27. The reference configuration completes all three ordinary tickets, passes the transfer gate, and earns three stars from the fixed seed.
+28. A successful reference run yields exactly three ledger rows and three `TapeRenderer` rows.
+29. Each rendered row corresponds to one priced request; ghost comparisons never create ledger rows.
+30. Every row’s non-zero segments match the resolved buckets and sum exactly to `LedgerRow.usd`.
+31. Tape bar and segment widths include output USD from the first row, including static non-hover rendering.
+32. Every real request has `usd > 0`; no positive cost renders as `$0.0000`.
+33. Reference pricing equals `L11_REFERENCE_REQUEST_USD` per row and `L11_REFERENCE_TOTAL_USD` for the ordinary run.
+34. All-loaded pricing equals `L11_ANTI_REQUEST_USD` per row and `L11_ANTI_TOTAL_USD` for the ordinary run.
+35. The revealed three-row comparison equals `L11_BLOAT_DELTA_USD`; no second price table or superseded value exists.
+36. The three ordinary `MAIN_SESSION_CONTEXT` instances and scripted transfer context have distinct cache namespaces; every successful row has `readTok=0`.
+37. Missing-capability count and prefix-bloat dollars remain distinct evidence types; unfinished work is never assigned an invented API price.
+38. Reference and all-loaded counterfactuals remain hidden until a completed attempt and `cold-repeat` commitment.
+39. Prediction correctness is absent from all gate, star, failure, and budget predicates.
+40. Every gate, star, and failure predicate uses a declared `ReducerState` path, legal predicate kind, and legal comparison op.
+41. No predicate reads `wallet.spentUsd`; in-progress star evaluation reads `attemptMetrics.spentUsd`, and completion snapshots it to `attemptResult.spentUsd`.
+42. Narrow viewport preserves ticket prose, all card metadata, the token meter, evidence labels, and the primary action without horizontal page scrolling.
+43. Keyboard-only play can inspect every card, distinguish the decoy prose, alter every card class through the single tray, commit both predictions, run, acknowledge the post-evidence explanation, revise the next batch, trigger and rewind the narrow freeze, reveal the comparison, and retry.
+44. Pointer and keyboard paths dispatch equivalent actions.
+45. Reduced-motion mode produces identical final ledger, tape, badge, comparison, local-failure, frozen-failure, and gate evidence.
+46. Every authoritative quantity resolves to the single computation in §6; no stale or alternative total is implementable.
+47. `id`, `concept.id`, `conceptScope`, and both prerequisites compile against the canonical registries.
+48. The all-loaded delta exceeds the visible-tradeoff target, while the cheaper route retains a genuine inference and capability-sufficiency risk.
+49. Every `WireSegment.widthRatio` and `startRatio` is derived from USD, so output-heavy requests are not visually misrepresented.
 
 ## 13. Reference-bar justification
 
-The screen opens with a tactile packing problem and enough prose to reason from, but no badge-shaped answer key. The player must balance two live risks: omit something needed and stop a ticket, or pack passengers that repeat across three cold prefixes. Each ticket confirms its requirements only through play, and the third cold write turns the chosen prefix into a visible multiplier.
+The opening presents a tactile desk-selection problem with enough prose to reason from but no badge-shaped answer key. The stale CRM notes are a credible decoy: choosing the current schema connection requires reading the ticket’s “new field” clue, while choosing everything remains a defensible way to avoid omission. The player therefore balances functional confidence against repeated input-side weight rather than maximizing or minimizing a dominant dial.
 
-The design keeps causal accounting honest. Missing context creates no fictional charge and therefore no false economic freeze; bloated context is allowed to complete so its real ledger penalty can speak for itself. After seeing the used/passenger evidence, the player must act again by stating the rule and packing the next batch accordingly. That post-evidence remediation—not prediction correctness—passes the level.
+The interface remains one toy. Skills, memory files, and connections are cards in the same tray, governed by the same selection gesture and token feedback. Their separate reducer actions preserve canonical object boundaries without multiplying visible mechanics.
 
-The output-inclusive tape preserves the true cost mix while still making the growing write share visible. A rewindable insufficient attempt, a materially more expensive all-loaded route, and a locked post-attempt counterfactual produce the discovery rhythm without exposing the solution before play.
+Causal accounting remains honest. Missing context produces no fictional charge and uses `LocalAttemptFailure`. A bloated first run completes because its defensive benefit is real and its ledger is the evidence. Only sending the exact all-loaded setup again after its passengers and valid alternative are visible produces a punitive freeze. That freeze occurs on a real request in the player’s branch and rewinds only the unmastered transfer decision.
+
+After seeing used/passenger evidence, the player must state the causal rule and revise the next batch. That post-evidence action—not prediction correctness—passes the level. The output-inclusive tape preserves the true cost mix, while three aligned cold writes make the chosen setup’s multiplication legible. The decoy, local stop, narrow freeze, fast checkpoint, and locked post-attempt counterfactual create the intended discovery rhythm without exposing the solution before play.

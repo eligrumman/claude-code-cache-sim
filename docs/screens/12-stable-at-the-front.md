@@ -1,16 +1,18 @@
-# Level 12 — Stable at the Front
+# Level 12 — Seven Cold Starts
 
 ## 1. Identity
 
 - `id`: `"12-stable-at-the-front"`
-- `title`: **Stable at the Front**
+- `title`: **Seven Cold Starts**
 - `tier`: `3`
 - Player-facing objective: **“Seven session starts. One tiny block keeps changing. Arrange the start packet, then estimate the next bill.”**
 - One concept: early volatile content invalidates the reusable suffix; prefix position can outweigh block size (`C9`, `C22`, `C23`).
 - `concept.id`: `"volatile-prefix-position"`
+- `conceptScope`: `{ kind: "single", reusedConceptIds: [] }`
 - `prerequisiteConceptIds`: `["prefix-reuse", "byte-identical-prefix", "prefix-loadout-sizing"]`
 - `concept.privateDesignerSummary`: A changing 20-token hook `[FICTION]` placed before 24,300 stable tokens forces that suffix to be rewritten on every start (`C23`).
 - `concept.postRevealRule`: **“The first mismatch sets the reuse boundary. Put changing payload after stable cached context.”**
+- `concept.solutionVocabulary`: `["stable", "front", "order", "boundary"]`
 - Introduced control: reorderable `UI_PREFIX_STACK_VISUALIZER`.
 - Vocabulary introduced after evidence: **volatile** — “content whose exact bytes may change between starts.”
 
@@ -30,6 +32,11 @@ The player must preserve fresh session status. Making the status static or dropp
 - `Wallet`
 - `Clock`
 - `Checkpoint`
+- `LocalAttemptFailure`
+- `AttemptMetrics`
+- `AttemptResult`
+- `EvidenceState`
+- `AttemptEvidenceState`
 - `TapeRenderer`
 - `UI_PREFIX_STACK_VISUALIZER`
 - `UI_MAIN_CACHE_PANEL`
@@ -127,18 +134,18 @@ The four stable blocks total `24,300` tokens (`C23`). The changing `PB_CURRENT` 
    - Event ID: `l12-start-1-resolved`.
    - Event: player clicks **“Run seven starts.”**
    - Action: `SEND_REQUEST { request: l12-start-1 }`.
-   - Mutates: `CacheEntry`, one `LedgerRow`, `Wallet`, `lastRequests`, tape payload, and `UI_MAIN_CACHE_PANEL`.
+   - Mutates: `CacheEntry`, one `LedgerRow`, `Wallet`, `lastRequests`, `AttemptMetrics`, tape payload, and `UI_MAIN_CACHE_PANEL`.
    - Both dynamic placements resolve to `readTok=0`, `inputTok=20`, `writeTok=24,300`, `outTok=0`; cost `$0.14586`.
 
 8. **Start 2 changes the status and reveals the estimate**
    - Event ID: `l12-start-2-reveal`.
-   - Event: clock reaches minute `5`; status becomes **“09:05 · 1 file changed”** `[FICTION]`.
-   - Actions:
+   - Event: clock reaches minute `5`; a dynamic status becomes **“09:05 · 1 file changed”** `[FICTION]`. Static or disabled status does not receive the dynamic content update.
+   - Actions for a dynamic status:
      1. `ADVANCE { min: 5 }`
      2. `SET_PREFIX_BLOCK_CONTENT { contextId: "l12-main", blockId: "l12-status", identityHash: "l12-status-02", tokenCount: 20 }`
      3. `SEND_REQUEST { request: l12-start-2 }`
      4. `REVEAL_PREDICTION { promptId: "l12-start2-cost", correctOptionId: resolvedStart2Band }`
-   - Mutates: `Clock`, `PREFIX_STACK.firstMismatchBlockId`, `matchedPrefixTok`, `invalidatedSuffixTok`, `CacheEntry`, ledger, wallet, tape, and prediction reveal state.
+   - Mutates: `Clock`, `PREFIX_STACK.firstMismatchBlockId`, `matchedPrefixTok`, `invalidatedSuffixTok`, `CacheEntry`, ledger, wallet, `AttemptMetrics`, tape, and prediction reveal state.
    - Dynamic status after the stable boundary: `readTok=24,300`, `inputTok=20`, `writeTok=0`, `outTok=0`; `$0.00735`; correct band `band-under-one-cent`.
    - Dynamic status before the stable suffix: `readTok=0`, `inputTok=20`, `writeTok=24,300`, `outTok=0`; `$0.14586`; correct band `band-ten-to-twenty-cents`; `invalidatedSuffixTok=24,300` (`C9`, `C23`).
    - The revealed band is descriptive only; an incorrect estimate has no punitive effect.
@@ -146,11 +153,12 @@ The four stable blocks total `24,300` tokens (`C23`). The changing `PB_CURRENT` 
 9. **Starts 3–7 propagate the observed result**
    - Event IDs: `l12-start-3-resolved` through `l12-start-7-resolved`.
    - Event: each next tab opens after another five simulated minutes `[FICTION]`.
-   - For each `n ∈ 3…7`:
+   - For each dynamic start `n ∈ 3…7`:
      1. `ADVANCE { min: 5 }`
      2. `SET_PREFIX_BLOCK_CONTENT { contextId: "l12-main", blockId: "l12-status", identityHash: "l12-status-0n", tokenCount: 20 }`
      3. `SEND_REQUEST { request: l12-start-n }`
-   - Mutates: clock, prefix resolution, cache state, one ledger row, wallet, and tape per start.
+   - Static and disabled branches advance and send the same seven authored requests without changing the status hash.
+   - Mutates: clock, prefix resolution, cache state, one ledger row, wallet, `AttemptMetrics`, and tape per start.
    - Dynamic status after the boundary, each: `readTok=24,300`, `inputTok=20`, `writeTok=0`, `outTok=0`; `$0.00735`.
    - Dynamic status before the suffix, each: `readTok=0`, `inputTok=20`, `writeTok=24,300`, `outTok=0`; `$0.14586`.
    - Harmful animation: the mismatch begins at the 20-token status and sweeps over the 24,300-token suffix. Starts 2–7 retain aligned propagation trails.
@@ -159,8 +167,8 @@ The four stable blocks total `24,300` tokens (`C23`). The changing `PB_CURRENT` 
     - Event ID: `l12-harmful-freeze`.
     - Event: Start 7 completes with six repeated invalidations.
     - Action:
-      `FREEZE_FAILURE { failure: { id: "l12-early-volatile", causeCode: "VOLATILE_BEFORE_STABLE", message: "The 20-token status changed before the boundary, so 24,300 later tokens had to be rewritten.", checkpointId: "before-l12-run" } }`.
-    - Mutates: `clock.frozen` and `frozenFailure`; further economic input stops.
+      `FREEZE_FAILURE { failure: { failureId: "l12-early-volatile", causeCode: "VOLATILE_BEFORE_STABLE", message: "The 20-token status changed before the boundary, so 24,300 later tokens had to be rewritten.", checkpointId: "before-l12-run" } }`.
+    - Mutates: `clockFrozen` and `frozenFailure`; further economic input stops.
     - Visible economic evidence:
       - player route: `$1.02102`;
       - valid dynamic-status alternative: `$0.18996`;
@@ -169,9 +177,18 @@ The four stable blocks total `24,300` tokens (`C23`). The changing `PB_CURRENT` 
     - Six avoidable rewrites total `145,800` tokens: `6 × 24,300` (`C23`).
     - Start 2 remains pinned as the first causal mismatch; Start 7 is the decisive failure event because it completes the promised six-repeat economic result.
 
-11. **Open the post-evidence transfer**
+11. **Stop a capability-losing branch locally**
+    - Event ID: `l12-status-capability-failed`.
+    - Preconditions: all seven rows are visible; status was made static or disabled; `frozenFailure === null`.
+    - Actions:
+      1. `STOP_LOCAL_ATTEMPT { failure: { outcomeId: "l12-missing-live-status", causeCode: "MISSING_FRESH_SESSION_STATUS", message: "Cheap is not enough: the session still needs current status.", stoppedAtEventId: "l12-start-7-resolved", checkpointId: "before-l12-run", missingCapabilityIds: ["fresh-session-status"] } }`
+      2. `COMPLETE_ATTEMPT`
+    - Mutates: `localAttemptFailure` and then `attemptResult` with `outcome: "local-failed"`.
+    - `clockFrozen` remains false, `frozenFailure` remains null, and `ended` remains null. No fabricated request or punitive comparison is added.
+
+12. **Open the post-evidence transfer**
     - Event ID: `l12-transfer-open`.
-    - Preconditions: all seven request rows are visible and the active attempt is not frozen.
+    - Preconditions: all seven request rows are visible, the dynamic status capability remains enabled, and the active attempt is neither frozen nor locally failed.
     - Actions:
       1. `BEGIN_TRANSFER { challengeId: "l12-changing-report" }`
       2. `SET_PREFIX_BLOCKS { contextId: "l12-transfer", blocks: l12TransferBlocks }`
@@ -179,23 +196,23 @@ The four stable blocks total `24,300` tokens (`C23`). The changing `PB_CURRENT` 
     - Copy: **“A 2,000-token report changes every start. Place it in this new packet.”**
     - The transfer uses the same `24,300`-token stable context (`C23`) and a `2,000`-token changing report `[FICTION]`. It sends no `Request` and changes no wallet value.
 
-12. **Demonstrate the rule after evidence**
+13. **Demonstrate the rule after evidence**
     - Event ID: `l12-transfer-placed`.
     - Event: player moves `l12-report` after the stable breakpoint.
     - Action: `REORDER_PREFIX_BLOCK { contextId: "l12-transfer", blockId: "l12-report", toIndex: 4 }`.
-    - Mutates: transfer stack order and post-evidence behavioral evidence.
+    - Mutates: transfer stack order and `evidence.l12.transferReportAfterBoundary`.
     - This action, not the pre-reveal estimate, satisfies the gate’s post-evidence requirement.
 
-13. **Acknowledge and complete**
+14. **Acknowledge and complete**
     - Event ID: `l12-complete-attempt`.
     - Event: after the correct transfer placement, the player selects the causal explanation **“The first changed bytes cut off reuse for everything after them.”**
     - Actions:
       1. `ACK_EXPLANATION { explanationId: "l12-position-rule" }`
       2. `COMPLETE_ATTEMPT`
-    - Mutates: explanation evidence, gate result, stars, and result summary.
+    - Mutates: `acknowledgedExplanationIds`, gate result, stars, and `AttemptResult`.
     - A passing economic run totals at most `$0.18996` and preserves current status.
 
-14. **Reveal the post-attempt comparison**
+15. **Reveal the post-attempt comparison**
     - Event ID: `l12-reveal-comparison`.
     - Event: player clicks **“Compare placements.”**
     - Actions:
@@ -204,6 +221,7 @@ The four stable blocks total `24,300` tokens (`C23`). The changing `PB_CURRENT` 
     - Mutates: comparison visibility only.
     - Reveals `$1.02102` for the early dynamic status and `$0.18996` for the after-boundary dynamic status: an `$0.83106`, or `81.4%`, reduction.
     - The comparison is unavailable until a seven-start attempt has completed or frozen.
+    - This informational event cannot dispatch `FREEZE_FAILURE` or mutate actual-attempt wallet, ledger, failure, or result state.
 
 ## 5. Level data
 
@@ -226,7 +244,7 @@ const l12OpeningBlocks: PrefixBlock[] = [
     id: "l12-status",
     kind: "current",
     label: "STATUS · 09:00 · clean",
-    tokenCount: 20, // [FICTION]
+    tokenCount: 20, // fixture l12-status-token-count [FICTION]
     identityHash: "l12-status-01",
     order: 1,
     cacheable: false,
@@ -249,7 +267,7 @@ const l12OpeningBlocks: PrefixBlock[] = [
     id: "l12-instructions",
     kind: "instructions",
     label: "PROJECT",
-    tokenCount: 3_000, // [FICTION]
+    tokenCount: 3_000, // fixture l12-instruction-token-count [FICTION]
     identityHash: "l12-instructions-v1",
     order: 3,
     cacheable: true,
@@ -260,7 +278,7 @@ const l12OpeningBlocks: PrefixBlock[] = [
     id: "l12-history",
     kind: "history",
     label: "HISTORY",
-    tokenCount: 2_255, // [FICTION]
+    tokenCount: 2_255, // fixture l12-history-token-count [FICTION]
     identityHash: "l12-history-v1",
     order: 4,
     cacheable: true,
@@ -270,13 +288,75 @@ const l12OpeningBlocks: PrefixBlock[] = [
 ];
 ```
 
-The stable block counts satisfy `2,750 + 16,295 + 3,000 + 2,255 = 24,300` (`C6`, `C23`, `C24`). The reference action moves `l12-status` to index `4`, after the breakpoint-bearing stable block, without changing its 20-token size or dynamic behavior.
+The stable block counts satisfy `2,750 + 16,295 + 3,000 + 2,255 = 24,300` (`C6`, `C23`, `C24`, plus the registered L12 fixtures). The reference action moves `l12-status` to index `4`, after the breakpoint-bearing stable block, without changing its 20-token size or dynamic behavior.
+
+The transfer uses the same stable composition and a differently sized changing payload:
+
+```ts
+const l12TransferBlocks: PrefixBlock[] = [
+  {
+    id: "l12-transfer-system",
+    kind: "system",
+    label: "BOOT",
+    tokenCount: 2_750, // C6
+    identityHash: "l12-transfer-system-v1",
+    order: 0,
+    cacheable: true,
+    breakpointAfter: false,
+    stability: "stable",
+  },
+  {
+    id: "l12-report",
+    kind: "current",
+    label: "CHANGING REPORT",
+    tokenCount: 2_000, // fixture l12-transfer-report-token-count [FICTION]
+    identityHash: "l12-report-01",
+    order: 1,
+    cacheable: false,
+    breakpointAfter: false,
+    stability: "volatile",
+  },
+  {
+    id: "l12-transfer-tools",
+    kind: "tools",
+    label: "TOOLS",
+    tokenCount: 16_295, // C24
+    identityHash: "l12-transfer-tools-v1",
+    order: 2,
+    cacheable: true,
+    breakpointAfter: false,
+    stability: "stable",
+  },
+  {
+    id: "l12-transfer-instructions",
+    kind: "instructions",
+    label: "PROJECT",
+    tokenCount: 3_000, // fixture l12-instruction-token-count [FICTION]
+    identityHash: "l12-transfer-instructions-v1",
+    order: 3,
+    cacheable: true,
+    breakpointAfter: false,
+    stability: "stable",
+  },
+  {
+    id: "l12-transfer-history",
+    kind: "history",
+    label: "HISTORY",
+    tokenCount: 2_255, // fixture l12-history-token-count [FICTION]
+    identityHash: "l12-transfer-history-v1",
+    order: 4,
+    cacheable: true,
+    breakpointAfter: true,
+    stability: "stable",
+  },
+];
+```
 
 ```ts
 const level12: LevelDef = {
   id: "12-stable-at-the-front",
   tier: 3,
-  title: "Stable at the Front",
+  title: "Seven Cold Starts",
   objective:
     "Seven session starts. One tiny block keeps changing. Arrange the start packet, then estimate the next bill.",
   concept: {
@@ -285,6 +365,11 @@ const level12: LevelDef = {
       "A changing 20-token status before 24,300 stable tokens rewrites that suffix on every start.",
     postRevealRule:
       "The first mismatch sets the reuse boundary. Put changing payload after stable cached context.",
+    solutionVocabulary: ["stable", "front", "order", "boundary"],
+  },
+  conceptScope: {
+    kind: "single",
+    reusedConceptIds: [],
   },
   prerequisiteConceptIds: [
     "prefix-reuse",
@@ -363,16 +448,78 @@ const level12: LevelDef = {
     allowedCfg: {
       hook: ["dynamic", "static", "none"],
     },
+    fixtures: [
+      {
+        id: "l12-session-start-count",
+        label: "Session-start request count",
+        semanticRole: "Number of starts in the L12 repeated-start fixture",
+        value: 7,
+        unit: "count",
+        tag: "[FICTION]",
+      },
+      {
+        id: "l12-status-token-count",
+        label: "Changing status size",
+        semanticRole: "Fresh status payload included in each enabled start",
+        value: 20,
+        unit: "tok",
+        tag: "[FICTION]",
+      },
+      {
+        id: "l12-instruction-token-count",
+        label: "Stable project instruction size",
+        semanticRole: "Stable instruction portion of the 24,300-token suffix",
+        value: 3000,
+        unit: "tok",
+        tag: "[FICTION]",
+      },
+      {
+        id: "l12-history-token-count",
+        label: "Stable history size",
+        semanticRole: "Stable history portion of the 24,300-token suffix",
+        value: 2255,
+        unit: "tok",
+        tag: "[FICTION]",
+      },
+      {
+        id: "l12-start-gap-minutes",
+        label: "Minutes between starts",
+        semanticRole: "Idle interval separating consecutive session starts",
+        value: 5,
+        unit: "min",
+        tag: "[FICTION]",
+      },
+      {
+        id: "l12-run-span-minutes",
+        label: "Seven-start run span",
+        semanticRole: "Elapsed simulation time from Start 1 through Start 7",
+        value: 30,
+        unit: "min",
+        tag: "[FICTION]",
+      },
+      {
+        id: "l12-transfer-report-token-count",
+        label: "Changing transfer report size",
+        semanticRole: "Novel volatile payload used by the post-evidence transfer",
+        value: 2000,
+        unit: "tok",
+        tag: "[FICTION]",
+      },
+      {
+        id: "l12-deterministic-seed",
+        label: "Deterministic scenario seed",
+        semanticRole: "Replay seed for the L12 authored fixture",
+        value: 122430,
+        unit: "count",
+        tag: "[FICTION]",
+      },
+    ],
     estimates: [
-      { label: "session-start request count", value: 7, tag: "[FICTION]" },
-      { label: "volatile status tokens", value: 20, tag: "[FICTION]" },
-      { label: "stable instruction tokens", value: 3000, tag: "[FICTION]" },
-      { label: "stable history tokens", value: 2255, tag: "[FICTION]" },
-      { label: "minutes between starts", value: 5, tag: "[FICTION]" },
-      { label: "seven-start run span", value: 30, tag: "[FICTION]" },
-      { label: "transfer report tokens", value: 2000, tag: "[FICTION]" },
-      { label: "deterministic seed", value: 122430, tag: "[FICTION]" },
-      { label: "first-interaction seconds", value: 2, tag: "[ESTIMATE]" },
+      {
+        label: "first-interaction seconds",
+        value: 2,
+        tag: "[ESTIMATE]",
+      },
     ],
   },
 
@@ -523,7 +670,33 @@ const level12: LevelDef = {
       eventId: "l12-transfer-placed",
     },
   },
-  pass: passLevel12,
+
+  pass(st) {
+    const applied =
+      st.evidence.l12.dynamicStatusEnabled === true &&
+      st.evidence.l12.statusAfterStableBoundary === true &&
+      st.evidence.l12.fullStableReadCount === 6 &&
+      st.evidence.l12.transferReportAfterBoundary === true &&
+      st.completedEventIds.includes("l12-transfer-placed") &&
+      st.acknowledgedExplanationIds.includes("l12-position-rule") &&
+      st.frozenFailure === null &&
+      st.localAttemptFailure === null;
+
+    return {
+      pass: applied,
+      reason: applied
+        ? "Preserved current status and applied the observed mismatch rule to the transfer."
+        : "Preserve current status, inspect all seven starts, and apply the evidence to the changing report.",
+      evidence: applied
+        ? [
+            "l12-start-2-reveal",
+            "l12-start-7-resolved",
+            "l12-transfer-placed",
+            "l12-position-rule",
+          ]
+        : ["l12-start-2-reveal", "l12-start-7-resolved"],
+    };
+  },
 
   star2: {
     label: "No poisoned replay",
@@ -552,7 +725,7 @@ const level12: LevelDef = {
         {
           id: "l12-three-star-spend",
           kind: "compare",
-          path: "wallet.spentUsd",
+          path: "attemptResult.spentUsd",
           op: "lte",
           value: 0.18996,
         },
@@ -671,7 +844,7 @@ const level12: LevelDef = {
 };
 ```
 
-`seed: 122430` is `[FICTION]`. `budgetUsd: 30` is the week budget from `C31`. `referenceCfg` and `antiCfg` intentionally share configuration values: their economic difference comes solely from the ordered `REORDER_PREFIX_BLOCK` action. The anti-pattern retains `l12-status` at index `1`; the reference moves it to index `4`, after `l12-history` and its stable breakpoint.
+`seed: 122430` is the registered `[FICTION]` replay fixture. `budgetUsd: 30` is the week budget from `C31`. `referenceCfg` and `antiCfg` intentionally share configuration values: their economic difference comes solely from the ordered `REORDER_PREFIX_BLOCK` action. The anti-pattern retains `l12-status` at index `1`; the reference moves it to index `4`, after `l12-history` and its stable breakpoint.
 
 ## 6. Pricing walkthrough
 
@@ -799,13 +972,13 @@ It dispatches:
 
 `REWIND_TO_CHECKPOINT { checkpointId: "before-l12-run" }`
 
-Deterministic replay restores the pre-run wallet, cache, clock, ledger, and prediction state while preserving the chosen arrangement for editing and retaining completed-attempt history. Focus returns to `l12-status`; the cold-open is not replayed.
+Deterministic replay restores the pre-run wallet, cache, clock, ledger, `AttemptMetrics`, and prediction state while preserving the chosen arrangement for editing and retaining completed-attempt evidence. Focus returns to `l12-status`; the cold-open is not replayed.
 
-Static or dropped-status runs do not freeze because their central problem is missing capability rather than contradicted economics. They finish with:
+Static or dropped-status runs do not freeze because their central problem is missing capability rather than contradicted economics. After their seven visible rows they dispatch the canonical non-freezing `STOP_LOCAL_ATTEMPT` outcome with:
 
 **“Cheap is not enough: the session still needs current status.”**
 
-They expose the same rewind control and cannot satisfy the behavioral gate.
+Their `LocalAttemptFailure` leaves `clockFrozen === false`, `frozenFailure === null`, and `ended === null`. They expose the same rewind control and cannot satisfy the behavioral gate.
 
 ## 10. Gate & stars
 
@@ -817,15 +990,17 @@ Pass requires:
 - after the seven-start evidence, the player moves the new 2,000-token changing report after its stable breakpoint;
 - after that transfer, the player acknowledges `l12-position-rule`.
 
-The committed pre-reveal estimate is required only to unlock the reveal. Its selected band and correctness are absent from `gate`, `passLevel12`, failure predicates, and star predicates. Budget alone cannot pass.
+The committed pre-reveal estimate is required only to unlock the reveal. Its selected band and correctness are absent from `gate`, `pass(st)`, failure predicates, and star predicates. Budget alone cannot pass.
+
+`pass(st)` reads only canonical `ReducerState` fields: `evidence.l12`, `completedEventIds`, `acknowledgedExplanationIds`, `frozenFailure`, and `localAttemptFailure`.
 
 Stars:
 
 - **1 star — Boundary found:** satisfy the behavioral gate, including the post-evidence transfer.
 - **2 stars — No poisoned replay:** pass after no more than one completed harmful early-status run.
-- **3 stars — Fresh and reusable:** pass on the first economic run, retain dynamic current status, record six complete 24,300-token reads, and spend at most `$0.18996`.
+- **3 stars — Fresh and reusable:** pass on the first economic run, retain dynamic current status, record six complete 24,300-token reads, and complete with `attemptResult.spentUsd <= $0.18996`.
 
-The three-star cost check uses `lte`, never exact floating-point equality. Static and dropped-status routes may spend less in a particular arrangement but cannot pass because they remove required functionality.
+The three-star cost check uses legal `op: "lte"`, never exact floating-point equality. Static and dropped-status routes may spend less in a particular arrangement but cannot pass because they remove required functionality.
 
 ## 11. Toasts
 
@@ -853,38 +1028,49 @@ Real-browser click-through must assert:
 
 1. The first draggable control is usable by `2s` `[ESTIMATE]`.
 2. The route and `LevelDef.id` use `"12-stable-at-the-front"`.
-3. `concept.id` is `"volatile-prefix-position"` and prerequisites are exactly `["prefix-reuse", "byte-identical-prefix", "prefix-loadout-sizing"]`.
-4. No pre-play copy, color, animation, option styling, DOM label, or accessibility description says that status belongs after the boundary.
-5. The pre-run prompt asks **“What will Start 2 cost?”** and shows only the three specified dollar bands.
-6. The seven-start run remains disabled until `l12-start2-cost` is committed.
-7. A wrong band changes no score, star, wallet, failure, gate, or `passLevel12` result.
-8. Drag, keyboard reorder, static, and drop controls dispatch only their specified reducer actions.
-9. The harmful dynamic layout resolves Starts 2–7 to `readTok=0`, `inputTok=20`, `writeTok=24,300`, `outTok=0`.
-10. The reference dynamic layout resolves Starts 2–7 to `readTok=24,300`, `inputTok=20`, `writeTok=0`, `outTok=0`.
-11. Reference total is `$0.18996`; anti-pattern total is `$1.02102`; no alternative value for either quantity appears.
-12. Every request produces exactly one `LedgerRow` and one tape row; the tape contains exactly seven priced rows.
-13. Every real request cost is positive, and no positive request or segment displays as `$0.0000`.
-14. `UI_HOVER_PRICE_CALCULATOR` values equal `PRICE_REQUEST`.
-15. Tape segment widths use each bucket’s USD share and include `outTok` in the denominator even though this fixture’s authoritative `outTok` is zero.
-16. Harmful propagation originates at the 20-token status and crosses the 24,300-token suffix on all six repeated starts.
-17. Failure cannot fire before `l12-start-7-resolved`.
-18. The failure frame displays `$1.02102 > $0.18996` and the `$0.83106` economic difference.
-19. The failure predicate inspects no prediction selection or correctness.
-20. Rewind restores the exact pre-run wallet, cache, clock, ledger, and prediction state while retaining completed-attempt history.
-21. Static and dropped-status branches are reachable, do not freeze, and cannot satisfy the required capability evidence.
-22. The counterfactual remains unavailable until a meaningful seven-start attempt completes or freezes.
-23. The transfer cannot open before all seven causal rows are visible.
-24. The gate observes `REORDER_PREFIX_BLOCK` on `l12-report` after `l12-transfer-open`.
-25. Merely committing or correctly answering the pre-reveal estimate cannot pass the level.
-26. Cache liveness remains valid throughout the 30-minute fixture under the 60-minute main TTL (`C1`).
-27. The reference action script is winnable and receives three stars.
-28. The anti-pattern action script reaches the intended economically true failure.
-29. Static final tape bars render without hover; interactive bars expose exact bucket values.
-30. Reduced motion replaces each suffix sweep with an instantaneous mismatch marker and six aligned invalidation highlights while preserving evidence order.
-31. Keyboard and pointer reorder paths produce equivalent actions.
-32. Screen-reader output announces block order, committed estimate, actual band, first mismatch, invalidated token count, transfer state, and rewind focus.
-33. Every authoritative request count, token count, cost, threshold, and total has one implementable value.
-34. The player can win without an undocumented control.
+3. `concept.id` is `"volatile-prefix-position"`, `conceptScope` is `{ kind: "single", reusedConceptIds: [] }`, and prerequisites are exactly `["prefix-reuse", "byte-identical-prefix", "prefix-loadout-sizing"]`.
+4. The title and objective contain none of the registered solution vocabulary `"stable"`, `"front"`, `"order"`, or `"boundary"`, including obvious inflections or hyphenation variants.
+5. No pre-play copy, color, animation, option styling, DOM label, or accessibility description says that status belongs after the boundary.
+6. The pre-run prompt asks **“What will Start 2 cost?”** and shows only the three specified dollar bands.
+7. The seven-start run remains disabled until `l12-start2-cost` is committed.
+8. A wrong band changes no score, star, wallet, failure, gate, or `pass(st)` result.
+9. Drag, keyboard reorder, static, and drop controls dispatch only their specified reducer actions.
+10. The harmful dynamic layout resolves Starts 2–7 to `readTok=0`, `inputTok=20`, `writeTok=24,300`, `outTok=0`.
+11. The reference dynamic layout resolves Starts 2–7 to `readTok=24,300`, `inputTok=20`, `writeTok=0`, `outTok=0`.
+12. Reference total is `$0.18996`; anti-pattern total is `$1.02102`; no alternative value for either quantity appears.
+13. Every request produces exactly one `LedgerRow` and one tape row; the tape contains exactly seven priced rows.
+14. Every real request cost is positive, and no positive request or segment displays as `$0.0000`.
+15. `UI_HOVER_PRICE_CALCULATOR` values equal `PRICE_REQUEST`.
+16. Tape segment widths use each bucket’s USD share and include `outTok` in the denominator even though this fixture’s authoritative `outTok` is zero.
+17. Harmful propagation originates at the 20-token status and crosses the 24,300-token suffix on all six repeated starts.
+18. Failure cannot fire before `l12-start-7-resolved`.
+19. The failure frame displays `$1.02102 > $0.18996` and the `$0.83106` economic difference.
+20. The failure predicate inspects no prediction selection or correctness.
+21. Rewind restores the exact pre-run wallet, cache, clock, ledger, `AttemptMetrics`, and prediction state while retaining completed-attempt evidence.
+22. Static and dropped-status branches are reachable, dispatch `STOP_LOCAL_ATTEMPT`, leave `clockFrozen === false`, `frozenFailure === null`, and `ended === null`, and cannot satisfy the required capability evidence.
+23. The counterfactual remains unavailable until a meaningful seven-start attempt completes or freezes.
+24. The transfer cannot open before all seven causal rows are visible.
+25. The gate observes `REORDER_PREFIX_BLOCK` on `l12-report` after `l12-transfer-open`.
+26. Merely committing or correctly answering the pre-reveal estimate cannot pass the level.
+27. Cache liveness remains valid throughout the 30-minute fixture under the 60-minute main TTL (`C1`).
+28. The reference action script is winnable and receives three stars.
+29. The anti-pattern action script reaches the intended economically true failure.
+30. Static final tape bars render without hover; interactive bars expose exact bucket values.
+31. Reduced motion replaces each suffix sweep with an instantaneous mismatch marker and six aligned invalidation highlights while preserving evidence order.
+32. Keyboard and pointer reorder paths produce equivalent actions.
+33. Screen-reader output announces block order, committed estimate, actual band, first mismatch, invalidated token count, transfer state, local-failure state, and rewind focus.
+34. Every authoritative request count, token count, cost, threshold, and total has one implementable value with semantically matching constant or fixture provenance.
+35. The player can win without an undocumented control.
+
+The structured identity assertion is:
+
+```ts
+{
+  kind: "identity-no-solution-vocabulary",
+  forbiddenTerms: ["stable", "front", "order", "boundary"],
+  assertion: "title and objective contain no solution vocabulary",
+}
+```
 
 ## 13. Reference-bar justification
 
@@ -892,6 +1078,6 @@ The screen begins with a tactile object: seven closed starts and one suspiciousl
 
 The seven-row propagation remains the screen’s signature reveal. The first mismatch appears on Start 2, then repeats until the economic difference is unmistakable. The harmful route freezes only after its completed ledger visibly costs `$1.02102`, versus `$0.18996` for the valid dynamic-status route.
 
-Passing requires a fresh post-evidence action: the player applies the discovered rule to a differently sized changing report. The pre-reveal estimate remains psychologically useful but non-punitive. The successful route preserves current status, while static and dropped alternatives expose a genuine capability tradeoff.
+Passing requires a fresh post-evidence action: the player applies the discovered rule to a differently sized changing report. The pre-reveal estimate remains psychologically useful but non-punitive. The successful route preserves current status, while static and dropped alternatives expose a genuine capability tradeoff through the canonical non-freezing `LocalAttemptFailure`.
 
-Implementation tradeoff: the level keeps the praised seven-start accumulation instead of freezing at the first mismatch; Start 2 remains the pinned causal origin, while Start 7 is the declared decisive failure event because it completes the six-repeat economic evidence.
+Implementation tradeoff: the level keeps the praised seven-start accumulation instead of freezing at the first mismatch; Start 2 remains the pinned causal origin, while Start 7 is the declared decisive failure event because it completes the six-repeat economic evidence. The title is now situation-framing, while the route ID remains unchanged for registry compatibility. No dollar figure was changed.
