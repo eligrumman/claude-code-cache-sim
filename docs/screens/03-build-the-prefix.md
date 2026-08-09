@@ -5,7 +5,7 @@
 - **id:** `03-build-the-prefix`
 - **title:** The Reminder
 - **tier:** `1`
-- **objective:** “Add a reminder needed only for the current session.”
+- **objective:** “Handle a reminder now and in one scheduled handoff.”
 - **concept.id:** `prefix-reuse`
 - **concept.privateDesignerSummary:** Cache reuse follows the longest byte-identical ordered prefix; the first changed block invalidates the cacheable suffix.
 - **concept.postRevealRule:** “The cache reuses the unchanged prefix. Once a block changes, every later cached block must be written again.”
@@ -13,7 +13,7 @@
 - **conceptScope:** `{ kind: "single", reusedConceptIds: [] }`
 - **prerequisiteConceptIds:** `write-vs-read`, `cache-expiry`
 
-The title and objective frame the situation without using the registered solution vocabulary. Identity and prerequisites use the canonical `LevelId`, `ConceptId`, and `ConceptScope` registries from `OBJECT_MODEL.md`.
+The title and objective frame the situation without using registered solution vocabulary. Identity and prerequisites use the canonical `LevelId`, `ConceptId`, and `ConceptScope` registries from `OBJECT_MODEL.md`.
 
 ## 2. Objects used
 
@@ -29,9 +29,9 @@ The title and objective frame the situation without using the registered solutio
 - `WireSegment`
 - `LedgerRow`
 - `Wallet`
+- `Clock`
 - `Checkpoint`
 - `PredictionState`
-- `FrozenFailure`
 - `StatePredicate`
 - `AttemptMetrics`
 - `AttemptResult`
@@ -43,15 +43,13 @@ The title and objective frame the situation without using the registered solutio
 - `UI_HOVER_PRICE_CALCULATOR`
 - `UI_PREDICTION_PROMPT`
 - `UI_TOAST_SYSTEM`
-- `UI_REWIND_CONTROL`
 - `UI_COUNTERFACTUAL_OVERLAY`
 - `UI_RESULT_SCREEN`
 - `predict-before-reveal`
-- `fail-freeze-rewind`
 - `just-in-time-toast`
 - `counterfactual-after-attempt`
 
-`SET_PREFIX_BLOCK_CONTENT` is the level’s only newly introduced player control. Sending, prediction, explanation, and rewind use previously established shared controls.
+`SET_PREFIX_BLOCK_CONTENT` is the level’s only newly introduced player control. Sending, prediction, explanation, and completion use previously established shared controls.
 
 ## 3. Cold-open / narrative
 
@@ -60,17 +58,29 @@ No instruction card and no player-controlled assembly exercise.
 | Time | Beat |
 |---:|---|
 | `0.0s` `[ESTIMATE]` | Five labeled blocks land with temporary presentation offsets that visually read `SYSTEM │ TOOLS │ INSTRUCTIONS │ CURRENT │ HISTORY`. Header: **“Five blocks. One request.”** Token counts, cache colors, prices, and boundaries are hidden. |
-| `0.5s` `[ESTIMATE]` | `HISTORY` and `CURRENT` cross into the settled display order `SYSTEM │ TOOLS │ INSTRUCTIONS │ HISTORY │ CURRENT`. This is a cosmetic layout animation only: reducer state was canonical from entry, no hit target is exposed, and no `REORDER_PREFIX_BLOCK` action is dispatched. |
+| `0.5s` `[ESTIMATE]` | `HISTORY` and `CURRENT` cross into settled display order `SYSTEM │ TOOLS │ INSTRUCTIONS │ HISTORY │ CURRENT`. This is cosmetic only: reducer state was canonical from entry, no hit target is exposed, and no `REORDER_PREFIX_BLOCK` action is dispatched. |
 | `1.0s` `[ESTIMATE]` | The settled stack gives one quiet pulse. Copy: **“Nothing has been sent yet.”** |
 | `≤2.0s` `[ESTIMATE]` | `UI_PREDICTION_PROMPT` becomes the first interactive surface. |
 
 `firstInteractiveBySec: 2`.
 
-During the animation, `UI_PREFIX_STACK_VISUALIZER` uses `mode: "inspect"`, `showTokenCounts: false`, and `revealBoundary: false`. Screen-reader order remains canonical throughout; presentation offsets do not alter accessible order or reducer state.
+During the animation, `UI_PREFIX_STACK_VISUALIZER` uses `mode: "inspect"`, `showTokenCounts: false`, and `revealBoundary: false`. Screen-reader order remains canonical throughout.
+
+The player later receives this visible work order after the identical resend:
+
+> **REMINDER HANDOFF**  
+> Use the reminder in this session. A verification opens in another managed session at minute 50 and needs the same instruction.
+
+The two placements expose a real reducer-visible tradeoff:
+
+- **BOOT PATCH:** changes `SYSTEM`, costs more on the changed request, and is automatically present in the handoff.
+- **FOLLOW-UP:** changes `HISTORY`, costs less, and requires an eight-minute reapplication during the handoff.
+
+Both profiles complete before the `60 min` cap. FOLLOW-UP minimizes `attemptResult.spentUsd`; BOOT PATCH minimizes `clockMin`.
 
 ## 4. Exact event sequence
 
-### 1. Enter and seed the canonical request
+### 1. Enter and seed both managed sessions
 
 **Event:** Screen opens.
 
@@ -91,33 +101,33 @@ SET_PREFIX_BLOCKS {
 }
 ```
 
-**Objects mutated:** `ReducerState`, `MAIN_SESSION_CONTEXT`, `PREFIX_STACK`, `Wallet`, level-start `Checkpoint`.
+**Objects mutated:** `ReducerState`, two `MAIN_SESSION_CONTEXT` instances, `PREFIX_STACK`, `Wallet`, `Clock`, level-start `Checkpoint`.
 
-**Level-specific numbers:**
+**Primary-session values:**
 
 - `PB_SYSTEM_L3`: `2,750 tok` (`SYSTEM_BASE`, `C6`)
 - `PB_TOOLS_L3`: `16,295 tok` (`TOOLS_BASE`, `C24`)
-- `PB_INSTRUCTIONS_L3`: `2,610 tok` (`CATALOG_RESIDUE`, derived from `C6`, `C7`)
-- `PB_HISTORY_L3`: `13,083 tok` (`L3_HISTORY_FIXTURE`, `C35`, `[FICTION]`)
-- `PB_CURRENT_L3`: `6,000 tok` (`WORK_IN`, `C28`, `[FICTION]`)
-- Cacheable front portion: `2,750 + 16,295 + 2,610 + 13,083 = 34,738 tok`
-- Whole request input side: `40,738 tok`
-- Expected output: `44,000 tok` (`WORK_OUT`, `C28`, `[FICTION]`)
-- Breakpoint: after `PB_HISTORY_L3`; `34,738 ≥ 1,024` (`C26`)
+- `PB_INSTRUCTIONS_L3`: `2,610 tok` (`CATALOG_RESIDUE`, derived from `C6` and `C7`)
+- `PB_HISTORY_L3`: `13,083 tok` (`L3_HISTORY_FIXTURE`, `C35`, fixture `l3-history-tok`)
+- `PB_CURRENT_L3`: `6,000 tok` (`WORK_IN`, `C28`, fixture `l3-primary-current-tok`)
+- Expected output: `44,000 tok` (`WORK_OUT`, `C28`, fixture `l3-primary-output-tok`)
+- Cacheable front: `34,738 tok`
+- Whole input side: `40,738 tok`
+- Breakpoint after `PB_HISTORY_L3`; `34,738 ≥ 1,024` (`C26`)
 - Clock: `0 min`
-- Wallet: `$2.50` `[FICTION]`
+- Budget: `$2.50` (fixture `l3-budget-usd`)
+- Clock cap: `60 min` (fixture `l3-clock-cap-min`)
+- Replay seed: `34738` (fixture `l3-replay-seed`, semantically unrelated to `C34`)
 
-`L3_HISTORY_FIXTURE` is the canonical, semantically specific conversation-history fixture registered as `C35`. Numerical equality with `CATALOG_FULL` does not establish provenance, and `C7` is not cited for `PB_HISTORY_L3`.
+The handoff context `l3-handoff` has a distinct `sessionId` but deliberately shares `cacheNamespace: "l3-managed-policy-handoff"` with `l3-main`. This is the scenario’s explicit exception to the default new-session namespace rule. It models a managed policy handoff and does not permit main/subagent sharing.
 
-The visualizer begins with `showTokenCounts: false` and `revealBoundary: false`.
+`L3_HANDOFF_PREFIX_SEED` contains the same four front block sizes and a `100-token` verification `CURRENT` block. Its branch-specific identities are installed only when the handoff begins.
 
 ### 2. Play the cosmetic settle and checkpoint the first send
 
-**Event:** The cold-open layout animation completes.
+**Event:** Cold-open presentation completes.
 
-No reducer action represents the visual crossing of `HISTORY` and `CURRENT`; the canonical `PREFIX_STACK.blocks` array does not change.
-
-The system then dispatches:
+No reducer action represents the visual crossing.
 
 ```ts
 CREATE_CHECKPOINT {
@@ -126,15 +136,11 @@ CREATE_CHECKPOINT {
 }
 ```
 
-**Objects mutated:** `Checkpoint` only.
+**Objects mutated:** `Checkpoint`.
 
-**Numbers:** Five blocks, one active breakpoint, zero ledger rows, and zero wallet change. Token counts remain hidden.
+**Numbers:** Five blocks, one breakpoint, zero ledger rows, zero wallet change. Token counts remain hidden.
 
 ### 3. Predict the cold send
-
-**Event:** Before the first tape row may reveal, `UI_PREDICTION_PROMPT` opens.
-
-**Actions:**
 
 ```ts
 OPEN_PREDICTION { promptId: "l3-cold-result" }
@@ -144,30 +150,22 @@ COMMIT_PREDICTION { promptId: "l3-cold-result" }
 
 **Objects mutated:** `PredictionState`.
 
-**Numbers:** No request, ledger, cache, wallet, or prefix mutation.
+No request, cache, ledger, wallet, clock, score, gate, or star mutation occurs.
 
-Prediction correctness is evidence only. It cannot affect score, stars, failure, wallet, or the pass gate.
+### 4. Send the cold request
 
-### 4. Send the cold request, then reveal token counts
-
-**Event:** Player activates **SEND** after committing the prediction.
-
-**Action:**
+**Event:** Player activates **SEND** after commitment.
 
 ```ts
 SEND_REQUEST { request: R1_COLD }
-```
 
-followed by:
-
-```ts
 REVEAL_PREDICTION {
   promptId: "l3-cold-result",
   correctOptionId: "write-front-four"
 }
 ```
 
-**Objects mutated:** `CacheEntry`, `LedgerRow`, `Wallet`, `lastRequests`, `attemptMetrics`, `PredictionState`, `PREFIX_STACK`, `UI_MAIN_CACHE_PANEL` evidence.
+**Objects mutated:** `CacheEntry`, `LedgerRow`, `Wallet`, `lastRequests`, `attemptMetrics`, `PredictionState`, `PREFIX_STACK`.
 
 **Resolution:**
 
@@ -178,18 +176,14 @@ REVEAL_PREDICTION {
 - `writeTier: "1h"`
 - `cold: true`
 - Cost: `$0.886428`
-- Wallet: `$2.500000 → $1.613572`
+- Wallet: `$2.5000000 → $1.6135720`
 - `attemptMetrics.spentUsd: $0.886428`
 - Live entry: `34,738 tok`
-- TTL: `60 min` (`C1`)
+- Idle TTL: `60 min` (`C1`)
 
-Only after `SEND_REQUEST` has resolved does `UI_PREFIX_STACK_VISUALIZER.showTokenCounts` change from `false` to `true`. The row then animates, and toast `l3-first-written` fires. No token count is shown during the cold open or first prediction.
+Only after resolution does `showTokenCounts` become `true`. Toast `l3-first-written` fires.
 
 ### 5. Predict the identical resend
-
-**Event:** The ordered stack remains unchanged. **SEND AGAIN** is disabled until commitment.
-
-**Actions:**
 
 ```ts
 OPEN_PREDICTION { promptId: "l3-repeat-boundary" }
@@ -204,28 +198,18 @@ CREATE_CHECKPOINT {
 
 **Objects mutated:** `PredictionState`, `Checkpoint`.
 
-**Numbers:** No ledger row or wallet change.
-
 ### 6. Reveal the identical resend
-
-**Event:** Player activates **SEND AGAIN**.
-
-**Action:**
 
 ```ts
 SEND_REQUEST { request: R2_IDENTICAL }
-```
 
-followed by:
-
-```ts
 REVEAL_PREDICTION {
   promptId: "l3-repeat-boundary",
   correctOptionId: "through-history"
 }
 ```
 
-**Objects mutated:** `CacheEntry.lastTouchMin`, `CacheEntry.expiresAtMin`, `LedgerRow`, `Wallet`, `attemptMetrics`, `PredictionState`, `PREFIX_STACK`.
+**Objects mutated:** `CacheEntry.lastTouchMin`, `CacheEntry.expiresAtMin`, `LedgerRow`, `Wallet`, `lastRequests`, `attemptMetrics`, `PredictionState`, `PREFIX_STACK`, `completedEventIds`.
 
 **Resolution:**
 
@@ -234,34 +218,22 @@ REVEAL_PREDICTION {
 - `inputTok: 6,000`
 - `outTok: 44,000`
 - Cost: `$0.6884214`
-- Wallet: `$1.613572 → $0.9251506`
+- Wallet: `$1.6135720 → $0.9251506`
 - `attemptMetrics.spentUsd: $1.5748494`
 - Matched blocks: `SYSTEM`, `TOOLS`, `INSTRUCTIONS`, `HISTORY`
 - Fresh block: `CURRENT`
-- The read refreshes the entry’s idle TTL to `60 min` from this request (`C1`, `C12`)
+- The read refreshes the entry to expire at minute `60` (`C1`, `C12`)
 
-This event is `reveal-r2-identical`, the first evidence boundary used by the pass gate. The visualizer reveals the blue matched run only after prediction commitment. Toasts `l3-prefix-name` and `l3-current-fresh` fire.
+This completes `reveal-r2-identical`. Toasts `l3-prefix-name` and `l3-current-fresh` fire.
 
-### 7. Offer the scoped transfer decision
+### 7. Offer the placement tradeoff
 
-**Event:** A ticket appears:
+The handoff work order becomes visible. The control presents:
 
-> **REMINDER SCOPE: THIS SESSION ONLY**  
-> Add one reminder without changing the task’s behavior.
+- **BOOT PATCH** — “Put it in global SYSTEM policy. The handoff receives it automatically.”
+- **FOLLOW-UP** — “Put it in this session’s HISTORY. Reapply it during the handoff: 8 min.”
 
-The level’s new `prefixBlocks` control presents two editable destinations without cache labels or prices:
-
-- **BOOT PATCH** — “Put it in global SYSTEM policy. It persists beyond this session.”
-- **FOLLOW-UP** — “Add it to this session’s HISTORY. It disappears with the session.”
-
-The choice has live counter-pressure:
-
-- BOOT PATCH pays more now but preserves the reminder for future sessions.
-- FOLLOW-UP is cheaper for this request but deliberately gives up that persistence.
-
-The ticket needs the reminder only for the current session, so either placement supplies the immediate behavior while buying different scope.
-
-**Actions:**
+The `8 min` reapplication duration is fixture `l3-history-reapply-min`. No cache price or first-mismatch answer is shown.
 
 ```ts
 BEGIN_TRANSFER { challengeId: "l3-change-one-block" }
@@ -274,51 +246,46 @@ CREATE_CHECKPOINT {
 
 **Objects mutated:** `LevelPhase`, `Checkpoint`.
 
-**Numbers:** Either edit changes one block’s `identityHash` while preserving its token count. Byte identity and first-mismatch position are the only cache variables (`C8`, `C9`).
+### 8. Apply the placement and predict the changed request
 
-### 8. Apply the selected edit and predict its result
-
-**BOOT PATCH action:**
+**BOOT PATCH:**
 
 ```ts
 SET_PREFIX_BLOCK_CONTENT {
   contextId: "l3-main",
   blockId: "PB_SYSTEM_L3",
-  identityHash: "system-v2",
+  identityHash: "system-v2-reminder",
   tokenCount: 2750
 }
 ```
 
-The completed transfer record appends `l3-edit-system`.
+This action atomically appends:
 
-**FOLLOW-UP action:**
+- `l3-edit-system`
+- `l3-first-edit-system` if neither first-choice marker exists
+
+**FOLLOW-UP:**
 
 ```ts
 SET_PREFIX_BLOCK_CONTENT {
   contextId: "l3-main",
   blockId: "PB_HISTORY_L3",
-  identityHash: "history-v2",
+  identityHash: "history-v2-reminder",
   tokenCount: 13083
 }
 ```
 
-The completed transfer record appends `l3-edit-history`.
+This action atomically appends:
 
-The first selected placement also records one immutable attempt-local marker:
-
-- BOOT PATCH first: `l3-first-edit-system`
-- FOLLOW-UP first: `l3-first-edit-history`
-
-A local rewind removes the completed edit ID for the rewound branch but retains the first-choice marker, preventing a corrected route from earning the first-choice star.
+- `l3-edit-history`
+- `l3-first-edit-history` if neither first-choice marker exists
 
 **Objects mutated:** selected `PrefixBlock`, `PREFIX_STACK.firstMismatchBlockId`, `PREFIX_STACK.matchedPrefixTok`, `PREFIX_STACK.invalidatedSuffixTok`, `completedTransferIds`.
 
-**Hidden resolution before reveal:**
+**Hidden resolution:**
 
-- BOOT PATCH: matched `0 tok`; cacheable suffix requiring rewrite `34,738 tok`
-- FOLLOW-UP: matched `21,655 tok`; cacheable suffix requiring rewrite `13,083 tok`
-
-`UI_PREFIX_STACK_VISUALIZER.revealBoundary` remains `false`.
+- BOOT PATCH: matched `0 tok`; rewrite `34,738 tok`
+- FOLLOW-UP: matched `21,655 tok`; rewrite `13,083 tok`
 
 Then:
 
@@ -328,37 +295,21 @@ SELECT_PREDICTION { promptId: "l3-change-boundary", optionId }
 COMMIT_PREDICTION { promptId: "l3-change-boundary" }
 ```
 
-**SEND CHANGED REQUEST** remains disabled until commitment.
+### 9A. Resolve FOLLOW-UP
 
-### 9A. Successful late-change reveal
-
-**Precondition:** FOLLOW-UP was selected.
-
-**Event:** Player activates **SEND CHANGED REQUEST**.
-
-**Action:**
+**Precondition:** `completedTransferIds` includes `l3-edit-history`.
 
 ```ts
 SEND_REQUEST { request: R3_LATE_CHANGE }
-```
 
-followed by:
-
-```ts
 REVEAL_PREDICTION {
   promptId: "l3-change-boundary",
   correctOptionId: "read-three-write-history"
 }
 ```
 
-**Objects mutated:** `CacheEntry`, `LedgerRow`, `Wallet`, `attemptMetrics`, `PredictionState`, `PREFIX_STACK`, `completedEventIds`.
-
 **Resolution:**
 
-- Reread: `SYSTEM + TOOLS + INSTRUCTIONS = 21,655 tok`
-- Rewritten: `HISTORY = 13,083 tok`
-- Fresh: `CURRENT = 6,000 tok`
-- Output: `44,000 tok`
 - `readTok: 21,655`
 - `writeTok: 13,083`
 - `inputTok: 6,000`
@@ -369,70 +320,20 @@ REVEAL_PREDICTION {
 - `firstMismatchBlockId: "PB_HISTORY_L3"`
 - `invalidatedSuffixTok: 13,083`
 
-This is `reveal-r3-late` and the aha frame. The visualizer enters `mode: "diff"`, identifies the first mismatch, colors three blocks as reread, marks `HISTORY` rewritten, and leaves `CURRENT` fresh. Toast `l3-late-boundary` fires.
+The reducer completes `reveal-r3-placement`. The visualizer identifies the first mismatch, marks three blocks reread, marks `HISTORY` rewritten, and leaves `CURRENT` fresh. Toast `l3-late-boundary` fires.
 
-The post-reveal explanation check appears:
+### 9B. Resolve BOOT PATCH
 
-```text
-What made the cheaper route work?
-
-A. The first changed block ended reuse; only its cached tail was rewritten.
-B. Each unchanged block can be reused regardless of order.
-C. The smallest block is always the one rewritten.
-```
-
-Selecting an option dispatches `ACK_EXPLANATION` with one of:
-
-- `l3-prefix-rule` for A
-- `l3-order-does-not-matter` for B
-- `l3-smallest-rewrites` for C
-
-The player may continue after any answer or skip the optional check. It affects only the two-star predicate, never the pass gate.
-
-Finally:
-
-```ts
-COMPLETE_ATTEMPT
-```
-
-On completion, `attemptResult.spentUsd` snapshots `attemptMetrics.spentUsd` as `$2.3378439`.
-
-### 9B. Early-change fail-freeze
-
-**Precondition:** BOOT PATCH was selected.
-
-**Event:** Player activates **SEND CHANGED REQUEST**.
-
-**Action:**
+**Precondition:** `completedTransferIds` includes `l3-edit-system`.
 
 ```ts
 SEND_REQUEST { request: R3_EARLY_CHANGE }
-```
 
-followed by:
-
-```ts
 REVEAL_PREDICTION {
   promptId: "l3-change-boundary",
   correctOptionId: "rewrite-all-cached"
 }
 ```
-
-After the request row has fully rendered, the actual-attempt failure rule dispatches:
-
-```ts
-FREEZE_FAILURE {
-  failure: {
-    failureId: "l3-early-change",
-    causeCode: "EARLY_PREFIX_MISMATCH",
-    message:
-      "SYSTEM changed first. The entire 34,738-token cached tail had to be written again.",
-    checkpointId: "cp-l3-change-choice"
-  }
-}
-```
-
-**Objects mutated:** `CacheEntry`, `LedgerRow`, `Wallet`, `attemptMetrics`, `PredictionState`, `PREFIX_STACK`, `FrozenFailure`, `clockFrozen`, `completedEventIds`.
 
 **Resolution:**
 
@@ -446,67 +347,269 @@ FREEZE_FAILURE {
 - `firstMismatchBlockId: "PB_SYSTEM_L3"`
 - `invalidatedSuffixTok: 34,738`
 
-The decisive frame shows:
+The reducer completes `reveal-r3-placement`. The visualizer marks `SYSTEM` changed and all four cacheable blocks rewritten. Toast `l3-early-boundary` fires.
+
+No `FREEZE_FAILURE` occurs. BOOT PATCH is locally more expensive but remains a valid completion profile because its persisted instruction removes the handoff reapplication delay.
+
+### 10. Offer the causal explanation
+
+After either R3 branch:
 
 ```text
-ACTUAL — SYSTEM placement
-$0.886428 total · $0.208428 cached-prefix write
+What determined the rewritten portion?
 
-VALID SESSION-ONLY PLACEMENT — HISTORY
-$0.7629945 total · $0.0849945 cached-prefix read/write
-
-VISIBLE MISTAKE COST
-+$0.1234335 total · cached-prefix portion 2.45×
+A. The first changed block ended reuse; its cached tail was rewritten.
+B. Every unchanged block was reusable regardless of earlier changes.
+C. The smallest changed block determined the result.
 ```
 
-The equal `$0.018000` fresh-input and `$0.660000` output portions remain visible in both rows. The actual full request is more expensive than the valid route: `$0.886428 > $0.7629945`.
+Selecting dispatches `ACK_EXPLANATION` with:
 
-Block evidence:
+- A: `l3-prefix-rule`
+- B: `l3-order-does-not-matter`
+- C: `l3-smallest-rewrites`
 
-- `SYSTEM`: **CHANGED · REWRITTEN · 2,750**
-- `TOOLS`: **AFTER CHANGE · REWRITTEN · 16,295**
-- `INSTRUCTIONS`: **AFTER CHANGE · REWRITTEN · 2,610**
-- `HISTORY`: **AFTER CHANGE · REWRITTEN · 13,083**
-- `CURRENT`: **FRESH · 6,000**
+The answer affects only stars. Prediction and explanation correctness never affect wallet, failure, or pass.
 
-The failure belongs to the player’s actual economic action. It is not dispatched by `REQUEST_COUNTERFACTUAL`, `REVEAL_COUNTERFACTUAL`, or any reference reveal. No economic control remains active except `UI_REWIND_CONTROL`.
-
-### 10. Rewind locally
-
-**Event:** Player activates **“Try the placement again.”**
-
-**Action:**
+### 11. Advance to the scheduled handoff
 
 ```ts
-REWIND_TO_CHECKPOINT {
-  checkpointId: "cp-l3-change-choice"
+ADVANCE { min: 50 }
+```
+
+**Objects mutated:** `clockMin` only.
+
+**Resolution:**
+
+- `clockMin: 0 → 50`
+- The R3 cache entry remains live because `50 < 60`
+- Handoff opens at fixture `l3-handoff-open-min`
+
+### 12A. Install the persisted BOOT PATCH in the handoff
+
+**Precondition:** `completedTransferIds` includes `l3-edit-system`.
+
+The system initializes the second session from global policy:
+
+```ts
+SET_PREFIX_BLOCKS {
+  contextId: "l3-handoff",
+  blocks: [
+    PB_SYSTEM_L3_HANDOFF_SYSTEM_V2,
+    PB_TOOLS_L3_HANDOFF,
+    PB_INSTRUCTIONS_L3_HANDOFF,
+    PB_HISTORY_L3_HANDOFF_HISTORY_V1,
+    PB_CURRENT_L3_VERIFY
+  ]
 }
 ```
 
-**Objects mutated:** deterministic replay branch, `FrozenFailure`, `clockFrozen`, attempt-retained first-choice evidence.
+The first four identities exactly match `R3_EARLY_CHANGE`. No player edit or simulated minute is consumed.
 
-**Restored state:**
+### 12B. Reapply FOLLOW-UP in the handoff
 
-- Wallet: `$0.9251506`
-- `attemptMetrics.spentUsd: $1.5748494`
-- Ledger: exactly two rows
-- Live cache entry: `34,738 tok`
-- Stack identities: pre-transfer values
-- `l3-edit-system`: removed
-- `l3-first-edit-system`: retained
-- Cold open, cosmetic settle, cold send, and repeat send are not replayed
+**Precondition:** `completedTransferIds` includes `l3-edit-history`.
 
-The player can choose the session-scoped FOLLOW-UP and complete the level.
+The second session initially contains the original `HISTORY`. The player uses the same visible control:
+
+```ts
+SET_PREFIX_BLOCK_CONTENT {
+  contextId: "l3-handoff",
+  blockId: "PB_HISTORY_L3_HANDOFF",
+  identityHash: "history-v2-reminder",
+  tokenCount: 13083
+}
+```
+
+This action appends `l3-reapplied-history`. The system then dispatches:
+
+```ts
+ADVANCE { min: 8 }
+```
+
+**Objects mutated:** handoff `PrefixBlock`, handoff `PREFIX_STACK`, `completedTransferIds`, `clockMin`.
+
+**Resolution:**
+
+- `clockMin: 50 → 58`
+- The restored front exactly matches `R3_LATE_CHANGE`
+- The entry remains live because `58 < 60`
+
+### 13. Predict and send the handoff verification
+
+After the branch-specific setup:
+
+```ts
+OPEN_PREDICTION { promptId: "l3-handoff-boundary" }
+SELECT_PREDICTION { promptId: "l3-handoff-boundary", optionId }
+COMMIT_PREDICTION { promptId: "l3-handoff-boundary" }
+```
+
+BOOT PATCH dispatches:
+
+```ts
+SEND_REQUEST { request: R4_BOOT_PERSISTED }
+```
+
+and atomically appends `l3-persisted-policy-read`.
+
+FOLLOW-UP dispatches:
+
+```ts
+SEND_REQUEST { request: R4_HISTORY_REAPPLIED }
+```
+
+Both are followed by:
+
+```ts
+REVEAL_PREDICTION {
+  promptId: "l3-handoff-boundary",
+  correctOptionId: "read-front-four-current-fresh"
+}
+```
+
+**Resolution for either request:**
+
+- `readTok: 34,738`
+- `writeTok: 0`
+- `inputTok: 100`
+- `outTok: 100`
+- Cost: `$0.0122214`
+- BOOT PATCH wallet: `$0.0387226 → $0.0265012`
+- FOLLOW-UP wallet: `$0.1621561 → $0.1499347`
+- BOOT PATCH total spend: `$2.4734988`
+- FOLLOW-UP total spend: `$2.3500653`
+
+The reducer completes `reveal-r4-policy-check`. The request itself supplies the in-attempt evidence that the BOOT PATCH was present in the later session.
+
+### 14. Complete the attempt
+
+```ts
+COMPLETE_ATTEMPT
+```
+
+**Objects mutated:** `attemptResult`, `LevelPhase`.
+
+Completion snapshots the selected profile:
+
+| Profile | Request count | `attemptResult.spentUsd` | Final `clockMin` | Benefit |
+|---|---:|---:|---:|---|
+| FOLLOW-UP | `4` | `$2.3500653` | `58` | Lowest spend |
+| BOOT PATCH | `4` | `$2.4734988` | `50` | Fastest handoff |
+
+Both pass and remain under the `$2.50` budget and `60 min` cap.
 
 ## 5. Level data
 
 ```ts
+const L3_FIXTURES: ScenarioFixtureDef[] = [
+  {
+    id: "l3-replay-seed",
+    label: "Level 3 deterministic replay seed",
+    semanticRole:
+      "PRNG seed only; its numerical resemblance to a token constant has no provenance meaning",
+    value: 34738,
+    unit: "count",
+    tag: "[FICTION]"
+  },
+  {
+    id: "l3-budget-usd",
+    label: "Level 3 attempt budget",
+    semanticRole: "Maximum fake API spend available to either completion profile",
+    value: 2.50,
+    unit: "usd",
+    tag: "[FICTION]"
+  },
+  {
+    id: "l3-clock-cap-min",
+    label: "Level 3 handoff clock cap",
+    semanticRole: "Latest simulated minute at which the handoff may complete",
+    value: 60,
+    unit: "min",
+    tag: "[FICTION]"
+  },
+  {
+    id: "l3-history-tok",
+    label: "Primary conversation-history block",
+    semanticRole:
+      "Conversation history used to expose a late cache mismatch; semantically the C35 fixture",
+    value: 13083,
+    unit: "tok",
+    tag: "[FICTION]"
+  },
+  {
+    id: "l3-primary-current-tok",
+    label: "Primary request current payload",
+    semanticRole: "Fresh input on each of the first three requests; sourced from C28",
+    value: 6000,
+    unit: "tok",
+    tag: "[FICTION]"
+  },
+  {
+    id: "l3-primary-output-tok",
+    label: "Primary request output",
+    semanticRole: "Generated output on each of the first three requests; sourced from C28",
+    value: 44000,
+    unit: "tok",
+    tag: "[FICTION]"
+  },
+  {
+    id: "l3-handoff-current-tok",
+    label: "Handoff verification payload",
+    semanticRole: "Fresh input for the small later-session verification request",
+    value: 100,
+    unit: "tok",
+    tag: "[FICTION]"
+  },
+  {
+    id: "l3-handoff-output-tok",
+    label: "Handoff verification output",
+    semanticRole: "Generated acknowledgement for the later-session verification request",
+    value: 100,
+    unit: "tok",
+    tag: "[FICTION]"
+  },
+  {
+    id: "l3-handoff-open-min",
+    label: "Scheduled handoff opening",
+    semanticRole: "Simulation minute at which the second managed session becomes actionable",
+    value: 50,
+    unit: "min",
+    tag: "[FICTION]"
+  },
+  {
+    id: "l3-history-reapply-min",
+    label: "Session-history reapplication time",
+    semanticRole:
+      "Simulated delay required to restore a session-only reminder in the handoff",
+    value: 8,
+    unit: "min",
+    tag: "[FICTION]"
+  }
+];
+
+const L3_MAIN_CONTEXT_SEED: ContextSeed = {
+  kind: "main",
+  id: "l3-main",
+  sessionId: "l3-session-a",
+  cacheNamespace: "l3-managed-policy-handoff",
+  initialPrefixStackId: "l3-primary-prefix"
+};
+
+const L3_HANDOFF_CONTEXT_SEED: ContextSeed = {
+  kind: "main",
+  id: "l3-handoff",
+  sessionId: "l3-session-b",
+  cacheNamespace: "l3-managed-policy-handoff",
+  initialPrefixStackId: "l3-handoff-prefix"
+};
+
 const L3: LevelDef = {
   id: "03-build-the-prefix",
   tier: 1,
   title: "The Reminder",
   objective:
-    "Add a reminder needed only for the current session.",
+    "Handle a reminder now and in one scheduled handoff.",
 
   concept: {
     id: "prefix-reuse",
@@ -572,27 +675,53 @@ const L3: LevelDef = {
 
   scenarioData: {
     units: [],
-    contexts: [L3_MAIN_CONTEXT_SEED],
-    prefixStacks: [L3_PREFIX_SEED],
+    contexts: [
+      L3_MAIN_CONTEXT_SEED,
+      L3_HANDOFF_CONTEXT_SEED
+    ],
+    prefixStacks: [
+      L3_PRIMARY_PREFIX_SEED,
+      L3_HANDOFF_PREFIX_SEED
+    ],
+    fixtures: L3_FIXTURES,
     estimates: [
-      { label: "budgetUsd", value: 2.50, tag: "[FICTION]" },
-      { label: "firstInteractiveBySec", value: 2, tag: "[ESTIMATE]" },
-      { label: "cosmeticCrossSec", value: 0.5, tag: "[ESTIMATE]" }
+      {
+        label: "coldOpenStartSec",
+        value: 0,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "cosmeticCrossSec",
+        value: 0.5,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "settledPulseSec",
+        value: 1,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "firstInteractiveBySec",
+        value: 2,
+        tag: "[ESTIMATE]"
+      }
     ]
   },
 
   coldOpen: L3_COLD_OPEN,
   sequence: L3_SEQUENCE,
+
   predictions: [
     L3_PRED_COLD,
     L3_PRED_REPEAT,
-    L3_PRED_CHANGE
+    L3_PRED_CHANGE,
+    L3_PRED_HANDOFF
   ],
+
   toasts: L3_TOASTS,
 
   interactionPatterns: [
     "predict-before-reveal",
-    "fail-freeze-rewind",
     "just-in-time-toast",
     "counterfactual-after-attempt"
   ],
@@ -601,61 +730,10 @@ const L3: LevelDef = {
     bucket: "none",
     cite: "C8/C9",
     line:
-      "SYSTEM changed first. The entire 34,738-token cached tail had to be written again."
+      "Both placements are valid: one spends less, while the other carries the instruction into the handoff without delay."
   },
 
-  failureRules: [
-    {
-      id: "l3-early-change",
-      predicate: {
-        id: "l3-early-change-predicate",
-        kind: "all",
-        predicates: [
-          {
-            id: "l3-system-edit-completed",
-            kind: "includes",
-            path: "completedTransferIds",
-            value: "l3-edit-system"
-          },
-          {
-            id: "l3-early-reveal-completed",
-            kind: "event-completed",
-            eventId: "reveal-r3-early"
-          },
-          {
-            id: "l3-early-request-is-latest",
-            kind: "compare",
-            path: "lastRequests.0.requestId",
-            op: "eq",
-            value: "R3_EARLY_CHANGE",
-            observedAfterEventId: "reveal-r3-early"
-          },
-          {
-            id: "l3-early-write-exact",
-            kind: "compare",
-            path: "lastRequests.0.writeTok",
-            op: "eq",
-            value: 34738,
-            observedAfterEventId: "reveal-r3-early"
-          }
-        ]
-      },
-      decisiveEventId: "reveal-r3-early",
-      causeCode: "EARLY_PREFIX_MISMATCH",
-      message:
-        "SYSTEM changed first. The entire 34,738-token cached tail had to be written again.",
-      checkpointId: "cp-l3-change-choice",
-      highlightObjectIds: [
-        "PB_SYSTEM_L3",
-        "PB_TOOLS_L3",
-        "PB_INSTRUCTIONS_L3",
-        "PB_HISTORY_L3",
-        "R3_EARLY_CHANGE"
-      ],
-      actualUsd: 0.886428,
-      validAlternativeUsd: 0.7629945
-    }
-  ],
+  failureRules: [],
 
   checkpoints: [
     {
@@ -674,119 +752,272 @@ const L3: LevelDef = {
       id: "cp-l3-change-choice",
       createBeforeEventId: "choose-l3-edit",
       reason: "decision",
-      resumeLabel: "Try the placement again."
+      resumeLabel: "Return to the placement choice."
     }
   ],
 
   gate: {
-    predicateId: "l3-demonstrated-late-reuse",
+    predicateId: "l3-completed-placement-handoff",
 
     evidenceRevealEventIds: [
       "reveal-r2-identical",
-      "reveal-r3-late"
+      "reveal-r3-placement",
+      "reveal-r4-policy-check"
     ],
 
     postEvidenceActionRequirements: [
       {
-        id: "l3-history-edit-after-repeat-evidence",
-        kind: "action-observed",
-        actionType: "SET_PREFIX_BLOCK_CONTENT",
-        afterEventId: "reveal-r2-identical",
-        match: {
-          contextId: "l3-main",
-          blockId: "PB_HISTORY_L3",
-          identityHash: "history-v2",
-          tokenCount: 13083
-        }
+        id: "l3-placement-after-repeat-evidence",
+        kind: "any",
+        predicates: [
+          {
+            id: "l3-system-edit-after-repeat",
+            kind: "action-observed",
+            actionType: "SET_PREFIX_BLOCK_CONTENT",
+            afterEventId: "reveal-r2-identical",
+            match: {
+              contextId: "l3-main",
+              blockId: "PB_SYSTEM_L3",
+              identityHash: "system-v2-reminder",
+              tokenCount: 2750
+            }
+          },
+          {
+            id: "l3-history-edit-after-repeat",
+            kind: "action-observed",
+            actionType: "SET_PREFIX_BLOCK_CONTENT",
+            afterEventId: "reveal-r2-identical",
+            match: {
+              contextId: "l3-main",
+              blockId: "PB_HISTORY_L3",
+              identityHash: "history-v2-reminder",
+              tokenCount: 13083
+            }
+          }
+        ]
       }
     ],
 
     behavioralRequirements: [
       {
-        id: "l3-late-request-completed",
+        id: "l3-r3-revealed",
         kind: "event-completed",
-        eventId: "reveal-r3-late"
+        eventId: "reveal-r3-placement"
       },
       {
-        id: "l3-r3-request-is-latest",
-        kind: "compare",
-        path: "lastRequests.0.requestId",
-        op: "eq",
-        value: "R3_LATE_CHANGE",
-        observedAfterEventId: "reveal-r3-late"
+        id: "l3-r4-revealed",
+        kind: "event-completed",
+        eventId: "reveal-r4-policy-check"
       },
       {
-        id: "l3-r3-read-exact",
+        id: "l3-consistent-completion-profile",
+        kind: "any",
+        predicates: [
+          {
+            id: "l3-boot-profile",
+            kind: "all",
+            predicates: [
+              {
+                id: "l3-system-edit-recorded",
+                kind: "includes",
+                path: "completedTransferIds",
+                value: "l3-edit-system"
+              },
+              {
+                id: "l3-persisted-read-recorded",
+                kind: "includes",
+                path: "completedTransferIds",
+                value: "l3-persisted-policy-read"
+              },
+              {
+                id: "l3-boot-r3-request",
+                kind: "compare",
+                path: "ledger.2.requestId",
+                op: "eq",
+                value: "R3_EARLY_CHANGE"
+              },
+              {
+                id: "l3-boot-r3-write",
+                kind: "compare",
+                path: "ledger.2.writeTok",
+                op: "eq",
+                value: 34738
+              }
+            ]
+          },
+          {
+            id: "l3-follow-profile",
+            kind: "all",
+            predicates: [
+              {
+                id: "l3-history-edit-recorded",
+                kind: "includes",
+                path: "completedTransferIds",
+                value: "l3-edit-history"
+              },
+              {
+                id: "l3-history-reapply-recorded",
+                kind: "includes",
+                path: "completedTransferIds",
+                value: "l3-reapplied-history"
+              },
+              {
+                id: "l3-follow-r3-request",
+                kind: "compare",
+                path: "ledger.2.requestId",
+                op: "eq",
+                value: "R3_LATE_CHANGE"
+              },
+              {
+                id: "l3-follow-r3-read",
+                kind: "compare",
+                path: "ledger.2.readTok",
+                op: "eq",
+                value: 21655
+              },
+              {
+                id: "l3-follow-r3-write",
+                kind: "compare",
+                path: "ledger.2.writeTok",
+                op: "eq",
+                value: 13083
+              }
+            ]
+          }
+        ]
+      },
+      {
+        id: "l3-r4-request-id",
+        kind: "any",
+        predicates: [
+          {
+            id: "l3-r4-boot-id",
+            kind: "compare",
+            path: "lastRequests.0.requestId",
+            op: "eq",
+            value: "R4_BOOT_PERSISTED",
+            observedAfterEventId: "reveal-r4-policy-check"
+          },
+          {
+            id: "l3-r4-follow-id",
+            kind: "compare",
+            path: "lastRequests.0.requestId",
+            op: "eq",
+            value: "R4_HISTORY_REAPPLIED",
+            observedAfterEventId: "reveal-r4-policy-check"
+          }
+        ]
+      },
+      {
+        id: "l3-r4-read-exact",
         kind: "compare",
         path: "lastRequests.0.readTok",
         op: "eq",
-        value: 21655,
-        observedAfterEventId: "reveal-r3-late"
+        value: 34738,
+        observedAfterEventId: "reveal-r4-policy-check"
       },
       {
-        id: "l3-r3-write-exact",
-        kind: "compare",
-        path: "lastRequests.0.writeTok",
-        op: "eq",
-        value: 13083,
-        observedAfterEventId: "reveal-r3-late"
-      },
-      {
-        id: "l3-r3-fresh-exact",
+        id: "l3-r4-input-exact",
         kind: "compare",
         path: "lastRequests.0.inputTok",
         op: "eq",
-        value: 6000,
-        observedAfterEventId: "reveal-r3-late"
+        value: 100,
+        observedAfterEventId: "reveal-r4-policy-check"
       },
       {
-        id: "l3-r3-output-exact",
+        id: "l3-r4-output-exact",
         kind: "compare",
         path: "lastRequests.0.outTok",
         op: "eq",
-        value: 44000,
-        observedAfterEventId: "reveal-r3-late"
+        value: 100,
+        observedAfterEventId: "reveal-r4-policy-check"
       }
     ],
 
     transferRequirement: {
-      id: "l3-session-scoped-transfer",
-      kind: "includes",
-      path: "completedTransferIds",
-      value: "l3-edit-history",
-      observedAfterEventId: "reveal-r2-identical"
+      id: "l3-handoff-benefit-observed",
+      kind: "any",
+      predicates: [
+        {
+          id: "l3-boot-benefit",
+          kind: "includes",
+          path: "completedTransferIds",
+          value: "l3-persisted-policy-read"
+        },
+        {
+          id: "l3-follow-cost",
+          kind: "includes",
+          path: "completedTransferIds",
+          value: "l3-reapplied-history"
+        }
+      ]
     }
   },
 
   pass(st: ReducerState): GateResult {
-    const r3 = st.ledger.find(
+    const r3Boot = st.ledger.find(
+      (row) => row.requestId === "R3_EARLY_CHANGE"
+    );
+    const r3Follow = st.ledger.find(
       (row) => row.requestId === "R3_LATE_CHANGE"
     );
+    const r4 = st.ledger.find(
+      (row) =>
+        row.requestId === "R4_BOOT_PERSISTED" ||
+        row.requestId === "R4_HISTORY_REAPPLIED"
+    );
+
+    const bootProfile =
+      st.completedTransferIds.includes("l3-edit-system") &&
+      st.completedTransferIds.includes("l3-persisted-policy-read") &&
+      r3Boot !== undefined &&
+      r3Boot.readTok === 0 &&
+      r3Boot.writeTok === 34738 &&
+      r3Boot.inputTok === 6000 &&
+      r3Boot.outTok === 44000 &&
+      r4?.requestId === "R4_BOOT_PERSISTED";
+
+    const followProfile =
+      st.completedTransferIds.includes("l3-edit-history") &&
+      st.completedTransferIds.includes("l3-reapplied-history") &&
+      r3Follow !== undefined &&
+      r3Follow.readTok === 21655 &&
+      r3Follow.writeTok === 13083 &&
+      r3Follow.inputTok === 6000 &&
+      r3Follow.outTok === 44000 &&
+      r4?.requestId === "R4_HISTORY_REAPPLIED";
+
+    const handoffExact =
+      r4 !== undefined &&
+      r4.readTok === 34738 &&
+      r4.writeTok === 0 &&
+      r4.inputTok === 100 &&
+      r4.outTok === 100;
 
     const passed =
       st.completedEventIds.includes("reveal-r2-identical") &&
-      st.completedEventIds.includes("reveal-r3-late") &&
-      st.completedTransferIds.includes("l3-edit-history") &&
-      r3 !== undefined &&
-      r3.readTok === 21655 &&
-      r3.writeTok === 13083 &&
-      r3.inputTok === 6000 &&
-      r3.outTok === 44000;
+      st.completedEventIds.includes("reveal-r3-placement") &&
+      st.completedEventIds.includes("reveal-r4-policy-check") &&
+      handoffExact &&
+      (bootProfile || followProfile);
 
     return {
       pass: passed,
       reason: passed
-        ? "The post-evidence HISTORY edit preserved the first three blocks and completed the scoped transfer."
-        : "Complete the post-evidence scoped edit and resolve its request.",
+        ? "The selected placement produced its request boundary and completed the later-session handoff."
+        : "Complete one consistent placement profile and its handoff verification.",
       evidence: [
         ...(st.completedEventIds.includes("reveal-r2-identical")
           ? ["reveal-r2-identical"]
           : []),
-        ...(st.completedTransferIds.includes("l3-edit-history")
-          ? ["l3-edit-history"]
+        ...(r3Boot !== undefined
+          ? ["R3_EARLY_CHANGE"]
           : []),
-        ...(r3 !== undefined
+        ...(r3Follow !== undefined
           ? ["R3_LATE_CHANGE"]
+          : []),
+        ...(r4 !== undefined
+          ? [r4.requestId]
           : [])
       ]
     };
@@ -795,39 +1026,102 @@ const L3: LevelDef = {
   star2: {
     label: "Named the boundary",
     predicate: {
-      id: "l3-explained-after-evidence",
+      id: "l3-explained-after-r3",
       kind: "includes",
       path: "acknowledgedExplanationIds",
       value: "l3-prefix-rule",
-      observedAfterEventId: "reveal-r3-late"
+      observedAfterEventId: "reveal-r3-placement"
     },
     reason:
-      "Selected the causal first-mismatch explanation after seeing the late-change tape."
+      "Selected the first-mismatch explanation after seeing the chosen placement resolve."
   },
 
   star3: {
-    label: "Changed late",
+    label: "Honored the priority",
     predicate: {
-      id: "l3-first-try-reference",
-      kind: "all",
+      id: "l3-efficient-valid-profile",
+      kind: "any",
       predicates: [
         {
-          id: "l3-history-was-first-choice",
-          kind: "includes",
-          path: "completedTransferIds",
-          value: "l3-first-edit-history"
+          id: "l3-lean-session-profile",
+          kind: "all",
+          predicates: [
+            {
+              id: "l3-lean-explanation",
+              kind: "includes",
+              path: "acknowledgedExplanationIds",
+              value: "l3-prefix-rule"
+            },
+            {
+              id: "l3-history-first-choice",
+              kind: "includes",
+              path: "completedTransferIds",
+              value: "l3-first-edit-history"
+            },
+            {
+              id: "l3-history-reapplied",
+              kind: "includes",
+              path: "completedTransferIds",
+              value: "l3-reapplied-history"
+            },
+            {
+              id: "l3-lean-spend-threshold",
+              kind: "compare",
+              path: "attemptResult.spentUsd",
+              op: "lte",
+              value: 2.3500653
+            },
+            {
+              id: "l3-lean-deadline",
+              kind: "compare",
+              path: "clockMin",
+              op: "lte",
+              value: 58
+            }
+          ]
         },
         {
-          id: "l3-reference-spend-threshold",
-          kind: "compare",
-          path: "attemptResult.spentUsd",
-          op: "lte",
-          value: 2.3378439
+          id: "l3-fast-persistent-profile",
+          kind: "all",
+          predicates: [
+            {
+              id: "l3-fast-explanation",
+              kind: "includes",
+              path: "acknowledgedExplanationIds",
+              value: "l3-prefix-rule"
+            },
+            {
+              id: "l3-system-first-choice",
+              kind: "includes",
+              path: "completedTransferIds",
+              value: "l3-first-edit-system"
+            },
+            {
+              id: "l3-persisted-policy-observed",
+              kind: "includes",
+              path: "completedTransferIds",
+              value: "l3-persisted-policy-read"
+            },
+            {
+              id: "l3-persistent-spend-threshold",
+              kind: "compare",
+              path: "attemptResult.spentUsd",
+              op: "lte",
+              value: 2.4734988
+            },
+            {
+              id: "l3-fast-deadline",
+              kind: "compare",
+              path: "clockMin",
+              op: "lte",
+              value: 50
+            }
+          ]
         }
       ]
     },
     reason:
-      "Used the sufficient session-scoped placement on the first transfer attempt and stayed at or below the reference spend."
+      "Completed either the minimum-spend FOLLOW-UP profile or the minimum-time BOOT PATCH profile on the first placement."
   },
 
   referenceCfg: {
@@ -848,7 +1142,7 @@ const L3: LevelDef = {
 
   counterfactuals: [
     {
-      id: "l3-edit-position",
+      id: "l3-placement-tradeoff",
       unlockAfterEventId: "complete-l3-attempt",
       kind: "alternate-choice",
       cfg: {
@@ -859,9 +1153,9 @@ const L3: LevelDef = {
         hook: "static"
       },
       comparisonQuestion:
-        "How much did moving the same session-only reminder earlier change the third request?",
+        "What changed when the same reminder moved between SYSTEM and HISTORY?",
       revealCopy:
-        "Changing SYSTEM ended reuse at the first block; changing HISTORY preserved the first 21,655 tokens."
+        "FOLLOW-UP spent $0.1234335 less; BOOT PATCH completed the handoff 8 minutes earlier."
     }
   ],
 
@@ -872,26 +1166,21 @@ const L3: LevelDef = {
 };
 ```
 
-Every `StatePredicate` uses a legal kind, a legal comparison operator, and a path declared by `ReducerState` or `LedgerRow`. `lastRequests.0` addresses the first row of the canonical latest-request slice. The pure `pass(st)` reads only `ledger`, `completedEventIds`, and `completedTransferIds`.
+`referenceCfg` and `antiCfg` hold configuration constant. The post-attempt comparison replays only the alternate `SET_PREFIX_BLOCK_CONTENT` action and its authored handoff consequence. Neither configuration is treated as a failure route.
 
-`referenceCfg` and `antiCfg` intentionally hold configuration constant. The comparison isolates the actual player action replayed from `cp-l3-change-choice`:
-
-- Reference: `SET_PREFIX_BLOCK_CONTENT` on `PB_HISTORY_L3`
-- Anti-pattern: `SET_PREFIX_BLOCK_CONTENT` on `PB_SYSTEM_L3`
-
-No hook behavior or later-level prefix-position mechanic creates the difference.
+All gameplay fiction resides in `scenarioData.fixtures`. `scenarioData.estimates` contains presentation timing only.
 
 ## 6. Pricing walkthrough
 
-All requests use Sonnet: fresh input `$3/M`, cache read `$0.30/M`, 1-hour write `$6/M`, and output `$15/M` (`C1`, `C3`). Every total is produced by `PRICE_REQUEST` without internal rounding.
+All requests use Sonnet: fresh input `$3/M`, cache read `$0.30/M`, 1-hour write `$6/M`, and output `$15/M` (`C1`, `C3`). `PRICE_REQUEST` stores unrounded totals.
 
 ### `R1_COLD`
 
 ```text
-write:  34,738 × $6/M    = $0.208428
-input:   6,000 × $3/M    = $0.018000
-output: 44,000 × $15/M   = $0.660000
-total                       $0.886428
+write:  34,738 × $6/M     = $0.2084280
+input:   6,000 × $3/M     = $0.0180000
+output: 44,000 × $15/M    = $0.6600000
+total                       $0.8864280
 ```
 
 ### `R2_IDENTICAL`
@@ -903,7 +1192,7 @@ output:  44,000 × $15/M   = $0.6600000
 total                        $0.6884214
 ```
 
-### `R3_LATE_CHANGE` — reference
+### `R3_LATE_CHANGE` — FOLLOW-UP
 
 ```text
 read:    21,655 × $0.30/M = $0.0064965
@@ -913,36 +1202,69 @@ output:  44,000 × $15/M   = $0.6600000
 total                        $0.7629945
 ```
 
-Three-star reference total:
+### `R3_EARLY_CHANGE` — BOOT PATCH
 
 ```text
-$0.886428 + $0.6884214 + $0.7629945 = $2.3378439
+write:  34,738 × $6/M     = $0.2084280
+input:   6,000 × $3/M     = $0.0180000
+output: 44,000 × $15/M    = $0.6600000
+total                       $0.8864280
 ```
 
-### `R3_EARLY_CHANGE` — anti-pattern
+Current-session placement delta:
 
 ```text
-write:  34,738 × $6/M    = $0.208428
-input:   6,000 × $3/M    = $0.018000
-output: 44,000 × $15/M   = $0.660000
-total                       $0.886428
+$0.8864280 − $0.7629945 = $0.1234335
 ```
 
-Anti-pattern total:
+### `R4_BOOT_PERSISTED` or `R4_HISTORY_REAPPLIED`
+
+The front is byte-identical to the selected branch’s R3 entry and remains live at minute `50` or `58`.
 
 ```text
-$0.886428 + $0.6884214 + $0.886428 = $2.4612774
+read:   34,738 × $0.30/M = $0.0104214
+input:     100 × $3/M    = $0.0003000
+output:    100 × $15/M   = $0.0015000
+total                       $0.0122214
 ```
 
-Decisive early-change premium:
+### Three-star reference profile — FOLLOW-UP
 
 ```text
-$0.886428 − $0.7629945 = $0.1234335
+$0.8864280
++ $0.6884214
++ $0.7629945
++ $0.0122214
+= $2.3500653
 ```
 
-The punished third request is `1.1618×` the valid request. Its cached-prefix portion is `2.45×` the valid route’s cached-prefix portion because the early mismatch replaces `21,655` tokens of cheap reads with writes (`C1`, `C3`, `C8`, `C9`).
+Final wallet:
 
-These are the sole authoritative totals for the level.
+```text
+$2.5000000 − $2.3500653 = $0.1499347
+```
+
+Final clock: `58 min`.
+
+### Alternate three-star profile — BOOT PATCH
+
+```text
+$0.8864280
++ $0.6884214
++ $0.8864280
++ $0.0122214
+= $2.4734988
+```
+
+Final wallet:
+
+```text
+$2.5000000 − $2.4734988 = $0.0265012
+```
+
+Final clock: `50 min`.
+
+There is no punitive anti-pattern total. The alternate profile is intentionally more expensive but completes the scheduled handoff eight minutes earlier. These are the sole authoritative result totals.
 
 ## 7. Tape sequence
 
@@ -954,8 +1276,10 @@ These are the sole authoritative totals for the level.
 | 2 | `R2_IDENTICAL` | `SAME BLOCKS` | `read 34,738` → `input 6,000` → `output 44,000` |
 | 3a | `R3_LATE_CHANGE` | `HISTORY CHANGED` | `read 21,655` → `write 13,083` → `input 6,000` → `output 44,000` |
 | 3b | `R3_EARLY_CHANGE` | `SYSTEM CHANGED` | `write 34,738` → `input 6,000` → `output 44,000` |
+| 4a | `R4_HISTORY_REAPPLIED` | `HANDOFF · REAPPLIED` | `read 34,738` → `input 100` → `output 100` |
+| 4b | `R4_BOOT_PERSISTED` | `HANDOFF · ALREADY THERE` | `read 34,738` → `input 100` → `output 100` |
 
-Reveal groups:
+Exactly one row from each branch pair appears in an attempt.
 
 ```ts
 [
@@ -978,61 +1302,71 @@ Reveal groups:
     id: "l3-change-early",
     requestIds: ["R3_EARLY_CHANGE"],
     gatedByPredictionId: "l3-change-boundary"
+  },
+  {
+    id: "l3-handoff-history",
+    requestIds: ["R4_HISTORY_REAPPLIED"],
+    gatedByPredictionId: "l3-handoff-boundary"
+  },
+  {
+    id: "l3-handoff-system",
+    requestIds: ["R4_BOOT_PERSISTED"],
+    gatedByPredictionId: "l3-handoff-boundary"
   }
 ]
 ```
 
-`ahaRequestId: "R3_LATE_CHANGE"`.
+`ahaRequestId` is the actual branch’s R3 request.
 
-Aha frame:
+FOLLOW-UP aha frame:
 
 ```text
-SYSTEM 2,750      TOOLS 16,295      INSTRUCTIONS 2,610      HISTORY 13,083      CURRENT 6,000
-└────────────────────── REREAD 21,655 ──────────────────────┘│CHANGED + WRITTEN││ FRESH │
-                                                             ↑ first mismatch
+SYSTEM 2,750   TOOLS 16,295   INSTRUCTIONS 2,610   HISTORY 13,083   CURRENT 6,000
+└────────────────── REREAD 21,655 ─────────────────┘│CHANGED+WRITE││ FRESH │
+                                                     ↑ first mismatch
 ```
 
-`UI_TAPE_RENDERER` uses the canonical output-aware visual-weight model. Row length is proportional to `LedgerRow.usd`; every segment occupies its bucket’s USD share. The violet output segment contributes `outTok × 5 × MODEL_IN[sonnet]` to tape weight (`C1`, `C3`). Hiding introductory output vocabulary cannot remove output from row or segment geometry.
+BOOT PATCH aha frame:
 
-The complete reference/anti-pattern overlay remains inaccessible until `COMPLETE_ATTEMPT`. A frozen failure may show only the local alternative required to prove that the punished actual request is genuinely more expensive. Counterfactual processing cannot dispatch `FREEZE_FAILURE`.
+```text
+SYSTEM 2,750   TOOLS 16,295   INSTRUCTIONS 2,610   HISTORY 13,083   CURRENT 6,000
+│CHANGED+WRITE││────────────── AFTER CHANGE · WRITTEN 31,988 ──────────────││ FRESH │
+↑ first mismatch
+```
+
+`UI_TAPE_RENDERER` uses authoritative USD weight, including output. The complete spend/time comparison remains inaccessible until `COMPLETE_ATTEMPT`.
 
 ## 8. Prediction prompts
 
-All three prompts use `UI_PREDICTION_PROMPT`. Options have no correctness styling before commitment. Wrong answers reveal evidence but change no score, star, wallet, failure, or gate result.
+Wrong answers change no score, star, wallet, failure, gate, request resolution, or clock.
 
 ### `l3-cold-result`
 
 **Question:** “Nothing has been saved yet. What will the first send do with the four front blocks?”
 
-Options:
-
 - `read-front-four` — “Read a saved copy”
-- `write-front-four` — “Write them for later reuse”
-- `fresh-all-five` — “Treat all five blocks as fresh only”
+- `write-front-four` — “Write them for later”
+- `fresh-all-five` — “Treat all five as fresh only”
 
-Correct option: `write-front-four`.
+Correct: `write-front-four`.
 
-Post-reveal sentence: **“No saved copy existed, so the four cacheable front blocks were written once.”**
+Post-reveal: **“No saved copy existed, so the four cacheable front blocks were written once.”**
 
 ### `l3-repeat-boundary`
 
 **Question:** “Nothing in the stack changed. How far will the saved part reach?”
 
-Options:
-
 - `system-only` — “SYSTEM only”
 - `through-instructions` — “Through INSTRUCTIONS”
 - `through-history` — “Through HISTORY; CURRENT stays fresh”
 
-Correct option: `through-history`.
+Correct: `through-history`.
 
-Post-reveal sentence: **“The four unchanged front blocks were reread; CURRENT was still new work.”**
+Post-reveal: **“The four unchanged front blocks were reread; CURRENT was still new work.”**
 
 ### `l3-change-boundary`
 
 **Question:** “This one block changed. What will the next request do?”
-
-Options depend on the selected placement but reveal no correctness styling.
 
 For BOOT PATCH:
 
@@ -1040,7 +1374,7 @@ For BOOT PATCH:
 - `rewrite-system-only` — “Rewrite SYSTEM only”
 - `rewrite-all-cached` — “Rewrite SYSTEM and every cached block after it”
 
-Correct option: `rewrite-all-cached`.
+Correct: `rewrite-all-cached`.
 
 For FOLLOW-UP:
 
@@ -1048,113 +1382,81 @@ For FOLLOW-UP:
 - `rewrite-all-cached` — “Rewrite all four cached blocks”
 - `read-all-cached` — “Reread all four cached blocks”
 
-Correct option: `read-three-write-history`.
+Correct: `read-three-write-history`.
 
-Post-reveal sentences:
+Post-reveal:
 
 - BOOT PATCH: **“The first mismatch was SYSTEM, so the cached suffix started there.”**
 - FOLLOW-UP: **“The first three blocks still matched; only the changed cached tail was rewritten.”**
 
+### `l3-handoff-boundary`
+
+**Question:** “The saved entry is still live. After this branch’s reminder setup, what will verification do?”
+
+- `read-front-four-current-fresh` — “Reread the four front blocks; keep CURRENT fresh”
+- `rewrite-reminder-block` — “Rewrite the reminder block”
+- `cold-handoff` — “Start cold because the session ID changed”
+
+Correct: `read-front-four-current-fresh`.
+
+Post-reveal:
+
+- BOOT PATCH: **“The later session received the global policy automatically and reread its unchanged front.”**
+- FOLLOW-UP: **“Reapplying the exact HISTORY content restored the matching front before verification.”**
+
 ## 9. Fail-state
 
-**Failure rule:** `l3-early-change`
+`failureRules: []`.
 
-**Predicate:**
+No punitive freeze is authored for this level:
 
-```ts
-{
-  id: "l3-early-change-predicate",
-  kind: "all",
-  predicates: [
-    {
-      id: "l3-system-edit-completed",
-      kind: "includes",
-      path: "completedTransferIds",
-      value: "l3-edit-system"
-    },
-    {
-      id: "l3-early-reveal-completed",
-      kind: "event-completed",
-      eventId: "reveal-r3-early"
-    },
-    {
-      id: "l3-early-request-is-latest",
-      kind: "compare",
-      path: "lastRequests.0.requestId",
-      op: "eq",
-      value: "R3_EARLY_CHANGE",
-      observedAfterEventId: "reveal-r3-early"
-    },
-    {
-      id: "l3-early-write-exact",
-      kind: "compare",
-      path: "lastRequests.0.writeTok",
-      op: "eq",
-      value: 34738,
-      observedAfterEventId: "reveal-r3-early"
-    }
-  ]
-}
-```
+- BOOT PATCH is more expensive on R3 but buys an eight-minute handoff advantage.
+- FOLLOW-UP is cheaper but consumes that eight-minute reapplication.
+- Both requests are economically valid and both branches complete.
+- Therefore `R3_EARLY_CHANGE` must not dispatch `FREEZE_FAILURE`, even though its local request costs more.
+- A FOLLOW-UP player cannot send R4 before reapplication; the unmet precondition disables **VERIFY** and exposes the required `SET_PREFIX_BLOCK_CONTENT` control. No request, wallet mutation, or fabricated failure occurs.
+- No `REQUEST_COUNTERFACTUAL`, `REVEAL_COUNTERFACTUAL`, post-attempt comparison, or `COMPLETE_ATTEMPT` event can freeze the level.
 
-- **Decisive event:** `R3_EARLY_CHANGE` fully resolves and renders in the player’s actual attempt.
-- **Cause code:** `EARLY_PREFIX_MISMATCH`
-- **Frozen message:** **“SYSTEM changed first. The entire 34,738-token cached tail had to be written again.”**
-- **Highlighted objects:** `PB_SYSTEM_L3`, `PB_TOOLS_L3`, `PB_INSTRUCTIONS_L3`, `PB_HISTORY_L3`, `R3_EARLY_CHANGE`
-- **Actual request:** `$0.886428`
-- **Valid session-only alternative:** `$0.7629945`
-- **Visible premium:** `$0.1234335`
-- **Freeze evidence:** `0 reread · 34,738 rewritten · 6,000 fresh`
-- **Rewind control:** **“Try the placement again.”**
-- **Destination:** `cp-l3-change-choice`
-
-The freeze is economically true: `$0.886428 > $0.7629945`. Equal fresh-input and output buckets remain visible, while the cache-side segments show the causal difference. Prediction correctness is absent from the failure predicate.
-
-The failed request remains visible while frozen. Rewind removes the selected mutation, third request, cache mutation, wallet effect, and completed edit ID while retaining the attempt-local first-choice marker.
-
-`failLesson`:
-
-```ts
-{
-  bucket: "none",
-  cite: "C8/C9",
-  line:
-    "SYSTEM changed first. The entire 34,738-token cached tail had to be written again."
-}
-```
+`cp-l3-change-choice` remains a deterministic replay boundary for retry and QA, not a punitive rewind destination.
 
 ## 10. Gate & stars
 
 ### Pass gate
 
-Pass only when all are true:
+Pass only when:
 
-1. `reveal-r2-identical` completed.
-2. After that evidence, the player dispatched `SET_PREFIX_BLOCK_CONTENT` on `PB_HISTORY_L3`.
-3. `reveal-r3-late` completed.
-4. `lastRequests[0]` is `R3_LATE_CHANGE` with exactly `21,655 reread`, `13,083 rewritten`, `6,000 fresh`, and `44,000 output`.
-5. `completedTransferIds` contains `l3-edit-history`.
+1. `reveal-r2-identical`, `reveal-r3-placement`, and `reveal-r4-policy-check` completed.
+2. The player made a post-evidence `SET_PREFIX_BLOCK_CONTENT` choice on `PB_SYSTEM_L3` or `PB_HISTORY_L3`.
+3. The R3 ledger row matches that recorded placement.
+4. The handoff consequence matches the same branch:
+   - BOOT PATCH records `l3-persisted-policy-read`; or
+   - FOLLOW-UP records `l3-reapplied-history`.
+5. The actual R4 row rereads `34,738`, writes `0`, receives `100` fresh input, and produces `100` output.
 
-The corresponding pure `pass(st)` finds `R3_LATE_CHANGE` in the declared `ledger: LedgerRow[]` and checks declared reducer arrays. Budget alone cannot pass. Prediction selection, commitment, option identity, and correctness are excluded from every gate predicate.
+The pure `pass(st)` uses only `ledger`, `completedEventIds`, and `completedTransferIds`. It searches `ReducerState.ledger` as an array and never assumes object-keyed units or ledger rows.
 
 ### Stars
 
-- **1 star — Built and proved:** the behavioral pass gate is satisfied.
-- **2 stars — Named the boundary:** `acknowledgedExplanationIds` additionally includes `l3-prefix-rule` after `reveal-r3-late`.
-- **3 stars — Changed late:** `completedTransferIds` additionally includes `l3-first-edit-history`, and completed `attemptResult.spentUsd` is at most `$2.3378439`.
+- **1 star — Completed the handoff:** behavioral pass gate satisfied.
+- **2 stars — Named the boundary:** `acknowledgedExplanationIds` includes `l3-prefix-rule` after `reveal-r3-placement`.
+- **3 stars — Honored the priority:** either:
+  - FOLLOW-UP was the first placement, completed at or before minute `58`, and spent at most `$2.3500653`; or
+  - BOOT PATCH was the first placement, completed at or before minute `50`, and spent at most `$2.4734988`.
 
-A wrong prediction cannot remove a star. The two-star criterion is a distinct post-evidence explanation action. The three-star threshold equals the exact reference path and is paired with first-choice evidence, so rewinding a failed BOOT PATCH cannot earn it.
+Both three-star branches also require `l3-prefix-rule`. Prediction correctness is excluded from every predicate.
 
 ## 11. Toasts
 
 | ID | Trigger | Exact copy |
 |---|---|---|
 | `l3-request-settled` | Cosmetic cold-open animation completes | **“Ready to send.”** |
-| `l3-first-written` | `R1_COLD.writeTok === 34738` | **“First send: 34,738 tokens saved for reuse. WRITE · $0.208428.”** |
+| `l3-first-written` | `R1_COLD.writeTok === 34738` | **“First send: 34,738 tokens saved for later. WRITE · $0.208428.”** |
 | `l3-prefix-name` | R2 reveal shows `readTok === 34738` | **“That unchanged run at the front is the prefix.”** |
 | `l3-current-fresh` | R2 reveal shows `inputTok === 6000` | **“CURRENT arrived after the saved part: FRESH · 6,000.”** |
-| `l3-late-boundary` | `reveal-r3-late` completes | **“Boundary found: 21,655 reread · 13,083 rewritten · 6,000 fresh.”** |
-| `l3-early-cause` | Actual-attempt `FREEZE_FAILURE` for `l3-early-change` | **“The first change happened at SYSTEM, so every cached block after it lost reuse.”** |
+| `l3-late-boundary` | FOLLOW-UP completes `reveal-r3-placement` | **“Boundary found: 21,655 reread · 13,083 rewritten.”** |
+| `l3-early-boundary` | BOOT PATCH completes `reveal-r3-placement` | **“SYSTEM changed first: all 34,738 cached tokens were rewritten.”** |
+| `l3-handoff-reapply` | `l3-reapplied-history` appended | **“Reminder restored · 8 simulated minutes.”** |
+| `l3-handoff-persisted` | `l3-persisted-policy-read` appended | **“The handoff already had the global reminder.”** |
 
 Vocabulary:
 
@@ -1177,71 +1479,74 @@ Vocabulary:
 ]
 ```
 
-Pre-reveal copy does not define the boundary rule or use reuse colors. The cosmetic cold-open toast contains no solution vocabulary.
+No pre-reveal copy states the first-mismatch rule.
 
 ## 12. QA gate
 
 Real-browser pointer and keyboard click-through must assert:
 
 1. `UI_PREDICTION_PROMPT` is actionable by `2s` `[ESTIMATE]`.
-2. Reducer state seeds the stack exactly as `SYSTEM │ TOOLS │ INSTRUCTIONS │ HISTORY │ CURRENT`.
-3. The cold-open may temporarily offset the last two rendered blocks but does not mutate `PREFIX_STACK.blocks`.
-4. No `REORDER_PREFIX_BLOCK` action is dispatched anywhere in the level.
-5. The cosmetic crossing exposes no hit target, drag handle, keyboard move action, or scoring consequence.
-6. `SET_PREFIX_BLOCK_CONTENT` is the only newly introduced player control.
-7. `UI_PREFIX_STACK_VISUALIZER.showTokenCounts === false` through cold open and first-prediction commitment.
-8. Token counts become visible only after the first `SEND_REQUEST` resolves.
-9. Pre-play UI does not state the first-mismatch rule or expose a reuse boundary.
-10. `UI_PREFIX_STACK_VISUALIZER.revealBoundary === false` before each relevant prediction commitment.
-11. R1, R2, and either R3 branch cannot reveal before their respective prediction commitment.
-12. A wrong prediction changes no score, star, wallet, failure, gate, or request resolution.
-13. R1 yields exactly one `LedgerRow` and one tape row costing `$0.886428`.
-14. R2 yields exactly one `LedgerRow` and one tape row costing `$0.6884214`.
-15. R3 late yields exactly one `LedgerRow` and one tape row costing `$0.7629945`.
-16. R3 early yields exactly one `LedgerRow` and one tape row costing `$0.886428`.
-17. Each tape row corresponds to exactly one priced request and exposes the same non-zero buckets as its `LedgerRow`.
-18. Every real request has `usd > 0`.
-19. No positive value renders as `$0.0000`.
-20. Every authoritative cost equals `PRICE_REQUEST` using `C1` and `C3`.
-21. Every visible row and segment width includes the `outTok × 5` contribution from the canonical `UI_TAPE_RENDERER` model.
-22. Hover and keyboard focus expose every non-zero bucket equation, including output.
-23. R2 refreshes the live `CacheEntry` TTL according to `C12`.
-24. The late-change diff labels exactly three blocks reread, one rewritten, and `CURRENT` fresh.
-25. The early-change diff labels zero blocks reread, four rewritten, and `CURRENT` fresh.
-26. The early branch freezes only after its decisive actual-attempt tape row is completely visible.
-27. No counterfactual, reference request, or comparison reveal dispatches `FREEZE_FAILURE`.
-28. The frozen frame shows `$0.886428 actual > $0.7629945 valid alternative` and the `$0.1234335` premium.
-29. While frozen, economic controls are disabled and `UI_REWIND_CONTROL` remains available.
-30. Rewind to `cp-l3-change-choice` restores exactly two ledger rows, wallet `$0.9251506`, `attemptMetrics.spentUsd === 1.5748494`, and the live `34,738-token` entry.
-31. Rewind retains the immutable first-choice marker while removing the rewound completed edit ID.
-32. The pass gate observes `SET_PREFIX_BLOCK_CONTENT` on `PB_HISTORY_L3` after `reveal-r2-identical`.
-33. Gate and star predicates use only declared paths: `lastRequests`, `completedEventIds`, `completedTransferIds`, `acknowledgedExplanationIds`, and `attemptResult.spentUsd`.
-34. Every predicate kind and comparison operator belongs to the canonical legal registry; no predicate uses `op: "contains"`.
-35. No gate, star, or failure predicate inspects a prediction option or prediction correctness.
-36. The fixed-seed reference path passes and totals `$2.3378439`.
-37. The fixed-seed early-change path fails the behavioral gate and totals `$2.4612774`.
-38. Reference and anti-pattern configurations retain the same static hook; only the chosen `SET_PREFIX_BLOCK_CONTENT` action differs.
-39. BOOT PATCH visibly offers future-session persistence, while FOLLOW-UP visibly offers lower current-request cost but expires with the session.
-40. The complete post-attempt comparison is inaccessible until `COMPLETE_ATTEMPT`.
-41. Static final tape colors, output weight, block states, and totals render without hover.
-42. Pointer and keyboard placement controls dispatch equivalent `SET_PREFIX_BLOCK_CONTENT` actions.
-43. Prediction options expose no correctness styling before commitment.
-44. Screen-reader announcements name block, settled order, state, and—after R1 only—token count without relying on color.
-45. Reduced-motion mode skips the cosmetic crossing but presents the same canonical stack, ledger rows, boundary, classifications, and prices.
+2. Reducer state seeds the primary stack as `SYSTEM │ TOOLS │ INSTRUCTIONS │ HISTORY │ CURRENT`.
+3. Cosmetic crossing never mutates `PREFIX_STACK.blocks`.
+4. No `REORDER_PREFIX_BLOCK` action is dispatched.
+5. `SET_PREFIX_BLOCK_CONTENT` is the only newly introduced player control.
+6. Token counts remain hidden through the first prediction commitment.
+7. R1, R2, R3, and R4 cannot reveal before their respective prediction commitments.
+8. Wrong predictions affect no economic or scoring state.
+9. R1 produces one ledger/tape row costing `$0.886428`.
+10. R2 produces one ledger/tape row costing `$0.6884214`.
+11. FOLLOW-UP R3 produces one ledger/tape row costing `$0.7629945`.
+12. BOOT PATCH R3 produces one ledger/tape row costing `$0.886428`.
+13. Either R4 produces one ledger/tape row costing `$0.0122214`.
+14. Every real request has `usd > 0`.
+15. No positive amount renders as `$0.0000`.
+16. Every authoritative cost equals `PRICE_REQUEST` using `C1` and `C3`.
+17. Every non-zero output bucket contributes to tape geometry.
+18. R2 refreshes the live entry according to `C12`.
+19. FOLLOW-UP R3 shows `21,655` reread and `13,083` rewritten.
+20. BOOT PATCH R3 shows `0` reread and `34,738` rewritten.
+21. BOOT PATCH does not freeze after R3.
+22. FOLLOW-UP remains completable after R3.
+23. At minute `50`, the BOOT PATCH handoff contains `system-v2-reminder` without a player edit.
+24. BOOT PATCH R4 appends `l3-persisted-policy-read`.
+25. FOLLOW-UP requires an actual `SET_PREFIX_BLOCK_CONTENT` on handoff `HISTORY`.
+26. FOLLOW-UP reapplication appends `l3-reapplied-history` and advances `clockMin` by exactly `8`.
+27. FOLLOW-UP R4 resolves at minute `58`, before the minute-`60` expiry boundary.
+28. BOOT PATCH R4 resolves at minute `50`.
+29. Both R4 rows read `34,738`, write `0`, input `100`, and output `100`.
+30. BOOT PATCH completes with four ledger rows, `$2.4734988` spend, `$0.0265012` wallet, and `clockMin === 50`.
+31. FOLLOW-UP completes with four ledger rows, `$2.3500653` spend, `$0.1499347` wallet, and `clockMin === 58`.
+32. Both profiles satisfy `pass(st)`.
+33. Each profile can earn three stars through its own threshold branch.
+34. The gate’s placement decision is recorded by the corresponding authored `SET_PREFIX_BLOCK_CONTENT` event.
+35. `pass(st)` performs array-safe `ledger.find(...)` lookups.
+36. All predicate paths resolve to declared `ReducerState` or `LedgerRow` fields.
+37. Every predicate kind and comparison operator belongs to the canonical registry.
+38. No predicate uses `op: "contains"`.
+39. No gate or star inspects prediction option identity or correctness.
+40. `failureRules` is empty and no event dispatches `FREEZE_FAILURE`.
+41. No counterfactual or result event mutates actual-attempt ledger, wallet, clock, or failure state.
+42. The complete spend/time comparison is inaccessible until `COMPLETE_ATTEMPT`.
+43. Pointer and keyboard placement controls dispatch equivalent actions.
+44. Screen-reader announcements expose block, settled order, state, and revealed token count without relying on color.
+45. Reduced-motion mode skips the cosmetic crossing but preserves canonical state and evidence.
 46. The level is winnable using only documented visible controls.
-47. Each authoritative request count, token count, cost, threshold, and result total has one implementable value.
-48. `PB_HISTORY_L3` cites the semantically specific `L3_HISTORY_FIXTURE` (`C35`, `[FICTION]`) and never cites `CATALOG_FULL` (`C7`) as history provenance.
-49. `title` and `objective` contain none of the terms registered in `concept.solutionVocabulary`.
-50. `03-build-the-prefix`, `prefix-reuse`, `write-vs-read`, and `cache-expiry` all resolve in the canonical registries.
+47. `scenarioData.estimates` contains presentation timing only.
+48. Every gameplay fiction value appears in `scenarioData.fixtures` with `id`, `semanticRole`, `unit`, and `[FICTION]`.
+49. `l3-replay-seed` explicitly has no provenance relationship to `C34`.
+50. `PB_HISTORY_L3` cites the semantically correct `L3_HISTORY_FIXTURE` (`C35`), never `CATALOG_FULL`.
+51. `title` and `objective` contain none of `concept.solutionVocabulary`.
+52. `03-build-the-prefix`, `prefix-reuse`, `write-vs-read`, and `cache-expiry` resolve in canonical registries.
 
 ## 13. Reference-bar justification
 
-The screen opens with a tactile but cosmetic five-block settle. It creates motion and immediate curiosity without adding a reorder puzzle, mutating reducer state, or pre-answering the cache behavior. The first interaction is prediction; the only new player control arrives later as `SET_PREFIX_BLOCK_CONTENT`.
+The cosmetic five-block settle creates an immediate tactile hook without introducing a reorder puzzle or exposing the answer. The first send reveals token counts only after prediction; the identical resend then establishes the reusable front through direct evidence.
 
-The first send reveals the previously hidden token counts along with a cold write. The identical resend then supplies causal evidence before the player is asked to place a novel reminder. This preserves the predict-before-reveal rhythm while avoiding a second new control.
+The placement choice now has genuine counter-pressure inside the modeled attempt. FOLLOW-UP preserves more of the existing front and yields the lower spend. BOOT PATCH rewrites more immediately, but the later managed session receives the policy automatically and finishes eight minutes earlier. Both choices are completable, reducer-visible, budget-valid, deadline-valid, and eligible for three stars through distinct efficient profiles.
 
-BOOT PATCH and FOLLOW-UP are not cosmetic good/bad labels. BOOT PATCH buys cross-session persistence at a higher current-request cost; FOLLOW-UP buys the cheaper current-session request by surrendering that persistence. The ticket’s stated scope makes FOLLOW-UP sufficient without making BOOT PATCH benefit-free.
+The second-session verification is a real priced request, not an epilogue badge or counterfactual claim. It reads the branch’s persisted or explicitly restored instruction before `COMPLETE_ATTEMPT`. The post-attempt overlay merely compares the already-realized spend/time profiles.
 
-The successful route exposes the first mismatch through the player’s own third request. The early route freezes only after a visibly more expensive actual ledger row, preserves equal output weight, names the precise cause, and rewinds directly to the transfer choice. Prediction correctness remains non-punitive; demonstrated understanding comes from the post-evidence content edit and optional causal explanation.
+No punitive failure is attached to either placement because doing so would erase the live tradeoff. The level instead gates on a consistent post-evidence placement, its exact R3 cache behavior, and the later request that proves the handoff consequence.
 
-**Assumptions:** The `13,083-token` conversation-history value is the distinct `[FICTION]` `L3_HISTORY_FIXTURE` registered as `C35`; it has no skills-catalog provenance. The `$2.50` budget is `[FICTION]`, and cold-open timings are `[ESTIMATE]`.
+**Assumptions and tradeoffs:** The scenario explicitly shares one managed cache namespace across two main-session IDs, as permitted by the canonical context rule. BOOT PATCH’s benefit is time, not lower spend; FOLLOW-UP’s benefit is lower spend, not faster completion. The replay seed, budget, clock cap, verification buckets, handoff minute, and reapplication duration are named `[FICTION]` fixtures. Cold-open values are presentation-only `[ESTIMATE]` entries.
+

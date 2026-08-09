@@ -11,6 +11,7 @@
 - **New mechanic:** Three non-punitive cost-side predictions followed by one post-evidence transfer question.
 - **Model control:** The per-job model picker is deliberately removed. The attempt uses fixed Sonnet requests; model-price comparisons appear only after completion.
 - **Protected discovery:** No pre-play copy reveals token counts, output’s `5x` rate, the correct predictions, model prices, or reference totals.
+- **Choice classification:** Predictions and the transfer are evidence checks, not competing economic routes. This level offers no configurable strategic decision or claimed counter-pressure.
 
 ## 2. Objects used
 
@@ -26,6 +27,8 @@
 - `Budget`
 - `Clock`
 - `Checkpoint`
+- `ScenarioFixtureDef`
+- `ScenarioEstimateDef`
 - `PRICE_REQUEST`
 - `RATE_INPUT`
 - `RATE_OUTPUT`
@@ -56,7 +59,7 @@ Each card has one sealed choice labeled **“Which side will cost more?”**
 
 **0:02 onward.** Search receives focus. Copy: **“Commit an estimate. Then the wire will show what happened.”**
 
-No model picker is rendered. `devModel` remains locked to Sonnet during the attempt; its model spread is revealed only through the post-attempt counterfactual.
+The one-second opening-beat duration and two-second first-interaction target are presentation-only `[ESTIMATE]` values registered in `scenarioData.estimates`. No model picker is rendered. `devModel` remains locked to Sonnet during the attempt; its model spread is revealed only through the post-attempt counterfactual.
 
 ## 4. Exact event sequence
 
@@ -134,9 +137,9 @@ No model picker is rendered. `devModel` remains locked to Sonnet during the atte
 12. **Answer the transfer question**  
     Event: the player chooses which side of the fourth workload would cost more.  
     Action: `ACK_EXPLANATION { explanationId: "l9-transfer-input-cost" | "l9-transfer-output-cost" }`.  
-    Mutates: explanation and transfer-completion state only.  
+    Mutates: the selected id is appended to `acknowledgedExplanationIds`. Accepting `l9-transfer-output-cost` also appends `"l9-cost-transfer"` exactly once to `completedTransferIds` and marks the active transfer complete; accepting `l9-transfer-input-cost` does not append a completed-transfer marker.  
     Correct application: `3,000 × 5 = 15,000` cost-weighted output tokens, which exceeds `12,000 × 1 = 12,000` cost-weighted input tokens (`C1`).  
-    Gate evidence: only `l9-transfer-output-cost`, submitted after `l9-reveal-review`, satisfies the behavioral gate.
+    Gate evidence: only the reducer-visible pairing of `acknowledgedExplanationIds.includes("l9-transfer-output-cost")` and `completedTransferIds.includes("l9-cost-transfer")`, recorded after `l9-reveal-review`, satisfies the behavioral gate.
 
 13. **Retry an incorrect transfer answer**  
     Event: the player selects `l9-transfer-input-cost`.  
@@ -146,7 +149,7 @@ No model picker is rendered. `devModel` remains locked to Sonnet during the atte
     Numbers: no spend is added or reversed because the transfer card is unpriced.
 
 14. **Complete the attempt**  
-    Event: the correct post-evidence transfer answer has been acknowledged.  
+    Event: the correct post-evidence transfer answer has appended `"l9-cost-transfer"` to `completedTransferIds`.  
     Action: `COMPLETE_ATTEMPT`.  
     Mutates: gate result, stars, attempt result, and result summary.  
     Numbers: the reference spend is the Sonnet total in §6. Prediction selections and prediction correctness are not inspected.
@@ -160,10 +163,14 @@ No model picker is rendered. `devModel` remains locked to Sonnet during the atte
 ## 5. Level data
 
 ```ts
-const SEARCH_OUT = 800;       // [ESTIMATE]
-const REVIEW_OUT = 500;       // [ESTIMATE]
-const TRANSFER_IN = 12_000;   // [FICTION]
-const TRANSFER_OUT = 3_000;   // [FICTION]
+const L9_SEED = 904409;          // [FICTION]
+const L9_BUDGET_USD = 3.00;      // [FICTION]
+const L9_CLOCK_CAP_MIN = 3;      // [FICTION]
+const L9_UNIT_HOURS = 1;         // [FICTION]
+const SEARCH_OUT = 800;          // [FICTION]
+const REVIEW_OUT = 500;          // [FICTION]
+const TRANSFER_IN = 12_000;      // [FICTION]
+const TRANSFER_OUT = 3_000;      // [FICTION]
 
 const level09: LevelDef = {
   id: "09-model-the-work",
@@ -177,7 +184,18 @@ const level09: LevelDef = {
     privateDesignerSummary:
       "Total model cost depends on the priced input/output mix, not token count or model identity alone.",
     postRevealRule:
-      "Apply each bucket's rate: long generated output can dominate the bill."
+      "Apply each bucket's rate: long generated output can dominate the bill.",
+    solutionVocabulary: [
+      "output",
+      "5x",
+      "output rate",
+      "cost-weighted workload",
+      "generated-output dominance"
+    ]
+  },
+  conceptScope: {
+    kind: "single",
+    reusedConceptIds: []
   },
   prerequisiteConceptIds: ["write-vs-read"],
 
@@ -191,9 +209,9 @@ const level09: LevelDef = {
   ],
 
   scope: "session",
-  seed: 904409,
-  budgetUsd: 3.00,
-  clockCapMin: 3,
+  seed: L9_SEED,
+  budgetUsd: L9_BUDGET_USD,
+  clockCapMin: L9_CLOCK_CAP_MIN,
   cfgOverride: {
     devModel: "sonnet",
     who: "inline",
@@ -208,7 +226,7 @@ const level09: LevelDef = {
         kind: "TASK",
         ticket: 1,
         deps: [],
-        hours: 1,
+        hours: L9_UNIT_HOURS,
         outTok: SEARCH_OUT,
         workIn: WORK_IN,
         label: "Search"
@@ -218,7 +236,7 @@ const level09: LevelDef = {
         kind: "DEV",
         ticket: 2,
         deps: ["l9-search"],
-        hours: 1,
+        hours: L9_UNIT_HOURS,
         outTok: WORK_OUT,
         workIn: WORK_IN,
         label: "Codegen"
@@ -228,7 +246,7 @@ const level09: LevelDef = {
         kind: "CODE_REVIEW",
         ticket: 3,
         deps: ["l9-codegen"],
-        hours: 1,
+        hours: L9_UNIT_HOURS,
         outTok: REVIEW_OUT,
         workIn: WORK_IN,
         label: "Short review"
@@ -350,12 +368,84 @@ const level09: LevelDef = {
       }
     ],
 
+    fixtures: [
+      {
+        id: "l9-replay-seed",
+        label: "Level seed",
+        semanticRole: "Deterministic replay seed for the L9 scenario",
+        value: L9_SEED,
+        unit: "count",
+        tag: "[FICTION]"
+      },
+      {
+        id: "l9-attempt-budget",
+        label: "Attempt budget",
+        semanticRole: "Initial scalar wallet and spend cap for the L9 attempt",
+        value: L9_BUDGET_USD,
+        unit: "usd",
+        tag: "[FICTION]"
+      },
+      {
+        id: "l9-clock-cap",
+        label: "Clock cap",
+        semanticRole: "Maximum simulated minutes available to the three-job attempt",
+        value: L9_CLOCK_CAP_MIN,
+        unit: "min",
+        tag: "[FICTION]"
+      },
+      {
+        id: "l9-unit-hours",
+        label: "Priced-job unit hours",
+        semanticRole: "UnitSeed hours assigned to each of the three priced jobs",
+        value: L9_UNIT_HOURS,
+        unit: "count",
+        tag: "[FICTION]"
+      },
+      {
+        id: "l9-search-output-tokens",
+        label: "Search output",
+        semanticRole: "Generated output tokens billed by the Search request",
+        value: SEARCH_OUT,
+        unit: "tok",
+        tag: "[FICTION]"
+      },
+      {
+        id: "l9-review-output-tokens",
+        label: "Short-review output",
+        semanticRole: "Generated output tokens billed by the Short-review request",
+        value: REVIEW_OUT,
+        unit: "tok",
+        tag: "[FICTION]"
+      },
+      {
+        id: "l9-transfer-input-tokens",
+        label: "Transfer input",
+        semanticRole: "Fresh input tokens displayed in the unpriced deployment-summary transfer",
+        value: TRANSFER_IN,
+        unit: "tok",
+        tag: "[FICTION]"
+      },
+      {
+        id: "l9-transfer-output-tokens",
+        label: "Transfer output",
+        semanticRole: "Generated output tokens displayed in the unpriced deployment-summary transfer",
+        value: TRANSFER_OUT,
+        unit: "tok",
+        tag: "[FICTION]"
+      }
+    ],
+
     estimates: [
-      { label: "search output", value: SEARCH_OUT, tag: "[ESTIMATE]" },
-      { label: "short-review output", value: REVIEW_OUT, tag: "[ESTIMATE]" },
-      { label: "transfer input", value: TRANSFER_IN, tag: "[FICTION]" },
-      { label: "transfer output", value: TRANSFER_OUT, tag: "[FICTION]" },
-      { label: "unit duration", value: 1, tag: "[FICTION]" }
+      {
+        label: "Opening beat duration in seconds",
+        value: 1,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "First-interaction target in seconds",
+        value: 2,
+        tag: "[ESTIMATE]"
+      }
     ]
   },
 
@@ -432,7 +522,7 @@ const level09: LevelDef = {
         ? "Applied output pricing to a novel workload."
         : "Apply the revealed rates to the transfer workload.",
       evidence: applied
-        ? ["l9-reveal-review", "l9-transfer-output-cost"]
+        ? ["l9-reveal-review", "l9-transfer-output-cost", "l9-cost-transfer"]
         : ["l9-reveal-review"]
     };
   },
@@ -465,8 +555,8 @@ const level09: LevelDef = {
         {
           id: "l9-star3-transfer",
           kind: "includes",
-          path: "acknowledgedExplanationIds",
-          value: "l9-transfer-output-cost"
+          path: "completedTransferIds",
+          value: "l9-cost-transfer"
         },
         {
           id: "l9-star3-wallet",
@@ -525,25 +615,25 @@ const level09: LevelDef = {
 };
 ```
 
-`WORK_IN = 6,000` and `WORK_OUT = 44,000` are `C28`. The three clean `MAIN_SESSION_CONTEXT` instances prevent unrelated growing history or cache reuse from changing the workload comparison. Each request uses `cachePolicy: "bypass"` and resolves to `0 readTok`, `6,000 inputTok`, `0 writeTok`, and its authored `outTok`.
+`WORK_IN = 6,000` and `WORK_OUT = 44,000` are the semantically matching calibrated fixtures registered by `C28`. The three clean `MAIN_SESSION_CONTEXT` instances prevent unrelated growing history or cache reuse from changing the workload comparison. Each request uses `cachePolicy: "bypass"` and resolves to `0 readTok`, `6,000 inputTok`, `0 writeTok`, and its authored `outTok`.
 
 ## 6. Pricing walkthrough
 
-This is the level’s single authoritative price table. Every request uses `PRICE_REQUEST`, with input at `1x` and output at `5x` (`C1`). Model bases and per-million prices are `C2–C4`. Search and Short review use calibrated output estimates; Codegen uses `WORK_OUT` (`C28`).
+This is the level’s single authoritative price table. Every request uses `PRICE_REQUEST`, with input at `1x` and output at `5x` (`C1`). Model bases and per-million prices are `C2–C4`. Search and Short review use calibrated `[FICTION]` output fixtures; Codegen uses `WORK_OUT` (`C28`).
 
 | Workload | Model | readTok | inputTok | writeTok | outTok | Input $ | Output $ | Request total $ |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
-| Search | Sonnet (`C3`) | 0 | 6,000 (`C28`) | 0 | 800 `[ESTIMATE]` | 0.018 | 0.012 | **0.030** |
+| Search | Sonnet (`C3`) | 0 | 6,000 (`C28`) | 0 | 800 `[FICTION]` | 0.018 | 0.012 | **0.030** |
 | Codegen | Sonnet (`C3`) | 0 | 6,000 (`C28`) | 0 | 44,000 (`C28`) | 0.018 | 0.660 | **0.678** |
-| Short review | Sonnet (`C3`) | 0 | 6,000 (`C28`) | 0 | 500 `[ESTIMATE]` | 0.018 | 0.0075 | **0.0255** |
+| Short review | Sonnet (`C3`) | 0 | 6,000 (`C28`) | 0 | 500 `[FICTION]` | 0.018 | 0.0075 | **0.0255** |
 | **Three-job total** | **Sonnet** | **0** | **18,000** | **0** | **45,300** | **0.054** | **0.6795** | **0.7335** |
-| Search | Opus (`C2`) | 0 | 6,000 (`C28`) | 0 | 800 `[ESTIMATE]` | 0.030 | 0.020 | **0.050** |
+| Search | Opus (`C2`) | 0 | 6,000 (`C28`) | 0 | 800 `[FICTION]` | 0.030 | 0.020 | **0.050** |
 | Codegen | Opus (`C2`) | 0 | 6,000 (`C28`) | 0 | 44,000 (`C28`) | 0.030 | 1.100 | **1.130** |
-| Short review | Opus (`C2`) | 0 | 6,000 (`C28`) | 0 | 500 `[ESTIMATE]` | 0.030 | 0.0125 | **0.0425** |
+| Short review | Opus (`C2`) | 0 | 6,000 (`C28`) | 0 | 500 `[FICTION]` | 0.030 | 0.0125 | **0.0425** |
 | **Three-job total** | **Opus** | **0** | **18,000** | **0** | **45,300** | **0.090** | **1.1325** | **1.2225** |
-| Search | Fable (`C4`) | 0 | 6,000 (`C28`) | 0 | 800 `[ESTIMATE]` | 0.060 | 0.040 | **0.100** |
+| Search | Fable (`C4`) | 0 | 6,000 (`C28`) | 0 | 800 `[FICTION]` | 0.060 | 0.040 | **0.100** |
 | Codegen | Fable (`C4`) | 0 | 6,000 (`C28`) | 0 | 44,000 (`C28`) | 0.060 | 2.200 | **2.260** |
-| Short review | Fable (`C4`) | 0 | 6,000 (`C28`) | 0 | 500 `[ESTIMATE]` | 0.060 | 0.025 | **0.085** |
+| Short review | Fable (`C4`) | 0 | 6,000 (`C28`) | 0 | 500 `[FICTION]` | 0.060 | 0.025 | **0.085** |
 | **Three-job total** | **Fable** | **0** | **18,000** | **0** | **45,300** | **0.180** | **2.265** | **2.445** |
 
 The reference configuration is Sonnet at `$0.7335`, displayed as **`$0.73`**. The anti-pattern counterfactual is Fable at `$2.445`, displayed as **`$2.45`**.
@@ -613,7 +703,7 @@ Each `RUN_UNIT` and its matching reveal remain disabled until that prompt’s `C
 
 ### Post-evidence transfer: `l9-cost-transfer`
 
-This is not a prediction and does not dispatch `COMMIT_PREDICTION`. It appears only after all three evidence reveals and starts with `BEGIN_TRANSFER`.
+This is not a prediction, a model-routing choice, or a competing economic route, and it does not dispatch `COMMIT_PREDICTION`. It appears only after all three evidence reveals and starts with `BEGIN_TRANSFER`.
 
 **Question:** “A deployment summary receives `12,000` input tokens and returns `3,000`. Which side costs more at the rates you just saw?”
 
@@ -622,7 +712,7 @@ This is not a prediction and does not dispatch `COMMIT_PREDICTION`. It appears o
 
 Reveal after submission: **“`3,000 × 5 = 15,000` cost-weighted output tokens; `12,000 × 1 = 12,000` cost-weighted input tokens.”** (`C1`)
 
-The correct post-evidence action, not any pre-reveal guess, satisfies the gate.
+Accepting the correct post-evidence answer appends `"l9-cost-transfer"` to `completedTransferIds`. That reducer-visible transfer marker, not any pre-reveal guess, satisfies the gate.
 
 ## 9. Fail-state
 
@@ -630,25 +720,25 @@ There is no economic fail-freeze in this level:
 
 - A wrong pre-reveal prediction is retained beside the evidence and has no gameplay penalty.
 - A wrong causal explanation does not alter the wallet or freeze the screen; it simply withholds the optional second star.
-- A wrong transfer answer cannot dispatch `COMPLETE_ATTEMPT`. The transfer panel shows **“Token count alone is not cost. Apply the rate to each side.”**
+- A wrong transfer answer does not append `"l9-cost-transfer"` to `completedTransferIds` and cannot dispatch `COMPLETE_ATTEMPT`. The transfer panel shows **“Token count alone is not cost. Apply the rate to each side.”**
 - `UI_REWIND_CONTROL`, labeled **“Try the new workload again,”** dispatches `REWIND_TO_CHECKPOINT { checkpointId: "l9-before-transfer" }`.
 - Rewind preserves the three priced rows, their reveals, the wallet, and all prediction history. It clears only the transfer branch.
 
-If an invalid client forces `COMPLETE_ATTEMPT` before `l9-transfer-output-cost`, `UI_RESULT_SCREEN` returns:
+If an invalid client forces `COMPLETE_ATTEMPT` before `completedTransferIds` includes `"l9-cost-transfer"`, `UI_RESULT_SCREEN` returns:
 
 - Headline: **“Apply the rates once more.”**
 - Evidence: **“The three tapes are complete; the new workload still needs a cost-side decision.”**
 - Retry: **“Try the new workload again.”**
 
-`failureRules` is empty because no wrong selection creates a priced route where `actualUsd > validAlternativeUsd`. This prevents a ledger-contradicting freeze.
+`failureRules` is empty because no wrong selection creates a priced route where `actualUsd > validAlternativeUsd`. No event in this level dispatches `FREEZE_FAILURE`, including `REQUEST_COUNTERFACTUAL` and `REVEAL_COUNTERFACTUAL`.
 
 ## 10. Gate & stars
 
-- **Pass / 1 star:** After `l9-reveal-review`, the player dispatches `BEGIN_TRANSFER { challengeId: "l9-cost-transfer" }`, then acknowledges `l9-transfer-output-cost`.
+- **Pass / 1 star:** After `l9-reveal-review`, the player dispatches `BEGIN_TRANSFER { challengeId: "l9-cost-transfer" }`, acknowledges `l9-transfer-output-cost`, and thereby appends `"l9-cost-transfer"` to `completedTransferIds`.
 - **2 stars:** Pass plus acknowledge `l9-cause-output-rate` after Codegen evidence is visible.
-- **3 stars:** Two-star predicate, first attempt, and authoritative spend at or below `$0.74`.
+- **3 stars:** Two-star predicate, completed transfer marker, first attempt, and authoritative spend at or below `$0.74`.
 - **3-star threshold — Reference-run ceiling:** `$0.74` is the cent-aligned ceiling above the authoritative Sonnet reference spend of `$0.7335`, preventing display rounding from denying the fixed reference route.
-- Spending below the threshold without the post-evidence transfer action does not pass.
+- Spending below the threshold without the post-evidence transfer marker does not pass.
 - No gate or star reads a prediction option, prediction correctness, or equality with `correctOptionId`.
 - Every prediction sequence may be entirely wrong while the same post-evidence actions still earn three stars.
 - The removed model picker cannot silently determine the cost star; the attempt’s model is fixed and visible as Sonnet.
@@ -682,44 +772,51 @@ Real-browser click-through must assert:
 1. The opening screen contains no token counts, multipliers, correct options, model picker, model-price table, reference total, or anti-pattern total.
 2. `ENTER_LEVEL` receives the slug `09-model-the-work`.
 3. The level’s concept is `workload-cost-mix`; its only prerequisite is `write-vs-read`.
-4. `scenario === "dev-only"` instantiates exactly three priced units, not the twelve-spawn scenario.
-5. `cfg.who === "inline"` and `cfg.devModel === "sonnet"` remain locked during the attempt.
-6. Every job uses exactly one clean `MAIN_SESSION_CONTEXT`; no cache entry or growing history changes the authored input.
-7. Each `RUN_UNIT` is disabled until its matching `COMMIT_PREDICTION`.
-8. Each `RUN_UNIT` produces exactly one `LedgerRow` and one tape row.
-9. Exactly three priced requests and three tape rows exist after all jobs complete.
-10. Every real request cost is positive; no positive value renders as `$0.0000`.
-11. All request and total values equal the single authoritative table in §6 under `PRICE_REQUEST`.
-12. Search and Short review are input-dominant in both tokens and dollars; Codegen is output-dominant in both.
-13. Codegen’s final static tape row includes its output cost in row width and segment geometry.
-14. `UI_TAPE_RENDERER` output geometry remains identical before and after the output teaching label becomes visible.
-15. A wrong Search, Codegen, or Short-review prediction changes no score, star, wallet, failure, or gate result.
-16. Prediction correctness is absent from `pass(st)`, `FailureRuleDef`, `GateDef`, and both `StarDef` predicates.
-17. The transfer card is absent until `l9-reveal-review` completes.
-18. The transfer shows `12,000 inputTok` and `3,000 outTok` without sending a priced request.
-19. `ACK_EXPLANATION { explanationId: "l9-transfer-input-cost" }` does not pass and exposes the local retry.
-20. Rewinding to `l9-before-transfer` preserves all three ledger rows, tape rows, reveals, wallet spend, and prediction history.
-21. `ACK_EXPLANATION { explanationId: "l9-transfer-output-cost" }` after the evidence reveal passes regardless of all three prediction selections.
-22. `COMPLETE_ATTEMPT` cannot pass before a qualifying post-evidence action.
-23. No `FREEZE_FAILURE` can dispatch in this level; `failureRules.length === 0`.
-24. The reference Sonnet configuration plus the correct transfer action is winnable from seed `904409` and reaches three stars.
-25. The anti-pattern replay combines `antiCfg.devModel === "fable"` with `l9-transfer-input-cost`; it fails the behavioral gate and exceeds the three-star spend threshold.
-26. A Fable counterfactual paired with the correct transfer action may demonstrate understanding; model identity alone is never a behavioral failure.
-27. Counterfactual controls and model-price totals are absent before `COMPLETE_ATTEMPT`.
-28. The post-attempt overlay uses the §6 values and does not create ledger rows or mutate the wallet.
-29. Keyboard and pointer users can commit every prediction, run every job, inspect every segment, answer and retry the transfer, complete the level, and reveal the counterfactual.
-30. Screen-reader announcements state workload, bucket, token count, rate, dollars, and row total in ledger order.
-31. Reduced-motion mode draws the same final tape geometry without requiring hover.
-32. Exact replay from seed `904409` and the same `Action[]` yields byte-identical ledger, wallet, predictions, acknowledged explanations, transfer state, stars, and result.
-33. Static final tape bars remain legible without hover, and every output segment retains its authoritative visual weight.
-34. The specification contains one authoritative request-price table and no superseded totals or unreachable failure branch.
+4. `concept.solutionVocabulary` contains the answer-bearing terms, and `conceptScope` equals `{ kind: "single", reusedConceptIds: [] }`.
+5. `scenario === "dev-only"` instantiates exactly three priced units, not the twelve-spawn scenario.
+6. `cfg.who === "inline"` and `cfg.devModel === "sonnet"` remain locked during the attempt.
+7. Every job uses exactly one clean `MAIN_SESSION_CONTEXT`; no cache entry or growing history changes the authored input.
+8. Each `RUN_UNIT` is disabled until its matching `COMMIT_PREDICTION`.
+9. Each `RUN_UNIT` produces exactly one `LedgerRow` and one tape row.
+10. Exactly three priced requests and three tape rows exist after all jobs complete.
+11. Every real request cost is positive; no positive value renders as `$0.0000`.
+12. All request and total values equal the single authoritative table in §6 under `PRICE_REQUEST`.
+13. Search and Short review are input-dominant in both tokens and dollars; Codegen is output-dominant in both.
+14. Codegen’s final static tape row includes its output cost in row width and segment geometry.
+15. `UI_TAPE_RENDERER` output geometry remains identical before and after the output teaching label becomes visible.
+16. A wrong Search, Codegen, or Short-review prediction changes no score, star, wallet, failure, or gate result.
+17. Prediction correctness is absent from `pass(st)`, `FailureRuleDef`, `GateDef`, and both `StarDef` predicates.
+18. The transfer card is absent until `l9-reveal-review` completes.
+19. The transfer shows `12,000 inputTok` and `3,000 outTok` without sending a priced request.
+20. `ACK_EXPLANATION { explanationId: "l9-transfer-input-cost" }` does not append `"l9-cost-transfer"` to `completedTransferIds`, does not pass, and exposes the local retry.
+21. Rewinding to `l9-before-transfer` preserves all three ledger rows, tape rows, reveals, wallet spend, and prediction history.
+22. `ACK_EXPLANATION { explanationId: "l9-transfer-output-cost" }` after the evidence reveal appends `"l9-cost-transfer"` exactly once to `completedTransferIds`.
+23. The correct transfer answer passes regardless of all three prediction selections.
+24. `COMPLETE_ATTEMPT` cannot pass before `completedTransferIds.includes("l9-cost-transfer")`.
+25. `pass(st)` is pure and reads only the real reducer arrays `acknowledgedExplanationIds` and `completedTransferIds`.
+26. No `FREEZE_FAILURE` can dispatch in this level; `failureRules.length === 0`.
+27. The reference Sonnet configuration plus the correct transfer action is winnable from seed `904409` and reaches three stars.
+28. The anti-pattern replay combines `antiCfg.devModel === "fable"` with `l9-transfer-input-cost`; it fails the behavioral gate and exceeds the three-star spend threshold.
+29. A Fable counterfactual paired with the correct transfer action may demonstrate understanding; model identity alone is never a behavioral failure.
+30. Counterfactual controls and model-price totals are absent before `COMPLETE_ATTEMPT`.
+31. The post-attempt overlay uses the §6 values and does not create ledger rows or mutate the wallet.
+32. Keyboard and pointer users can commit every prediction, run every job, inspect every segment, answer and retry the transfer, complete the level, and reveal the counterfactual.
+33. Screen-reader announcements state workload, bucket, token count, rate, dollars, and row total in ledger order.
+34. Reduced-motion mode draws the same final tape geometry without requiring hover.
+35. Exact replay from seed `904409` and the same `Action[]` yields byte-identical ledger, wallet, predictions, acknowledged explanations, completed transfers, stars, and result.
+36. Static final tape bars remain legible without hover, and every output segment retains its authoritative visual weight.
+37. The specification contains one authoritative request-price table and no superseded totals or unreachable failure branch.
+38. `scenarioData.fixtures` contains stable `id`, `semanticRole`, `unit`, and `[FICTION]` provenance for the seed, budget, clock cap, unit hours, Search output, Short-review output, and both transfer buckets.
+39. `scenarioData.estimates` contains only the one-second opening-beat duration and two-second first-interaction target; no billed token, budget, seed, clock, duration, or gate value appears there.
+40. The title and objective contain none of the entries in `concept.solutionVocabulary`.
 
 ## 13. Reference-bar justification
 
-The opening reaches a tactile prediction in two seconds and withholds every answer-shaped number. Search establishes a compact baseline, Codegen breaks it with a visually overwhelming output segment, and Short review immediately prevents overgeneralization. Because the prompt asks about dollars, Search’s token and dollar dominance now agree unambiguously instead of teaching two competing answers.
+The opening reaches a tactile prediction in two seconds and withholds every answer-shaped number. Search establishes a compact baseline, Codegen breaks it with a visually overwhelming output segment, and Short review immediately prevents overgeneralization. Because the prompt asks about dollars, Search’s token and dollar dominance agree unambiguously instead of teaching two competing answers.
 
-The predictions unlock evidence but never determine success. Understanding is measured only after all evidence exists, when the player applies output’s rate to a new workload whose smaller output token count still costs more. A wrong transfer answer rewinds only that decision and preserves the mastered tapes.
+The predictions unlock evidence but never determine success. Understanding is measured only after all evidence exists, when the player applies output’s rate to a new workload whose smaller output token count still costs more. The correct transfer action records durable reducer evidence in both `acknowledgedExplanationIds` and `completedTransferIds`; a wrong transfer answer rewinds only that branch and preserves the mastered tapes.
 
 The per-job model picker is removed rather than silently making Sonnet the hidden three-star answer. Model differences return after completion as a counterfactual, where they clarify that the multiplier affects every workload but the output-heavy job carries most of the dollar spread. The tape cites the canonical `outTok × 5` visual-weight model, so the aha is economically and visually truthful.
 
-**Assumptions and tradeoffs:** Search’s `800 outTok`, Short review’s `500 outTok`, and the transfer workload are calibrated scenario values. They are tagged `[ESTIMATE]` or `[FICTION]`; `6,000 inputTok`, `44,000 Codegen output tokens`, rate multipliers, and model prices trace to `C28` and `C1–C4`. Separate clean main contexts intentionally remove cache and history variation so workload mix is the only causal variable.
+**Assumptions and tradeoffs:** Search’s `800 outTok`, Short review’s `500 outTok`, the transfer workload, seed, budget, clock cap, and unit hours are calibrated scenario values registered as `[FICTION]` fixtures. The `6,000 inputTok` and `44,000` Codegen output tokens use the semantically matching `C28` fixture; rate multipliers and model prices trace to `C1–C4`. Separate clean main contexts intentionally remove cache and history variation so workload mix is the only causal variable. The transfer remains a factual application check rather than a strategic route choice, so this level claims no option-to-option counter-pressure.
+

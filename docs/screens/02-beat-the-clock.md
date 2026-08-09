@@ -5,7 +5,7 @@
 - `id`: `"02-beat-the-clock"`
 - `title`: **One More Check**
 - `tier`: `1`
-- `objective`: **“Fit Bob’s next two checks around the interruptions.”**
+- `objective`: **“Finish Bob’s next check and clear his blocker before release.”**
 - ONE concept: an idle `CacheEntry` eventually expires, causing the next byte-identical `Request` to write its prefix again.
 - `concept.id`: `"cache-expiry"`
 - `concept.privateDesignerSummary`: “Idle TTL determines whether an identical request reads or rewrites.”
@@ -16,12 +16,12 @@
 - New control: `"advanceTime"`
 - Vocabulary first needed during play: **TTL**, introduced only after the opening request creates a `CacheEntry`.
 
-The first interruption is a reducer-owned time-versus-cost tradeoff:
+The interruption is a reducer-visible choice between two completable profiles:
 
-- Coffee advances `clockMin` by `20 min` `[FICTION]` and preserves Bob’s focus window, but leaves `u2-blocker-standup` ready and unresolved. The downstream release check remains blocked until that unit runs.
-- Standup runs the free `u2-blocker-standup` unit for `1.5 h = 90 min` `[FICTION]`, changing its `UnitInstance.status` from `"ready"` to `"done"` and clearing the downstream blocker immediately, but consuming the longer idle gap.
+- **Coffee-first:** advance `20 min`, send the check while the saved entry is live, then run the `90 min` Standup. The attempt finishes at minute `110`, exactly at the release deadline, with lower spend.
+- **Standup-first:** run the `90 min` Standup immediately, clearing the blocker before sending the check. The attempt finishes at minute `90`, twenty minutes before the release deadline, with higher spend because the saved entry expired.
 
-Thus Coffee is not a strictly dominant answer: it produces the cheaper immediate request while carrying a real unresolved unit forward. Standup provides real schedule progress before its request cost is revealed. Neither card exposes the cache result before the player acts.
+Both profiles complete the same authored check and the same `UnitInstance`. Coffee’s benefit is lower `attemptMetrics.spentUsd`; Standup’s benefit is the earlier reducer-owned completion time. `pass(st)` accepts either profile, and the three-star predicate rewards the benefit appropriate to the selected profile.
 
 ## 2. Objects used
 
@@ -38,6 +38,7 @@ Thus Coffee is not a strictly dominant answer: it produces the cheaper immediate
 - `AttemptResult`
 - `LedgerRow`
 - `WireSegment`
+- `Checkpoint`
 - `PRICE_REQUEST`
 - `RESOLVE_PREFIX`
 - `ReducerState`
@@ -52,36 +53,43 @@ Thus Coffee is not a strictly dominant answer: it produces the cheaper immediate
 - `UI_COUNTERFACTUAL_OVERLAY`
 - `UI_RESULT_SCREEN`
 - `"predict-before-reveal"`
-- `"fail-freeze-rewind"`
 - `"just-in-time-toast"`
 - `"counterfactual-after-attempt"`
 
 ## 3. Cold-open / narrative
 
-No Learn screen, comparison, TTL rule, answer key, or reference schedule appears before play.
+No Learn screen, comparison, lifetime rule, answer key, or reference schedule appears before play.
 
 | Time | Beat |
 |---:|---|
 | `0.0s` | Enter directly into the task desk. Header: **“ONE MORE CHECK”**. Task card: **“Bob’s login fix needs one more check.”** |
-| `0.5s` | Wallet shows **$0.65** `[FICTION]`. Primary control appears under the pointer: **“Run check.”** |
-| `≤2.0s` | Player can click **“Run check.”** This is the first interaction `[ESTIMATE]`. |
+| `0.5s` | Wallet shows **$0.65**. Primary control appears under the pointer: **“Run check.”** |
+| `≤2.0s` | Player can click **“Run check.”** |
 | click | A red row crosses `UI_TAPE_RENDERER`; `UI_MAIN_CACHE_PANEL` gains one live entry. |
 | immediately after | `UI_TTL_DRAIN_BAR` appears at `60:00`, then `toast-ttl-intro` introduces TTL. |
-| `+0.5s` | Copy changes to **“Bob needs the same check again. What happens before you send it?”** |
-| same beat | Two equally weighted cards appear: **“Coffee · 20 min · blocker waits”** and **“Standup · 90 min · blocker clears.”** |
+| `+0.5s` | Copy changes to **“The check and Bob’s blocker both need attention. Which goes first?”** |
+| same beat | Two equally weighted cards appear: **“Coffee · 20 min · check first”** and **“Standup · 90 min · blocker first.”** |
+| same beat | A release marker appears at minute `110`; neither card is labeled correct, safe, cheap, or expensive. |
 
-A compact blocker badge is bound to `u2-blocker-standup.status`:
+The blocker badge is bound to the sole unit in `ReducerState.units`:
 
-- Coffee leaves it at **“Blocker open.”**
-- Standup changes it to **“Blocker cleared.”**
+- before Standup: **“Blocker open”**;
+- after `RUN_UNIT`: **“Blocker cleared.”**
 
-The cards do not say “safe,” “expires,” “read,” “write,” red, blue, cheaper, correct, or which choice preserves the cache.
+The cards expose real scheduling stakes without stating the cache outcome:
 
-`coldOpen.maxInstructionCards = 0`; `coldOpen.firstInteractiveBySec = 2` `[ESTIMATE]`.
+- Coffee reaches the check sooner but postpones the blocker work.
+- Standup clears the blocker first and visibly consumes more simulated time.
+
+They do not say “expires,” “read,” “write,” red, blue, cheaper, or which choice preserves the saved entry.
+
+`coldOpen.maxInstructionCards = 0`; `coldOpen.firstInteractiveBySec = 2`. Both values are presentation-only estimates registered in `scenarioData.estimates`.
 
 ## 4. Exact event sequence
 
-All requests use the same `MAIN_SESSION_CONTEXT`, byte-identical `PREFIX_STACK`, Sonnet, the `1h` write tier, and `MAIN_PREFIX_HEY = 34,738` cacheable tokens (`C34`). Each request has `freshInputTok=0` and `expectedOutputTok=0` `[FICTION]`. No content, model, namespace, or prefix ordering changes between requests.
+All authored requests use the same `MAIN_SESSION_CONTEXT`, byte-identical `PREFIX_STACK`, Sonnet, the `1h` write tier, and `MAIN_PREFIX_HEY = 34,738` cacheable tokens (`C34`). Each request has `freshInputTok=0` and `expectedOutputTok=0` from the registered fiction fixtures. No content, model, namespace, breakpoint, or prefix ordering changes between `R2_1` and `R2_2`.
+
+### Shared opening
 
 1. **Enter level — `evt-enter`**
    - Event: route opens.
@@ -92,8 +100,10 @@ All requests use the same `MAIN_SESSION_CONTEXT`, byte-identical `PREFIX_STACK`,
      - `wallet=0.65`;
      - `attemptMetrics.spentUsd=0`;
      - `attemptMetrics.requestCount=0`;
-     - `u2-blocker-standup.status="ready"`;
-     - ledger, tape, and cache are empty.
+     - `attemptMetrics.completedUnitCount=0`;
+     - `units[0].id="u2-blocker-standup"`;
+     - `units[0].status="ready"`;
+     - ledger, tape, cache, and `completedTransferIds` are empty.
    - The level-start checkpoint is created by `ENTER_LEVEL`.
 
 2. **Opening check — `evt-opening-write`**
@@ -110,41 +120,50 @@ All requests use the same `MAIN_SESSION_CONTEXT`, byte-identical `PREFIX_STACK`,
      - `attemptMetrics.requestCount: 0 → 1`.
    - Fires `toast-first-write`, followed by `toast-ttl-intro`.
    - Then dispatches:
-     `{ type: "CREATE_CHECKPOINT", checkpointId: "cp-before-interruption", reason: "decision" }`.
+     `{ type: "CREATE_CHECKPOINT", checkpointId: "cp-before-profile", reason: "decision" }`.
 
-3. **Choose an interruption — `evt-first-gap`**
-   - Event: player chooses Coffee or Standup.
-   - Coffee action:
+### Coffee-first profile
+
+3. **Choose Coffee — `evt-choose-coffee`**
+   - Event: player selects **“Coffee · 20 min · check first.”**
+   - Action:
+     `{ type: "BEGIN_TRANSFER", challengeId: "l2-profile-coffee" }`
+   - The authored transfer contract appends `"l2-profile-coffee"` to `completedTransferIds`.
+   - The choice locks; `"l2-profile-standup"` cannot be appended in the same branch.
+
+4. **Coffee gap — `evt-coffee-gap`**
+   - System action after the accepted profile:
      `{ type: "ADVANCE", min: 20 }`
-   - Coffee mutations:
+   - Mutates:
      - `clockMin: 0 → 20`;
      - displayed remaining TTL: `60 → 40`;
-     - `u2-blocker-standup.status` remains `"ready"`;
+     - `units[0].status` remains `"ready"`;
      - blocker badge remains **“Blocker open.”**
-   - Standup action:
-     `{ type: "RUN_UNIT", unitId: "u2-blocker-standup" }`
-   - Standup mutations:
-     - `clockMin: 0 → 90`;
-     - `u2-blocker-standup.status: "ready" → "done"`;
-     - `attemptMetrics.completedUnitCount: 0 → 1`;
-     - displayed remaining TTL reaches `0` at minute `60`;
-     - blocker badge changes to **“Blocker cleared.”**
-   - `u2-blocker-standup` is `free:true`, `workIn=0`, and `outTok=0`; running it creates no `Request`, `LedgerRow`, wallet deduction, or tape row.
-   - The request control remains locked until `p2-next-color` is committed.
+   - No request, wallet deduction, ledger row, or tape row is created.
 
-4. **Predict the second row — `evt-first-prediction`**
-   - Event: the interruption animation settles.
-   - Action: `{ type: "OPEN_PREDICTION", promptId: "p2-next-color" }`
+5. **Predict the follow-up — `evt-followup-prediction`**
+   - Actions:
+     ```ts
+     {
+       type: "CREATE_CHECKPOINT",
+       checkpointId: "cp-before-followup",
+       reason: "prediction"
+     }
+     { type: "OPEN_PREDICTION", promptId: "p2-next-color" }
+     ```
    - The player dispatches `SELECT_PREDICTION`, then `COMMIT_PREDICTION`.
-   - Mutates only `PredictionState`; prediction choice and correctness have no economic, failure, gate, score, or star effect.
+   - Prediction choice and correctness affect no economics, failure, gate, score, or star.
 
-5. **Coffee reveal — `evt-coffee-reveal`**
-   - Preconditions:
-     - Coffee was chosen;
-     - `p2-next-color` is committed.
+6. **Coffee follow-up request — `evt-coffee-request`**
+   - Precondition: `"l2-profile-coffee"` is in `completedTransferIds` and `p2-next-color` is committed.
    - Event: player clicks **“Send identical check.”**
-   - Action: `{ type: "SEND_REQUEST", request: R2_2_COFFEE }`
-   - `RESOLVE_PREFIX` at minute `20`: `readTok=34,738`, `inputTok=0`, `writeTok=0`, `outTok=0`, `cold=false`.
+   - Action: `{ type: "SEND_REQUEST", request: R2_2 }`
+   - `RESOLVE_PREFIX` at minute `20`:
+     - `readTok=34,738`;
+     - `inputTok=0`;
+     - `writeTok=0`;
+     - `outTok=0`;
+     - `cold=false`.
    - `PRICE_REQUEST`: `34,738 × $0.30/M = $0.0104214` (`C1`, `C3`, `C34`).
    - Mutates:
      - `CacheEntry.lastTouchMin: 0 → 20`;
@@ -153,140 +172,156 @@ All requests use the same `MAIN_SESSION_CONTEXT`, byte-identical `PREFIX_STACK`,
      - `wallet: 0.4415720 → 0.4311506`;
      - `attemptMetrics.spentUsd: 0.2084280 → 0.2188494`;
      - `attemptMetrics.requestCount: 1 → 2`.
-   - `u2-blocker-standup.status` remains `"ready"`; the next release-stage check remains visibly blocked.
-   - Then dispatches:
-     `{ type: "REVEAL_PREDICTION", promptId: "p2-next-color", correctOptionId: "blue-read" }`.
-   - Fires `toast-coffee-read`.
-   - This is the required short-gap evidence.
 
-6. **Standup failure reveal — `evt-standup-failure-reveal`**
-   - Preconditions:
-     - Standup was chosen;
-     - `p2-next-color` is committed.
-   - `u2-blocker-standup.status` is already `"done"` and the blocker-clearing benefit remains visible.
-   - Event: player clicks **“Send identical check.”**
-   - Action: `{ type: "SEND_REQUEST", request: R2_2_STANDUP }`
-   - `RESOLVE_PREFIX` at minute `90`: `readTok=0`, `inputTok=0`, `writeTok=34,738`, `outTok=0`, `cold=true`.
-   - `PRICE_REQUEST`: `34,738 × $6/M = $0.2084280` (`C1`, `C3`, `C34`).
-   - Mutates:
-     - replacement `CacheEntry` at minute `90`, expiring at minute `150`;
-     - ledger/tape append one red write row;
-     - `wallet: 0.4415720 → 0.2331440`;
-     - `attemptMetrics.spentUsd: 0.2084280 → 0.4168560`;
-     - `attemptMetrics.requestCount: 1 → 2`.
-   - Then dispatches:
-     `{ type: "REVEAL_PREDICTION", promptId: "p2-next-color", correctOptionId: "red-write" }`.
-   - The decisive actual-attempt frame shows:
-     - the completed blocker unit;
-     - actual expired rewrite: `$0.2084280`;
-     - valid live-read alternative: `$0.0104214`;
-     - visible economic difference: `$0.1980066`;
-     - visible input-side ratio: `20×` (`C5`).
-   - Only after that row and comparison are visible, dispatch:
-     ```ts
-     {
-       type: "FREEZE_FAILURE",
-       failure: {
-         failureId: "f2-expired-rewrite",
-         causeCode: "CACHE_EXPIRED_IDLE",
-         message:
-           "Same request, different timing: expiry turned a $0.0104 read into a $0.2084 write.",
-         checkpointId: "cp-before-interruption"
-       }
-     }
-     ```
-   - This freeze occurs inside the player’s actual economic action, never in a reference or counterfactual reveal.
-
-7. **Local rewind — `evt-rewind-interruption`**
-   - Event: player clicks **“Try the interruption again.”**
+7. **Coffee evidence reveal — `evt-coffee-reveal`**
    - Action:
-     `{ type: "REWIND_TO_CHECKPOINT", checkpointId: "cp-before-interruption" }`
-   - Deterministic replay restores:
-     - `clockMin=0`;
-     - the opening ledger/tape row;
-     - the opening live cache entry expiring at minute `60`;
-     - `wallet=0.4415720`;
-     - `attemptMetrics.spentUsd=0.2084280`;
-     - `attemptMetrics.requestCount=1`;
-     - `attemptMetrics.completedUnitCount=0`;
-     - `u2-blocker-standup.status="ready"`;
-     - `frozenFailure=null`;
-     - `clockFrozen=false`.
-   - The reducer-owned `attempt` count is retained under the canonical rewind contract.
-   - The cold-open and opening request do not replay.
-   - The player now demonstrates Coffee → prediction → blue read.
+     `{ type: "REVEAL_PREDICTION", promptId: "p2-next-color", correctOptionId: "blue-read" }`
+   - Fires `toast-coffee-read`.
+   - This is the Coffee profile’s causal evidence event.
 
-8. **Clear the carried blocker — `evt-transfer-start`**
+8. **Coffee explanation — `evt-explain-coffee`**
+   - Event: player answers **“What determined this row?”**
+   - Each card dispatches:
+     `{ type: "ACK_EXPLANATION", explanationId: <selected-id> }`
+   - Options:
+     - `expiry-idle-gap`: **“Only the idle gap changed whether the saved entry was still live.”**
+     - `request-text-changed`: **“The request text changed.”**
+     - `model-price-changed`: **“The model switched prices.”**
+   - Incorrect explanations change no wallet, cache, metrics, gate evidence, or prediction and leave the choices available.
+   - Selecting `expiry-idle-gap` after `evt-coffee-reveal` reveals `concept.postRevealRule`.
+
+9. **Clear the carried blocker — `evt-coffee-blocker-clear`**
    - Preconditions:
      - `evt-coffee-reveal` completed;
-     - `u2-blocker-standup.status="ready"`.
-   - Event: task card says **“The release check is blocked. Bob’s standup runs long.”**
-   - Actions:
-     ```ts
-     { type: "BEGIN_TRANSFER", challengeId: "l2-long-gap-transfer" }
-     { type: "CREATE_CHECKPOINT", checkpointId: "cp-before-transfer", reason: "prediction" }
-     { type: "RUN_UNIT", unitId: "u2-blocker-standup" }
-     { type: "OPEN_PREDICTION", promptId: "p2-standup-color" }
-     ```
+     - `units[0].status === "ready"`.
+   - Event copy: **“The check is done. Clear Bob’s blocker before release.”**
+   - Action: `{ type: "RUN_UNIT", unitId: "u2-blocker-standup" }`
    - Mutates:
-     - `u2-blocker-standup.status: "ready" → "done"`;
-     - `attemptMetrics.completedUnitCount: 0 → 1`;
      - `clockMin: 20 → 110`;
-     - the refreshed entry, which expired at minute `80`, remains historical evidence.
-   - Running the free standup creates no request, wallet deduction, ledger row, or tape row.
-   - The downstream blocker is now cleared and **“Send identical check”** becomes eligible after prediction commitment.
-   - The player selects and commits the prediction.
-   - No request or price is revealed during the standup.
+     - `units[0].status: "ready" → "done"`;
+     - `attemptMetrics.completedUnitCount: 0 → 1`;
+     - the entry last touched at minute `20` reaches expiry at minute `80`;
+     - blocker badge changes to **“Blocker cleared.”**
+   - Because the unit is `free:true`, `workIn=0`, and `outTok=0`, it creates no request, wallet deduction, ledger row, or tape row.
+   - Coffee finishes at the minute-`110` release deadline with `spentUsd=0.2188494`.
 
-9. **Long-gap transfer reveal — `evt-transfer-reveal`**
-   - Preconditions:
-     - `u2-blocker-standup.status="done"`;
-     - `p2-standup-color` is committed.
-   - Event: player clicks **“Send identical check.”**
-   - Action: `{ type: "SEND_REQUEST", request: R2_3_STANDUP }`
-   - `RESOLVE_PREFIX` at minute `110`: `readTok=0`, `inputTok=0`, `writeTok=34,738`, `outTok=0`, `cold=true`.
-   - `PRICE_REQUEST`: `$0.2084280` (`C1`, `C3`, `C34`).
-   - Mutates:
-     - new `CacheEntry` at minute `110`, expiring at minute `170`;
-     - ledger/tape append one red write row;
-     - `wallet: 0.4311506 → 0.2227226`;
-     - `attemptMetrics.spentUsd: 0.2188494 → 0.4272774`;
-     - `attemptMetrics.requestCount: 2 → 3`.
-   - Then dispatches:
-     `{ type: "REVEAL_PREDICTION", promptId: "p2-standup-color", correctOptionId: "red-write" }`.
-   - Fires `toast-expiry-cause`.
-   - A wrong prediction is revealed neutrally and remains non-punitive.
-   - The post-reveal rule remains withheld pending the explanation choice.
+### Standup-first profile
 
-10. **Post-evidence explanation — `evt-explain-expiry`**
-    - Preconditions: both `evt-coffee-reveal` and `evt-transfer-reveal` are visible.
-    - Event: player answers **“What changed the bill?”**
-    - Each selected card dispatches:
-      `{ type: "ACK_EXPLANATION", explanationId: <selected-id> }`
-    - Options:
-      - `expiry-idle-gap`: **“The saved entry sat idle past its lifetime.”**
-      - `request-text-changed`: **“The request text changed.”**
-      - `model-price-changed`: **“The model switched prices.”**
-    - An incorrect explanation changes no wallet, cache, failure, prediction, completed event, or attempt metric and leaves the choices available.
-    - Selecting `expiry-idle-gap` after `evt-transfer-reveal` satisfies the gate action and reveals `concept.postRevealRule`.
-    - Fires `toast-transfer-rule`.
+10. **Choose Standup — `evt-choose-standup`**
+    - Event: player selects **“Standup · 90 min · blocker first.”**
+    - Action:
+      `{ type: "BEGIN_TRANSFER", challengeId: "l2-profile-standup" }`
+    - The authored transfer contract appends `"l2-profile-standup"` to `completedTransferIds`.
+    - The choice locks; `"l2-profile-coffee"` cannot be appended in the same branch.
 
-11. **Complete — `evt-complete`**
+11. **Run Standup first — `evt-standup-work`**
+    - Action: `{ type: "RUN_UNIT", unitId: "u2-blocker-standup" }`
+    - Mutates:
+      - `clockMin: 0 → 90`;
+      - `units[0].status: "ready" → "done"`;
+      - `attemptMetrics.completedUnitCount: 0 → 1`;
+      - displayed remaining TTL reaches `0` at minute `60`;
+      - blocker badge changes to **“Blocker cleared.”**
+    - The free unit creates no request, wallet deduction, ledger row, or tape row.
+    - Fires `toast-blocker-cleared`.
+
+12. **Predict the follow-up — `evt-followup-prediction`**
+    - Actions:
+      ```ts
+      {
+        type: "CREATE_CHECKPOINT",
+        checkpointId: "cp-before-followup",
+        reason: "prediction"
+      }
+      { type: "OPEN_PREDICTION", promptId: "p2-next-color" }
+      ```
+    - The player selects and commits a prediction.
+    - No request or price is revealed during the Standup.
+
+13. **Standup follow-up request — `evt-standup-request`**
+    - Precondition: `"l2-profile-standup"` is in `completedTransferIds` and `p2-next-color` is committed.
+    - Event: player clicks **“Send identical check.”**
+    - Action: `{ type: "SEND_REQUEST", request: R2_2 }`
+    - `RESOLVE_PREFIX` at minute `90`:
+      - `readTok=0`;
+      - `inputTok=0`;
+      - `writeTok=34,738`;
+      - `outTok=0`;
+      - `cold=true`.
+    - `PRICE_REQUEST`: `34,738 × $6/M = $0.2084280` (`C1`, `C3`, `C34`).
+    - Mutates:
+      - replacement `CacheEntry` with `createdAtMin=90`, `lastTouchMin=90`, and `expiresAtMin=150`;
+      - ledger/tape append one red write row;
+      - `wallet: 0.4415720 → 0.2331440`;
+      - `attemptMetrics.spentUsd: 0.2084280 → 0.4168560`;
+      - `attemptMetrics.requestCount: 1 → 2`.
+    - The completed blocker remains visible beside the request cost. The request does not dispatch `FREEZE_FAILURE`.
+
+14. **Standup evidence reveal — `evt-standup-reveal`**
+    - Action:
+      `{ type: "REVEAL_PREDICTION", promptId: "p2-next-color", correctOptionId: "red-write" }`
+    - Fires `toast-standup-write`.
+    - This is the Standup profile’s causal evidence event.
+    - The result rail displays:
+      - blocker cleared at minute `90`;
+      - release deadline at minute `110`;
+      - `20 min` of schedule slack;
+      - actual request cost `$0.2084280`.
+    - It does not display the Coffee comparison before attempt completion.
+
+15. **Standup explanation — `evt-explain-standup`**
+    - Uses the same `ACK_EXPLANATION` options as the Coffee profile.
+    - Selecting `expiry-idle-gap` after `evt-standup-reveal` reveals `concept.postRevealRule`.
+    - Standup finishes at minute `90`, twenty minutes before the release deadline, with `spentUsd=0.4168560`.
+
+### Shared completion
+
+16. **Complete — `evt-complete`**
     - Preconditions:
-      - the behavioral gate passes;
-      - `expiry-idle-gap` was acknowledged after `evt-transfer-reveal`.
+      - exactly one profile marker exists;
+      - `R2_2` has resolved with the bucket outcome appropriate to that marker;
+      - `units[0].status === "done"`;
+      - `attemptMetrics.requestCount === 2`;
+      - `expiry-idle-gap` was acknowledged after the applicable reveal;
+      - the selected profile meets its deadline.
     - Action: `{ type: "COMPLETE_ATTEMPT" }`
     - Mutates:
       - `attemptResult` receives the immutable snapshot of `attemptMetrics`;
       - gate result and stars are recorded;
       - result screen and campaign progress appear.
-    - For the reference branch:
+    - Coffee result:
       - `attemptResult.outcome="passed"`;
-      - `attemptResult.spentUsd=0.4272774`;
-      - `attemptResult.requestCount=3`;
-      - `attemptResult.completedUnitCount=1`.
-    - Only now may `REQUEST_COUNTERFACTUAL` and `REVEAL_COUNTERFACTUAL` expose the authored reference and anti-pattern schedules.
-    - Counterfactual processing cannot mutate the actual wallet, ledger, `attemptResult`, `clockFrozen`, or `frozenFailure`, and cannot dispatch `FREEZE_FAILURE`.
+      - `attemptResult.spentUsd=0.2188494`;
+      - `attemptResult.requestCount=2`;
+      - `attemptResult.completedUnitCount=1`;
+      - completion minute `110`.
+    - Standup result:
+      - `attemptResult.outcome="passed"`;
+      - `attemptResult.spentUsd=0.4168560`;
+      - `attemptResult.requestCount=2`;
+      - `attemptResult.completedUnitCount=1`;
+      - completion minute `90`.
+    - Only now may `REQUEST_COUNTERFACTUAL` and `REVEAL_COUNTERFACTUAL` expose the other viable profile and the drift anti-pattern.
+    - Counterfactual processing cannot mutate the actual wallet, ledger, `attemptResult`, `clockFrozen`, or `frozenFailure`.
+
+17. **Try the other profile — `evt-rewind-profile`**
+    - Available from `UI_RESULT_SCREEN`.
+    - Action:
+      `{ type: "REWIND_TO_CHECKPOINT", checkpointId: "cp-before-profile" }`
+    - Deterministic replay restores:
+      - `clockMin=0`;
+      - the opening ledger/tape row;
+      - the opening live cache entry expiring at minute `60`;
+      - `wallet=0.4415720`;
+      - `attemptMetrics.spentUsd=0.2084280`;
+      - `attemptMetrics.requestCount=1`;
+      - `attemptMetrics.completedUnitCount=0`;
+      - `units[0].status="ready"`;
+      - no profile marker;
+      - `attemptResult=null`;
+      - `frozenFailure=null`;
+      - `clockFrozen=false`.
+    - The opening request is neither replayed nor repriced.
 
 ## 5. Level data
 
@@ -354,7 +389,7 @@ const L2_SCENARIO_DATA = {
       kind: "STANDUP",
       ticket: 1,
       deps: [],
-      hours: 1.5,
+      hours: 1.5, // 90 min / 60
       outTok: 0,
       workIn: 0,
       free: true,
@@ -394,7 +429,7 @@ const L2_SCENARIO_DATA = {
       permitsKeepWarm: false
     },
     {
-      id: "g-transfer-standup",
+      id: "g-coffee-then-standup",
       contextId: "ctx-main-l2",
       startMin: 20,
       durationMin: 90,
@@ -403,108 +438,256 @@ const L2_SCENARIO_DATA = {
   ],
   fixtures: [
     {
+      id: "l2-seed",
+      label: "Deterministic level seed",
+      semanticRole: "Initial PRNG seed for replaying both schedule profiles",
+      value: 2002,
+      unit: "count",
+      tag: "[FICTION]"
+    },
+    {
+      id: "l2-attempt-budget",
+      label: "Attempt budget",
+      semanticRole: "Initial wallet and maximum available spend for the level",
+      value: 0.65,
+      unit: "usd",
+      tag: "[FICTION]"
+    },
+    {
+      id: "l2-clock-cap",
+      label: "Level clock cap",
+      semanticRole: "Maximum modeled time retained for the drift anti-pattern",
+      value: 180,
+      unit: "min",
+      tag: "[FICTION]"
+    },
+    {
+      id: "l2-release-deadline",
+      label: "Release deadline",
+      semanticRole: "Latest completion minute accepted by the behavioral gate",
+      value: 110,
+      unit: "min",
+      tag: "[FICTION]"
+    },
+    {
       id: "l2-coffee-gap",
       label: "Coffee interruption",
+      semanticRole: "Short profile gap before the follow-up request",
       value: 20,
       unit: "min",
       tag: "[FICTION]"
     },
     {
-      id: "l2-blocker-standup",
-      label: "Blocker-clearing standup",
+      id: "l2-blocker-standup-duration",
+      label: "Blocker-clearing Standup",
+      semanticRole: "Duration consumed by the free blocker-clearing unit",
       value: 90,
       unit: "min",
       tag: "[FICTION]"
     },
     {
-      id: "l2-zero-output",
-      label: "Output tokens per authored check",
+      id: "l2-check-fresh-input",
+      label: "Fresh input per authored check",
+      semanticRole: "Non-cacheable fresh input tokens on R2_1 and R2_2",
       value: 0,
       unit: "tok",
       tag: "[FICTION]"
+    },
+    {
+      id: "l2-check-output",
+      label: "Output tokens per authored check",
+      semanticRole: "Generated output tokens on R2_1 and R2_2",
+      value: 0,
+      unit: "tok",
+      tag: "[FICTION]"
+    },
+    {
+      id: "l2-standup-work-input",
+      label: "Standup work input",
+      semanticRole: "Model input tokens generated by the free scripted Standup unit",
+      value: 0,
+      unit: "tok",
+      tag: "[FICTION]"
+    },
+    {
+      id: "l2-standup-output",
+      label: "Standup output",
+      semanticRole: "Model output tokens generated by the free scripted Standup unit",
+      value: 0,
+      unit: "tok",
+      tag: "[FICTION]"
+    },
+    {
+      id: "l2-required-request-count",
+      label: "Required request count",
+      semanticRole: "Opening check plus one follow-up required for completion",
+      value: 2,
+      unit: "count",
+      tag: "[FICTION]"
+    },
+    {
+      id: "l2-required-completed-units",
+      label: "Required completed blocker units",
+      semanticRole: "Blocker-clearing units required for completion",
+      value: 1,
+      unit: "count",
+      tag: "[FICTION]"
+    }
+  ],
+  estimates: [
+    {
+      label: "Initial control reveal delay in seconds",
+      value: 0.5,
+      tag: "[ESTIMATE]"
+    },
+    {
+      label: "Maximum seconds to first interaction",
+      value: 2,
+      tag: "[ESTIMATE]"
     }
   ]
 } satisfies ScenarioData;
+```
 
+All gameplay fiction is in `fixtures`, each with `id`, `semanticRole`, `unit`, and `[FICTION]`. `estimates` contains presentation timing only. Prefix size, TTL, touch behavior, and prices use their semantically matching measured constants instead of fiction fixtures.
+
+The two profile markers are reducer-owned:
+
+```ts
+type L2ProfileMarker =
+  | "l2-profile-coffee"
+  | "l2-profile-standup";
+```
+
+Accepting a profile’s `BEGIN_TRANSFER` action appends its marker to `completedTransferIds`. The UI prevents both markers from being accepted in one branch; `passLevel02` independently verifies exclusivity.
+
+```ts
 const L2_FAIL_LESSON: FailLesson = {
-  bucket: "idleRebuildUsd",
+  bucket: "none",
   cite: "C5",
   line:
-    "A byte-identical request sent after the 1-hour entry expires rewrites the prefix at 20× its live-read input-side rate."
+    "An expired 1-hour prefix costs 20× its live-read input-side rate; this level reports that cost as a profile tradeoff because Standup buys earlier completed work."
 };
 
-const L2_FAILURE_RULES: FailureRuleDef[] = [
-  {
-    id: "f2-expired-rewrite",
-    predicate: {
-      id: "l2-first-standup-produced-expired-write",
-      kind: "all",
-      predicates: [
-        {
-          id: "l2-standup-reveal-completed",
-          kind: "event-completed",
-          eventId: "evt-standup-failure-reveal"
-        },
-        {
-          id: "l2-decisive-row-count",
-          kind: "compare",
-          path: "lastRequests.length",
-          op: "eq",
-          value: 1
-        },
-        {
-          id: "l2-decisive-row-was-cold",
-          kind: "compare",
-          path: "lastRequests.0.cold",
-          op: "eq",
-          value: true
-        },
-        {
-          id: "l2-decisive-row-rewrote-prefix",
-          kind: "compare",
-          path: "lastRequests.0.writeTok",
-          op: "eq",
-          value: 34738
-        }
-      ]
-    },
-    decisiveEventId: "evt-standup-failure-reveal",
-    causeCode: "CACHE_EXPIRED_IDLE",
-    message:
-      "Same request, different timing: expiry turned a $0.0104 read into a $0.2084 write.",
-    checkpointId: "cp-before-interruption",
-    highlightObjectIds: [
-      "UI_TTL_DRAIN_BAR",
-      "UI_MAIN_CACHE_PANEL",
-      "R2_2_STANDUP",
-      "l2-wallet-delta",
-      "l2-expiry-comparison"
-    ],
-    actualUsd: 0.2084280,
-    validAlternativeUsd: 0.0104214
-  }
-];
+const L2_FAILURE_RULES: FailureRuleDef[] = [];
 
 const L2_CHECKPOINTS: CheckpointDef[] = [
   {
-    id: "cp-before-interruption",
-    createBeforeEventId: "evt-first-gap",
+    id: "cp-before-profile",
+    createBeforeEventId: "evt-choose-coffee",
     reason: "decision",
-    resumeLabel: "Try the interruption again"
+    resumeLabel: "Try the other schedule"
   },
   {
-    id: "cp-before-transfer",
-    createBeforeEventId: "evt-transfer-start",
+    id: "cp-before-followup",
+    createBeforeEventId: "evt-followup-prediction",
     reason: "prediction",
-    resumeLabel: "Try the long interruption again"
+    resumeLabel: "Return to the prediction"
   }
 ];
+```
 
+Reference, alternate, and anti-pattern schedules use identical configuration. Ordering and reducer-visible work are the only causal differences:
+
+```ts
+const REFERENCE_SCENARIO_PATCH: Partial<ScenarioData> = {
+  gaps: [
+    {
+      id: "g-ref-coffee",
+      contextId: "ctx-main-l2",
+      startMin: 0,
+      durationMin: 20,
+      permitsKeepWarm: false
+    },
+    {
+      id: "g-ref-standup",
+      contextId: "ctx-main-l2",
+      startMin: 20,
+      durationMin: 90,
+      permitsKeepWarm: false
+    }
+  ]
+};
+// Requests resolve at minutes 0 and 20; blocker completes at minute 110.
+
+const STANDUP_SCENARIO_PATCH: Partial<ScenarioData> = {
+  gaps: [
+    {
+      id: "g-alt-standup",
+      contextId: "ctx-main-l2",
+      startMin: 0,
+      durationMin: 90,
+      permitsKeepWarm: false
+    }
+  ]
+};
+// Blocker and follow-up resolve by minute 90.
+
+const ANTI_SCENARIO_PATCH: Partial<ScenarioData> = {
+  gaps: [
+    {
+      id: "g-anti-inbox-drift",
+      contextId: "ctx-main-l2",
+      startMin: 0,
+      durationMin: 90,
+      permitsKeepWarm: false
+    },
+    {
+      id: "g-anti-late-standup",
+      contextId: "ctx-main-l2",
+      startMin: 90,
+      durationMin: 90,
+      permitsKeepWarm: false
+    }
+  ]
+};
+// Request resolves at minute 90 without blocker progress; blocker completes at minute 180.
+```
+
+```ts
+const L2_COUNTERFACTUALS: CounterfactualDef[] = [
+  {
+    id: "cf-l2-reference",
+    unlockAfterEventId: "evt-complete",
+    kind: "reference",
+    cfg: L2_LOCKED_CFG,
+    scenarioPatch: REFERENCE_SCENARIO_PATCH,
+    comparisonQuestion:
+      "What did the short interruption preserve before the blocker work?",
+    revealCopy:
+      "Coffee finished at the release deadline and spent $0.2188494."
+  },
+  {
+    id: "cf-l2-standup",
+    unlockAfterEventId: "evt-complete",
+    kind: "alternate-choice",
+    cfg: L2_LOCKED_CFG,
+    scenarioPatch: STANDUP_SCENARIO_PATCH,
+    comparisonQuestion:
+      "What did clearing the blocker first buy?",
+    revealCopy:
+      "Standup finished 20 minutes early and spent $0.4168560."
+  },
+  {
+    id: "cf-l2-drift",
+    unlockAfterEventId: "evt-complete",
+    kind: "anti-pattern",
+    cfg: L2_LOCKED_CFG,
+    scenarioPatch: ANTI_SCENARIO_PATCH,
+    comparisonQuestion:
+      "What happened when the same 90 minutes cleared no work?",
+    revealCopy:
+      "The request rewrote, and the blocker still pushed completion to minute 180."
+  }
+];
+```
+
+```ts
 const LEVEL_02: LevelDef = {
   id: "02-beat-the-clock",
   tier: 1,
   title: "One More Check",
-  objective: "Fit Bob’s next two checks around the interruptions.",
+  objective: "Finish Bob’s next check and clear his blocker before release.",
   concept: {
     id: "cache-expiry",
     privateDesignerSummary:
@@ -563,7 +746,6 @@ const LEVEL_02: LevelDef = {
   toasts: L2_TOASTS,
   interactionPatterns: [
     "predict-before-reveal",
-    "fail-freeze-rewind",
     "just-in-time-toast",
     "counterfactual-after-attempt"
   ],
@@ -588,89 +770,6 @@ const LEVEL_02: LevelDef = {
 };
 ```
 
-Level-specific values:
-
-- `seed=2002` `[FICTION]`
-- `budgetUsd=0.65` `[FICTION]`
-- `clockCapMin=180` `[FICTION]`, allowing the off-screen anti-pattern to finish
-- Coffee gap `20 min` `[FICTION]`
-- Blocker-clearing Standup `90 min` `[FICTION]`
-- `freshInputTok=0` and `expectedOutputTok=0` per request `[FICTION]`
-- Cold-open and animation timings `[ESTIMATE]`
-
-The Standup fixture is a real `UnitSeed`, not view-local narrative state. Its runtime `UnitInstance.status` is reducer-owned, and `RUN_UNIT` produces the modeled blocker-clearing benefit without fabricating a model request.
-
-`referenceCfg` and `antiCfg` are intentionally identical because configuration is not the causal variable. Their exact scenario ordering is authoritative in these counterfactual patches:
-
-```ts
-const REFERENCE_SCENARIO_PATCH: Partial<ScenarioData> = {
-  gaps: [
-    {
-      id: "g-ref-coffee",
-      contextId: "ctx-main-l2",
-      startMin: 0,
-      durationMin: 20,
-      permitsKeepWarm: false
-    },
-    {
-      id: "g-ref-standup",
-      contextId: "ctx-main-l2",
-      startMin: 20,
-      durationMin: 90,
-      permitsKeepWarm: false
-    }
-  ]
-};
-// Requests resolve at minutes 0, 20, and 110.
-
-const ANTI_SCENARIO_PATCH: Partial<ScenarioData> = {
-  gaps: [
-    {
-      id: "g-anti-standup",
-      contextId: "ctx-main-l2",
-      startMin: 0,
-      durationMin: 90,
-      permitsKeepWarm: false
-    },
-    {
-      id: "g-anti-release-review",
-      contextId: "ctx-main-l2",
-      startMin: 90,
-      durationMin: 90,
-      permitsKeepWarm: false
-    }
-  ]
-};
-// Requests resolve at minutes 0, 90, and 180.
-```
-
-```ts
-const L2_COUNTERFACTUALS: CounterfactualDef[] = [
-  {
-    id: "cf-l2-reference",
-    unlockAfterEventId: "evt-complete",
-    kind: "reference",
-    cfg: L2_LOCKED_CFG,
-    scenarioPatch: REFERENCE_SCENARIO_PATCH,
-    comparisonQuestion:
-      "What changed when the short interruption came before the long one?",
-    revealCopy:
-      "One live read replaced one expired rewrite."
-  },
-  {
-    id: "cf-l2-anti",
-    unlockAfterEventId: "evt-complete",
-    kind: "anti-pattern",
-    cfg: L2_LOCKED_CFG,
-    scenarioPatch: ANTI_SCENARIO_PATCH,
-    comparisonQuestion:
-      "What did two long idle gaps do to the identical prefix?",
-    revealCopy:
-      "Both follow-ups arrived after expiry and rewrote the prefix."
-  }
-];
-```
-
 ## 6. Pricing walkthrough
 
 Sonnet prices a 1-hour cache write at `$6/M`, a cache read at `$0.30/M`, and output at `$15/M` (`C1`, `C3`). The complete repeated prefix is `MAIN_PREFIX_HEY = 34,738` tokens (`C34`).
@@ -680,58 +779,104 @@ This is the only authoritative price table for the level:
 | Request outcome | Resolution minute | `readTok` | `inputTok` | `writeTok` | `outTok` | Calculation | Cost |
 |---|---:|---:|---:|---:|---:|---|---:|
 | `R2_1` opening write | `0` | `0` | `0` | `34,738` | `0` | `34,738 × $6 / 1,000,000` | `$0.2084280` |
-| `R2_2_COFFEE` live read | `20` | `34,738` | `0` | `0` | `0` | `34,738 × $0.30 / 1,000,000` | `$0.0104214` |
-| `R2_2_STANDUP` or `R2_3_STANDUP` expired write | `90` or `110` | `0` | `0` | `34,738` | `0` | `34,738 × $6 / 1,000,000` | `$0.2084280` |
+| `R2_2` Coffee live read | `20` | `34,738` | `0` | `0` | `0` | `34,738 × $0.30 / 1,000,000` | `$0.0104214` |
+| `R2_2` Standup or drift expired write | `90` | `0` | `0` | `34,738` | `0` | `34,738 × $6 / 1,000,000` | `$0.2084280` |
 
-Three-star reference total:
-
-```text
-$0.2084280 + $0.0104214 + $0.2084280 = $0.4272774
-```
-
-Anti-pattern total at minutes `0`, `90`, and `180`:
+Coffee reference total:
 
 ```text
-3 × $0.2084280 = $0.6252840
+$0.2084280 + $0.0104214 = $0.2188494
 ```
 
-Avoidable anti-pattern delta:
+Standup alternate-profile total:
 
 ```text
-$0.6252840 - $0.4272774 = $0.1980066
+$0.2084280 + $0.2084280 = $0.4168560
 ```
 
-The anti-pattern costs approximately `46.3%` more than the reference, and an individual expired 1-hour rewrite costs `20×` its live read (`C5`). Exact values remain unrounded in reducer state; display values may be `$0.2084`, `$0.0104`, `$0.4273`, and `$0.6253`.
+Drift anti-pattern total:
 
-The free Standup unit changes schedule and dependency state but creates no request, so it has no price and no ledger/tape row.
+```text
+$0.2084280 + $0.2084280 = $0.4168560
+```
 
-Although this scenario intentionally has `outTok=0`, `UI_TAPE_RENDERER` still uses the canonical cost-share geometry for every row: output would contribute at Sonnet’s `$15/M` rate (`5×`, `C1`, `C3`). Hiding an output label never removes output’s visual weight.
+Request-cost difference between Coffee and Standup:
+
+```text
+$0.4168560 - $0.2188494 = $0.1980066
+```
+
+The individual expired 1-hour rewrite costs `20×` its live read (`C5`). Standup exchanges that `$0.1980066` difference for reducer-visible schedule progress:
+
+- Coffee completes at minute `110`.
+- Standup completes at minute `90`.
+- Standup therefore retains `20 min` of release-deadline slack.
+
+The drift anti-pattern pays the same request cost as Standup but does not clear the blocker during the long gap; it completes at minute `180` and fails the deadline behavior. This distinguishes useful schedule progress from consequence-free waiting.
+
+Exact values remain unrounded in reducer state. Display values may be `$0.2084`, `$0.0104`, `$0.2188`, and `$0.4169`.
+
+The free Standup changes `clockMin`, `UnitInstance.status`, and `attemptMetrics.completedUnitCount` but creates no request, price, ledger row, or tape row.
+
+Although this scenario has `outTok=0`, `UI_TAPE_RENDERER` still uses canonical output-inclusive geometry. Any non-zero output would contribute at Sonnet’s `$15/M` rate (`5×`, `C1`, `C3`).
 
 ## 7. Tape sequence
 
-`TapeSpec.rowSource = "ledger"`. Rows appear only after their request resolves.
+`TapeSpec.rowSource = "ledger"`. Rows appear only after their requests resolve.
 
-Reference branch:
+Shared row:
 
 1. `R2_1` — red write segment, `34,738 tok`, `$0.2084280`.
-2. `R2_2_COFFEE` — blue read segment, `34,738 tok`, `$0.0104214`; reveal gated by `p2-next-color`.
-3. `R2_3_STANDUP` — red write segment, `34,738 tok`, `$0.2084280`; reveal gated by `p2-standup-color`.
 
-Failure branch replaces row 2 with `R2_2_STANDUP`, a red `34,738`-token write costing `$0.2084280`. Rewind removes that branch row by deterministic replay before the reference branch continues.
+Coffee profile row:
 
-Coffee and Standup passage creates no row. The blocker badge may change during either interruption, but it never occupies tape space.
+2. `R2_2` — blue read segment, `34,738 tok`, `$0.0104214`; reveal gated by `p2-next-color`.
 
-`ahaRequestId = "R2_3_STANDUP"`.
+Standup profile row:
+
+2. `R2_2` — red write segment, `34,738 tok`, `$0.2084280`; reveal gated by `p2-next-color`.
+
+Coffee, Standup, expiry animation, and blocker changes create no tape rows. The blocker badge and deadline rail remain outside tape geometry.
+
+```ts
+const L2_TAPE: TapeSpec = {
+  rowSource: "ledger",
+  labels: {
+    R2_1: "Opening check",
+    R2_2: "Identical follow-up"
+  },
+  revealGroups: [
+    {
+      id: "l2-opening",
+      requestIds: ["R2_1"]
+    },
+    {
+      id: "l2-followup",
+      requestIds: ["R2_2"],
+      gatedByPredictionId: "p2-next-color"
+    }
+  ],
+  ahaRequestId: "R2_2",
+  hoverEnabled: true
+};
+```
 
 Aha frame:
 
-- Hold `UI_TTL_DRAIN_BAR` at `0:00`.
-- Keep `R2_2_COFFEE` immediately above `R2_3_STANDUP`.
-- Keep the cleared blocker badge visible so the schedule benefit is not erased from the comparison.
-- Pulse the expired `CacheEntry`, the zero point on the TTL bar, and the new red row.
-- After revelation, caption: **“The request stayed identical. The live cache did not.”**
-- Do not add an unpriced expiry or Standup row.
-- Segment geometry is `segment.usd / row.usd` across read, input, write, and output buckets. Because each authored request row has one non-zero bucket, its sole segment has `widthRatio=1`.
+- Keep the minute-`110` release marker visible.
+- Coffee profile:
+  - hold `UI_TTL_DRAIN_BAR` at `40:00` when the blue row resolves;
+  - show the open blocker beside the row;
+  - after Standup, show completion exactly at minute `110`.
+- Standup profile:
+  - hold `UI_TTL_DRAIN_BAR` at `0:00`;
+  - keep the cleared blocker visible;
+  - pulse the expired `CacheEntry`, the zero point, and the red row;
+  - show completion at minute `90` with `20 min` of deadline slack.
+- After explanation, caption: **“The request stayed identical. Idle time changed what was still available.”**
+- Do not add an unpriced expiry, Coffee, or Standup row.
+- Each authored row has one non-zero priced bucket, so its sole segment has `widthRatio=1`.
+- Static final bars remain visible without hover.
 
 ## 8. Prediction prompts
 
@@ -748,113 +893,225 @@ Options:
 
 The correct option is supplied only after commitment and request resolution:
 
-- Coffee branch → `blue-read`
-- Standup branch → `red-write`
+- Coffee profile → `blue-read`
+- Standup profile → `red-write`
 
-### `p2-standup-color`
+No prompt option includes the rule, the `60`-minute threshold, evaluative styling, or a dollar clue before commitment. The two cards’ schedule labels remain visible, but neither is styled as correct.
 
-Question:
-
-> **The request is still identical after the long standup. What reaches the wire?**
-
-Options:
-
-- `blue-read`: **“Blue — read”**
-- `red-write`: **“Red — write”**
-
-Correct option: `red-write`, withheld until commitment and `R2_3_STANDUP` resolution.
-
-No prompt option includes the rule, the `60`-minute threshold, evaluative styling, or a dollar clue before commitment. Prediction correctness never affects gate passage, stars, score, wallet, failure, or rewind.
+Prediction correctness never affects gate passage, stars, score, wallet, failure, rewind, profile markers, completed work, or deadline state.
 
 ## 9. Fail-state
 
-- Failure rule id: `f2-expired-rewrite`
-- Decisive event: `evt-standup-failure-reveal`
-- Actual-attempt predicate:
-  - `evt-standup-failure-reveal` completed;
-  - `lastRequests.length === 1`;
-  - `lastRequests[0].cold === true`;
-  - `lastRequests[0].writeTok === 34,738`.
-- The predicate uses declared `ReducerState.lastRequests` and `LedgerRow` fields and legal `StatePredicate` kinds/ops.
-- The predicate does not inspect prediction choice or correctness.
-- `actualUsd`: `$0.2084280`
-- `validAlternativeUsd`: `$0.0104214`
-- Visible economic difference: `$0.1980066`, or `20×` for rewrite versus read (`C5`).
-- Visible counter-pressure evidence: `u2-blocker-standup.status="done"` and **“Blocker cleared.”**
-- Freeze highlights:
-  - `UI_TTL_DRAIN_BAR` at `0:00`;
-  - the expired opening `CacheEntry`;
-  - the red `R2_2_STANDUP` row;
-  - its `$0.2084` wallet deduction;
-  - the completed blocker unit;
-  - the post-reveal comparison chip **“Expired write $0.2084 · Live read $0.0104 · 20×.”**
-- Exact causal message:
+This level has no punitive `FailureRuleDef`:
 
-> **Same request, different timing: expiry turned a $0.0104 read into a $0.2084 write.**
+```ts
+const L2_FAILURE_RULES: FailureRuleDef[] = [];
+```
 
-- Rewind label: **“Try the interruption again”**
-- Destination: `cp-before-interruption`
-- Rewind preserves the mastered opening request.
-- Economic actions remain blocked while frozen.
-- Failure is triggered by the visible expensive request, never by budget alone.
-- A wrong prediction never triggers or changes this failure.
-- No `REQUEST_COUNTERFACTUAL`, `REVEAL_COUNTERFACTUAL`, reference event, or anti-pattern event may dispatch this failure.
+No event dispatches `FREEZE_FAILURE`.
+
+The Standup request is more expensive than Coffee’s request, but it is not an economically equivalent mistake: Standup has already changed `units[0].status` to `"done"` and finishes the complete attempt twenty minutes earlier. Punishing it would erase real counter-pressure and violate the requirement that a freeze compare against a genuinely valid request-local alternative.
+
+The Coffee and Standup profiles therefore both proceed through explanation and `COMPLETE_ATTEMPT`.
+
+The drift schedule is an informational post-attempt anti-pattern. It pays the expired-write cost without clearing the blocker during the gap and misses the minute-`110` deadline. Because it is processed through `REQUEST_COUNTERFACTUAL` and `REVEAL_COUNTERFACTUAL`, it cannot freeze or mutate the actual attempt.
+
+`UI_REWIND_CONTROL` is available from the result screen solely to try the other viable profile. It rewinds to `cp-before-profile`; it is not presented as recovery from failure.
 
 ## 10. Gate & stars
 
-The post-evidence explanation in `evt-explain-expiry` is the understanding check. Prediction commitment is required structurally to unlock each reveal, but prediction identity and correctness are absent from the gate, `pass(st)`, and star predicates.
+The post-evidence `ACK_EXPLANATION` action is the understanding check. Prediction commitment unlocks the reveal structurally, but prediction identity and correctness are absent from the gate, `pass(st)`, and star predicates.
 
-Behavioral pass predicate:
+Behavioral pass:
 
 ```text
-pass iff
-  R2_2_COFFEE exists in ledger with
-    readTok = 34,738 and writeTok = 0 and cold = false
-  AND R2_3_STANDUP exists later in ledger with
-    readTok = 0 and writeTok = 34,738 and cold = true
-  AND evt-coffee-reveal and evt-transfer-reveal completed
-  AND, after evt-transfer-reveal,
-    ACK_EXPLANATION was observed with explanationId = "expiry-idle-gap"
+pass iff exactly one profile marker exists
+  AND R2_2 exists in ledger
+  AND:
+    Coffee marker implies
+      R2_2 readTok = 34,738
+      R2_2 writeTok = 0
+      R2_2 cold = false
+      clockMin <= 110
+    OR
+    Standup marker implies
+      R2_2 readTok = 0
+      R2_2 writeTok = 34,738
+      R2_2 cold = true
+      clockMin <= 90
+  AND units.find(id="u2-blocker-standup").status = "done"
+  AND attemptMetrics.completedUnitCount = 1
+  AND attemptMetrics.requestCount = 2
+  AND the applicable reveal event completed
+  AND, after that reveal,
+      ACK_EXPLANATION("expiry-idle-gap") was observed
 ```
-
-`L2_GATE`:
 
 ```ts
 const L2_GATE: GateDef = {
   predicateId: "gate-l2-cache-expiry",
   evidenceRevealEventIds: [
     "evt-coffee-reveal",
-    "evt-transfer-reveal"
+    "evt-standup-reveal"
   ],
   postEvidenceActionRequirements: [
     {
       id: "l2-post-evidence-explanation",
-      kind: "action-observed",
-      actionType: "ACK_EXPLANATION",
-      afterEventId: "evt-transfer-reveal",
-      match: {
-        explanationId: "expiry-idle-gap"
-      }
+      kind: "any",
+      predicates: [
+        {
+          id: "l2-explanation-after-coffee",
+          kind: "action-observed",
+          actionType: "ACK_EXPLANATION",
+          afterEventId: "evt-coffee-reveal",
+          match: {
+            explanationId: "expiry-idle-gap"
+          }
+        },
+        {
+          id: "l2-explanation-after-standup",
+          kind: "action-observed",
+          actionType: "ACK_EXPLANATION",
+          afterEventId: "evt-standup-reveal",
+          match: {
+            explanationId: "expiry-idle-gap"
+          }
+        }
+      ]
     }
   ],
   behavioralRequirements: [
     {
-      id: "l2-live-read-event-completed",
-      kind: "event-completed",
-      eventId: "evt-coffee-reveal"
+      id: "l2-one-profile-selected",
+      kind: "any",
+      predicates: [
+        {
+          id: "l2-coffee-profile-selected",
+          kind: "includes",
+          path: "completedTransferIds",
+          value: "l2-profile-coffee"
+        },
+        {
+          id: "l2-standup-profile-selected",
+          kind: "includes",
+          path: "completedTransferIds",
+          value: "l2-profile-standup"
+        }
+      ]
     },
     {
-      id: "l2-expired-write-event-completed",
-      kind: "event-completed",
-      eventId: "evt-transfer-reveal"
+      id: "l2-profile-request-evidence",
+      kind: "any",
+      predicates: [
+        {
+          id: "l2-coffee-request-evidence",
+          kind: "all",
+          predicates: [
+            {
+              id: "l2-coffee-marker",
+              kind: "includes",
+              path: "completedTransferIds",
+              value: "l2-profile-coffee"
+            },
+            {
+              id: "l2-coffee-read-tokens",
+              kind: "compare",
+              path: "ledger.1.readTok",
+              op: "eq",
+              value: 34738
+            },
+            {
+              id: "l2-coffee-write-tokens",
+              kind: "compare",
+              path: "ledger.1.writeTok",
+              op: "eq",
+              value: 0
+            },
+            {
+              id: "l2-coffee-live",
+              kind: "compare",
+              path: "ledger.1.cold",
+              op: "eq",
+              value: false
+            },
+            {
+              id: "l2-coffee-deadline",
+              kind: "compare",
+              path: "clockMin",
+              op: "lte",
+              value: 110
+            }
+          ]
+        },
+        {
+          id: "l2-standup-request-evidence",
+          kind: "all",
+          predicates: [
+            {
+              id: "l2-standup-marker",
+              kind: "includes",
+              path: "completedTransferIds",
+              value: "l2-profile-standup"
+            },
+            {
+              id: "l2-standup-read-tokens",
+              kind: "compare",
+              path: "ledger.1.readTok",
+              op: "eq",
+              value: 0
+            },
+            {
+              id: "l2-standup-write-tokens",
+              kind: "compare",
+              path: "ledger.1.writeTok",
+              op: "eq",
+              value: 34738
+            },
+            {
+              id: "l2-standup-cold",
+              kind: "compare",
+              path: "ledger.1.cold",
+              op: "eq",
+              value: true
+            },
+            {
+              id: "l2-standup-deadline",
+              kind: "compare",
+              path: "clockMin",
+              op: "lte",
+              value: 90
+            }
+          ]
+        }
+      ]
+    },
+    {
+      id: "l2-blocker-unit-done",
+      kind: "compare",
+      path: "units.0.status",
+      op: "eq",
+      value: "done"
+    },
+    {
+      id: "l2-request-count",
+      kind: "compare",
+      path: "attemptMetrics.requestCount",
+      op: "eq",
+      value: 2
+    },
+    {
+      id: "l2-completed-unit-count",
+      kind: "compare",
+      path: "attemptMetrics.completedUnitCount",
+      op: "eq",
+      value: 1
     }
   ],
   explanationRequirement: {
     id: "l2-explained-idle-expiry",
     kind: "includes",
     path: "acknowledgedExplanationIds",
-    value: "expiry-idle-gap",
-    observedAfterEventId: "evt-transfer-reveal"
+    value: "expiry-idle-gap"
   }
 };
 ```
@@ -863,36 +1120,75 @@ Pure, schema-valid pass evaluator:
 
 ```ts
 function passLevel02(st: ReducerState): GateResult {
-  const liveRead = st.ledger.find(
-    row => row.requestId === "R2_2_COFFEE"
+  const followup = st.ledger.find(
+    row => row.requestId === "R2_2"
   );
-  const expiredWrite = st.ledger.find(
-    row => row.requestId === "R2_3_STANDUP"
+  const blocker = st.units.find(
+    unit => unit.id === "u2-blocker-standup"
   );
 
-  const pass =
-    liveRead?.readTok === 34738 &&
-    liveRead.writeTok === 0 &&
-    liveRead.cold === false &&
-    expiredWrite?.readTok === 0 &&
-    expiredWrite.writeTok === 34738 &&
-    expiredWrite.cold === true &&
+  const choseCoffee =
+    st.completedTransferIds.includes("l2-profile-coffee");
+  const choseStandup =
+    st.completedTransferIds.includes("l2-profile-standup");
+  const choseExactlyOne = choseCoffee !== choseStandup;
+
+  const coffeeProfile =
+    choseCoffee &&
+    !choseStandup &&
+    followup?.readTok === 34738 &&
+    followup.inputTok === 0 &&
+    followup.writeTok === 0 &&
+    followup.outTok === 0 &&
+    followup.cold === false &&
     st.completedEventIds.includes("evt-coffee-reveal") &&
-    st.completedEventIds.includes("evt-transfer-reveal") &&
+    st.clockMin <= 110;
+
+  const standupProfile =
+    choseStandup &&
+    !choseCoffee &&
+    followup?.readTok === 0 &&
+    followup.inputTok === 0 &&
+    followup.writeTok === 34738 &&
+    followup.outTok === 0 &&
+    followup.cold === true &&
+    st.completedEventIds.includes("evt-standup-reveal") &&
+    st.clockMin <= 90;
+
+  const pass =
+    choseExactlyOne &&
+    (coffeeProfile || standupProfile) &&
+    blocker?.status === "done" &&
+    st.attemptMetrics.completedUnitCount === 1 &&
+    st.attemptMetrics.requestCount === 2 &&
     st.acknowledgedExplanationIds.includes("expiry-idle-gap") &&
     st.frozenFailure === null;
+
+  const profile = coffeeProfile
+    ? "Coffee"
+    : standupProfile
+      ? "Standup"
+      : null;
 
   return {
     pass,
     reason: pass
-      ? "Compared the live and expired rows and identified the idle gap as the cause."
-      : "Compare the live and expired rows, then identify what changed the bill.",
+      ? `${profile} completed the check and blocker while demonstrating how the idle gap changed the identical request.`
+      : "Complete one schedule profile, inspect its follow-up row, and explain what changed it.",
     evidence: pass
-      ? [
-          "20-minute gap: 34,738 tokens read.",
-          "90-minute gap: 34,738 tokens rewritten.",
-          "Cause identified after both rows were visible: idle expiry."
-        ]
+      ? coffeeProfile
+        ? [
+            "Coffee profile selected in reducer state.",
+            "20-minute gap: 34,738 tokens read.",
+            "Blocker completed by minute 110.",
+            "Idle-gap explanation acknowledged after the reveal."
+          ]
+        : [
+            "Standup profile selected in reducer state.",
+            "90-minute gap: 34,738 tokens rewritten.",
+            "Blocker and check completed by minute 90.",
+            "Idle-gap explanation acknowledged after the reveal."
+          ]
       : []
   };
 }
@@ -902,85 +1198,112 @@ Canonical stars:
 
 ```ts
 const L2_STAR_2: StarDef = {
-  label: "Three-request schedule",
+  label: "Release-ready",
   predicate: {
-    id: "l2-star2-three-requests",
+    id: "l2-star2-release-ready",
     kind: "all",
     predicates: [
       {
-        id: "l2-star2-live-read-visible",
-        kind: "event-completed",
-        eventId: "evt-coffee-reveal"
-      },
-      {
-        id: "l2-star2-expired-write-visible",
-        kind: "event-completed",
-        eventId: "evt-transfer-reveal"
+        id: "l2-star2-blocker-done",
+        kind: "compare",
+        path: "units.0.status",
+        op: "eq",
+        value: "done"
       },
       {
         id: "l2-star2-request-count",
         kind: "compare",
         path: "attemptMetrics.requestCount",
         op: "eq",
-        value: 3
+        value: 2
+      },
+      {
+        id: "l2-star2-deadline",
+        kind: "compare",
+        path: "clockMin",
+        op: "lte",
+        value: 110
       }
     ]
   },
   reason:
-    "Completed the demonstrated schedule with exactly the opening check and two follow-ups."
+    "Finished the authored check and cleared the blocker by the minute-110 release deadline."
 };
 
 const L2_STAR_3: StarDef = {
-  label: "Reference spend",
+  label: "Honor the chosen priority",
   predicate: {
-    id: "l2-star3-reference-spend",
-    kind: "all",
+    id: "l2-star3-profile-benefit",
+    kind: "any",
     predicates: [
       {
-        id: "l2-star3-live-read-visible",
-        kind: "event-completed",
-        eventId: "evt-coffee-reveal"
+        id: "l2-star3-coffee-economy",
+        kind: "all",
+        predicates: [
+          {
+            id: "l2-star3-coffee-marker",
+            kind: "includes",
+            path: "completedTransferIds",
+            value: "l2-profile-coffee"
+          },
+          {
+            id: "l2-star3-coffee-spend",
+            kind: "compare",
+            path: "attemptMetrics.spentUsd",
+            op: "lte",
+            value: 0.2188494
+          },
+          {
+            id: "l2-star3-coffee-deadline",
+            kind: "compare",
+            path: "clockMin",
+            op: "lte",
+            value: 110
+          }
+        ]
       },
       {
-        id: "l2-star3-expired-write-visible",
-        kind: "event-completed",
-        eventId: "evt-transfer-reveal"
-      },
-      {
-        id: "l2-star3-explanation",
-        kind: "includes",
-        path: "acknowledgedExplanationIds",
-        value: "expiry-idle-gap",
-        observedAfterEventId: "evt-transfer-reveal"
-      },
-      {
-        id: "l2-star3-request-count",
-        kind: "compare",
-        path: "attemptMetrics.requestCount",
-        op: "eq",
-        value: 3
-      },
-      {
-        id: "l2-star3-spend",
-        kind: "compare",
-        path: "attemptMetrics.spentUsd",
-        op: "lte",
-        value: 0.4272774
+        id: "l2-star3-standup-speed",
+        kind: "all",
+        predicates: [
+          {
+            id: "l2-star3-standup-marker",
+            kind: "includes",
+            path: "completedTransferIds",
+            value: "l2-profile-standup"
+          },
+          {
+            id: "l2-star3-standup-clock",
+            kind: "compare",
+            path: "clockMin",
+            op: "lte",
+            value: 90
+          },
+          {
+            id: "l2-star3-standup-work",
+            kind: "compare",
+            path: "attemptMetrics.completedUnitCount",
+            op: "eq",
+            value: 1
+          }
+        ]
       }
     ]
   },
   reason:
-    "Matched the three-request reference total without adding another priced request."
+    "Coffee earns the star by preserving spend; Standup earns it by completing the work twenty minutes early."
 };
 ```
 
 Star summary:
 
-- **1 star — Demonstrated expiry:** `passLevel02(st).pass === true`.
-- **2 stars — Three-request schedule:** the pass evidence is present and `attemptMetrics.requestCount === 3`.
-- **3 stars — Reference spend:** the 2-star behavior is present, the post-evidence cause is acknowledged, and `attemptMetrics.spentUsd <= 0.4272774`.
+- **1 star — Demonstrated expiry behavior:** `passLevel02(st).pass === true`.
+- **2 stars — Release-ready:** exactly two requests, one completed blocker unit, and completion by minute `110`.
+- **3 stars — Honor the chosen priority:**
+  - Coffee: `attemptMetrics.spentUsd <= 0.2188494` and completion by minute `110`;
+  - Standup: `clockMin <= 90` with the blocker unit completed.
 
-The cost predicate uses `lte`, not floating-point equality. It reads canonical `attemptMetrics.spentUsd`, not an invalid wallet object path. No predicate reads either prediction.
+Both core options can earn three stars. Coffee’s star benefit is spend; Standup’s star benefit is deadline slack and completed work. No predicate reads prediction identity or correctness.
 
 ## 11. Toasts
 
@@ -988,69 +1311,88 @@ The cost predicate uses `lte`, not floating-point equality. It reads canonical `
 |---|---|---|---|
 | `toast-first-write` | `R2_1` appends | status | **“WRITE · 34,738 tokens · $0.2084”** |
 | `toast-ttl-intro` | opening `CacheEntry` appears | teaching | **“Saved for now. TTL is the idle-time countdown.”** |
-| `toast-blocker-waits` | Coffee resolves | status | **“Blocker still open · standup remains.”** |
-| `toast-blocker-cleared` | `u2-blocker-standup.status` becomes `"done"` | status | **“Bob’s blocker is cleared.”** |
-| `toast-coffee-read` | `R2_2_COFFEE` resolves | teaching | **“Still live. READ · 34,738 tokens · $0.0104”** |
+| `toast-blocker-waits` | Coffee profile accepted | status | **“Check first · blocker still open.”** |
+| `toast-blocker-cleared` | `units[0].status` becomes `"done"` | status | **“Bob’s blocker is cleared.”** |
+| `toast-coffee-read` | Coffee `R2_2` resolves | teaching | **“Still live. READ · 34,738 tokens · $0.0104”** |
 | `toast-expired` | TTL first reaches zero | status | **“TTL · 0:00”** |
-| `toast-expiry-cause` | `R2_3_STANDUP` resolves | cause | **“Expired while idle. WRITE again · $0.2084”** |
-| `toast-transfer-rule` | `expiry-idle-gap` is acknowledged | teaching | **“Saved context expires after 60 idle minutes.”** |
+| `toast-standup-write` | Standup `R2_2` resolves | cause | **“Expired while idle. WRITE again · $0.2084”** |
+| `toast-profile-rule` | `expiry-idle-gap` is acknowledged | teaching | **“Saved context expires after 60 idle minutes.”** |
+| `toast-coffee-result` | Coffee completes | result | **“On time · $0.2188 spent.”** |
+| `toast-standup-result` | Standup completes | result | **“20 min early · $0.4169 spent.”** |
 
-Only one teaching toast is visible at once. The blocker toasts state the schedule consequence but do not predict cache behavior. `toast-expired` reports status only; it does not reveal the next request’s row or correct prediction.
+Only one teaching toast is visible at once. `toast-expired` reports status only; it does not reveal the next row or the correct prediction. Result toasts fire only after the gate passes.
 
 ## 12. QA gate
 
 Real-browser click-through assertions:
 
-1. The level opens with no Learn screen; **“Run check”** is clickable by `2s` `[ESTIMATE]`.
-2. No pre-play copy states the cache lifetime, surviving interruption, next row color, or cheaper schedule.
+1. The level opens with no Learn screen; **“Run check”** is clickable by the registered `2s` presentation estimate.
+2. No pre-play copy states the lifetime, surviving option, next-row color, cheaper profile, or correct schedule.
 3. `ENTER_LEVEL` uses `"02-beat-the-clock"`.
 4. `concept.id` is `"cache-expiry"` and its only prerequisite is `"write-vs-read"`.
-5. `conceptScope` is `{ kind:"single", reusedConceptIds:[] }`.
-6. `interactionPatterns` contains only canonical kebab-case IDs.
-7. The opening click creates exactly one `LedgerRow`, one tape row, and one live `CacheEntry`.
-8. Opening price is exactly `$0.2084280` (`C1`, `C3`, `C34`).
-9. Coffee dispatches exactly one `ADVANCE { min:20 }` and produces no request during time passage.
-10. Coffee leaves `u2-blocker-standup.status="ready"` and visibly marks the downstream blocker unresolved.
-11. Coffee leaves `40 min` on the original TTL; its read refreshes `lastTouchMin` to `20` and `expiresAtMin` to `80` (`C12`).
-12. Coffee’s request costs exactly `$0.0104214` (`C1`, `C3`, `C34`).
-13. Standup dispatches `RUN_UNIT { unitId:"u2-blocker-standup" }`, advances `clockMin` by `90`, completes the blocker unit, and creates no request or tape row.
-14. The Standup path visibly clears the blocker before the expensive request is revealed, so Coffee is not strictly dominant.
-15. Neither request reveal can execute before its applicable prediction is committed.
-16. Wrong predictions change no wallet, score, star, failure, rewind, or gate result.
-17. The post-Standup request resolves with `readTok=0`, `writeTok=34,738`, costs `$0.2084280`, and renders red.
-18. Failure freezes only after the decisive actual-attempt red row, blocker-clearing benefit, and `$0.2084280` versus `$0.0104214` comparison are visible.
-19. The failure rule satisfies `actualUsd > validAlternativeUsd` and exposes the `20×` difference (`C5`).
-20. No counterfactual, reference, or anti-pattern request or reveal can dispatch `FREEZE_FAILURE`.
-21. Rewind returns to `cp-before-interruption` without replaying or repricing `R2_1`.
-22. Rewind restores `u2-blocker-standup.status="ready"`, `wallet=0.4415720`, `attemptMetrics.spentUsd=0.2084280`, and `attemptMetrics.requestCount=1`.
-23. A complete reference click-through is winnable: opening → Coffee → predict → send → clear blocker in Standup → predict → send → choose `expiry-idle-gap` → complete.
-24. The gate observes `ACK_EXPLANATION` after `evt-transfer-reveal`; it does not inspect prediction state.
-25. An incorrect post-evidence explanation is retryable and changes no economics or attempt metrics.
-26. `passLevel02` reads only declared `ReducerState`, `LedgerRow`, and array fields.
-27. Every gate, star, and failure predicate uses a declared state path and only legal `StatePredicate` kinds and comparison ops.
-28. Reference requests resolve at minutes `0`, `20`, and `110`; their total is `$0.4272774`.
-29. Anti-pattern requests resolve at minutes `0`, `90`, and `180`; their total is `$0.6252840`.
-30. `referenceCfg` and `antiCfg` are identical; their respective `scenarioPatch.gaps` arrays are the sole authored ordering difference.
-31. Counterfactual configuration, schedule, totals, and labels remain hidden until `evt-complete`.
-32. Counterfactual processing mutates no actual wallet, ledger, `attemptResult`, failure, or clock-freeze state.
-33. Every real request has `usd > 0`; no positive amount renders as `$0.0000`.
-34. Tape-row count equals ledger-row count at every action boundary.
-35. Coffee, Standup, and expiry animations create no tape or ledger rows.
-36. Every request’s input-side buckets total `34,738`; no token appears in both read and write buckets.
-37. Every authored request has `outTok=0`, but tape geometry still includes the canonical output-cost bucket and Sonnet’s `$15/M` output rate (`C1`, `C3`).
-38. Static final tape bars remain visible without hover.
-39. `R2_1`, `R2_2_COFFEE`, `R2_2_STANDUP`, and `R2_3_STANDUP` use byte-identical prefix content; only `sentAtMin` and cache liveness differ.
-40. Prediction options have no correctness styling before commitment.
-41. Keyboard and pointer flows can choose interruptions, select and commit predictions, send requests, inspect prices, answer the explanation, and rewind.
-42. Screen readers announce blocker status, the frozen causal message, and both compared prices.
-43. Reduced-motion mode replaces drain and pulse animation with immediate state transitions while preserving action order and final evidence.
-44. Restarting with seed `2002` reproduces byte-identical state, ledger, wallet, cache, unit status, checkpoints, attempt metrics, and tape.
-45. `UI_RESULT_SCREEN` displays behavioral evidence and star reasons; budget alone never indicates mastery.
-46. The document contains one authoritative pricing table and no superseded request total, threshold, or unreachable branch.
-47. Both interruption cards expose a real tradeoff—immediate blocker progress versus elapsed idle time—without revealing the cache outcome.
-48. The reference configuration passes; the anti-pattern fails the intended scheduling behavior.
-49. `attemptResult.spentUsd` equals `budget - wallet` after completion.
-50. `title` and `objective` contain none of `concept.solutionVocabulary`; the mandatory `identity-no-solution-vocabulary` assertion is:
+5. `concept.solutionVocabulary` is present and complete.
+6. `conceptScope` is `{ kind:"single", reusedConceptIds:[] }`.
+7. `interactionPatterns` contains only canonical kebab-case IDs and excludes `"fail-freeze-rewind"`.
+8. The opening click creates exactly one `LedgerRow`, one tape row, and one live `CacheEntry`.
+9. Opening price is exactly `$0.2084280` (`C1`, `C3`, `C34`).
+10. The Coffee card dispatches `BEGIN_TRANSFER { challengeId:"l2-profile-coffee" }` and appends that exact marker to `completedTransferIds`.
+11. The Standup card dispatches `BEGIN_TRANSFER { challengeId:"l2-profile-standup" }` and appends that exact marker to `completedTransferIds`.
+12. The reducer prevents both profile markers from being accepted in one branch.
+13. Coffee dispatches exactly one `ADVANCE { min:20 }` and creates no request during time passage.
+14. Coffee leaves `units[0].status="ready"` until the follow-up resolves.
+15. Coffee leaves `40 min` on the original TTL; the read refreshes `lastTouchMin` to `20` and `expiresAtMin` to `80` (`C12`).
+16. Coffee’s `R2_2` costs exactly `$0.0104214` (`C1`, `C3`, `C34`).
+17. Coffee later dispatches `RUN_UNIT { unitId:"u2-blocker-standup" }`, reaches minute `110`, and completes one unit without creating a request.
+18. Coffee completes with `spentUsd=0.2188494`, `requestCount=2`, and `completedUnitCount=1`.
+19. Standup dispatches `RUN_UNIT { unitId:"u2-blocker-standup" }`, advances `clockMin` by `90`, and completes the blocker before the follow-up.
+20. The free Standup creates no request, wallet deduction, ledger row, or tape row.
+21. Standup’s `R2_2` resolves with `readTok=0`, `writeTok=34,738`, `cold=true`, and cost `$0.2084280`.
+22. Standup completes with `spentUsd=0.4168560`, `requestCount=2`, `completedUnitCount=1`, and `clockMin=90`.
+23. Standup is never an automatic terminal failure and can earn all three stars.
+24. Coffee can also earn all three stars.
+25. The Coffee result visibly records its `$0.1980066` spend benefit relative to Standup only after completion.
+26. The Standup result visibly records its `20 min` deadline benefit relative to Coffee only after completion.
+27. Neither profile’s request reveal can execute before `p2-next-color` is committed.
+28. Wrong predictions change no wallet, score, star, failure, rewind, profile marker, completed work, or gate result.
+29. The gate observes `ACK_EXPLANATION` after the applicable evidence reveal.
+30. An incorrect explanation is retryable and changes no economics or attempt metrics.
+31. `passLevel02` reads only declared `ReducerState`, `LedgerRow`, `UnitInstance`, and array fields.
+32. `passLevel02` accesses the unit through `st.units.find(...)`; no `units.<id>` object path exists.
+33. Declarative predicates use `units.0.status`, never `units.u2-blocker-standup.status`.
+34. Every gate and star predicate uses a declared state path, legal `StatePredicate` kind, and legal comparison op.
+35. No predicate uses `op:"contains"`.
+36. The cost predicates use `lte`, not floating-point equality.
+37. The Coffee reference requests resolve at minutes `0` and `20`; total is `$0.2188494`.
+38. The Standup alternate requests resolve at minutes `0` and `90`; total is `$0.4168560`.
+39. The drift anti-pattern resolves its requests at minutes `0` and `90`, clears the blocker only at minute `180`, and fails the intended deadline behavior.
+40. `referenceCfg` and `antiCfg` are identical; scenario ordering and completed work are the authored causal differences.
+41. Counterfactual configuration, schedule, totals, and labels remain hidden until `evt-complete`.
+42. Counterfactual processing mutates no actual wallet, ledger, `attemptResult`, `clockFrozen`, or `frozenFailure`.
+43. No `REQUEST_COUNTERFACTUAL`, `REVEAL_COUNTERFACTUAL`, reference event, alternate-choice event, or anti-pattern event dispatches `FREEZE_FAILURE`.
+44. The level’s actual sequence contains no `FREEZE_FAILURE`.
+45. Result-screen rewind returns to `cp-before-profile` without replaying or repricing `R2_1`.
+46. Rewind restores `units[0].status="ready"`, `wallet=0.4415720`, `attemptMetrics.spentUsd=0.2084280`, and `attemptMetrics.requestCount=1`.
+47. Every real request has `usd > 0`; no positive amount renders as `$0.0000`.
+48. Tape-row count equals ledger-row count at every action boundary.
+49. Coffee, Standup, TTL drainage, blocker changes, and deadline animation create no tape or ledger rows.
+50. Every authored request’s input-side buckets total `34,738`; no token appears in both read and write buckets.
+51. Every authored request has `outTok=0`, but tape geometry still includes the canonical output-cost bucket and Sonnet’s `$15/M` output rate (`C1`, `C3`).
+52. Static final tape bars remain visible without hover.
+53. `R2_1` and both resolutions of `R2_2` use byte-identical prefix content; only `sentAtMin` and cache liveness differ.
+54. Prediction options have no correctness styling before commitment.
+55. Keyboard and pointer flows can run the opening check, choose either profile, commit the prediction, send the follow-up, answer the explanation, clear the blocker, complete, and rewind.
+56. Screen readers announce blocker status, TTL status, completion minute, spend, and the selected profile’s star reason.
+57. Reduced-motion mode replaces drain and pulse animation with immediate state transitions while preserving action order and evidence.
+58. Restarting with seed `2002` reproduces byte-identical state, ledger, wallet, cache, unit status, profile markers, checkpoints, metrics, and tape.
+59. `UI_RESULT_SCREEN` displays behavioral evidence and profile-specific star reasons; budget alone never indicates mastery.
+60. The document contains one authoritative pricing table and no superseded three-request totals or unreachable failure branches.
+61. Every gameplay `[FICTION]` value is registered in `scenarioData.fixtures` with `id`, `semanticRole`, and `unit`.
+62. `scenarioData.estimates` contains presentation timing only.
+63. The seed, budget, clock cap, release deadline, Coffee duration, Standup duration, zero-token request buckets, and required counts all resolve to registered fixtures.
+64. The reference configuration passes from seed `2002`.
+65. The anti-pattern fails the minute-`110` behavioral deadline.
+66. `attemptResult.spentUsd` equals `budget - wallet` for both viable profiles.
+67. `title` and `objective` contain none of `concept.solutionVocabulary`; the mandatory assertion is:
 
 ```ts
 {
@@ -1073,10 +1415,13 @@ Real-browser click-through assertions:
 
 ## 13. Reference-bar justification
 
-The screen opens on a tactile request rather than an explanation. Its first red write creates something visible to protect, and the two interruption cards turn an invisible idle-time mechanism into a moving object. The cards expose a genuine calendar tradeoff without naming the cache answer: Coffee preserves the immediate request but carries a reducer-owned blocker forward, while Standup completes that unit immediately but consumes the long interval. Their durations, blocker badge, and live bar provide enough evidence for prediction instead of forcing a coin flip.
+The screen opens on a tactile request rather than an explanation. Its first red write creates something visible to protect, and the two interruption cards turn an invisible idle mechanism into a scheduling choice with concrete stakes. Coffee reaches the check after twenty minutes but carries a reducer-owned blocker forward. Standup clears the blocker immediately but consumes ninety minutes before the same request. Neither card reveals the wire outcome.
 
-Coffee produces the cheap blue read while visibly leaving work unresolved. The required later Standup clears that blocker and lets the same saved entry die, making the byte-identical request snap red. On the early-Standup branch, the completed blocker remains visible when the expensive row appears, so the level acknowledges the route’s genuine benefit even as it freezes on the avoidable request cost. The freeze occurs only after the actual `$0.2084` request can be compared with the `$0.0104` live-read alternative. Rewind returns directly to the consequential choice.
+The choice is not replay-dominant. Coffee finishes at the release deadline with `$0.2188494` spent. Standup finishes twenty minutes early with `$0.4168560` spent. Both benefits survive into reducer state, affect stars, and are reported by `UI_RESULT_SCREEN`. The three-star predicate respects the selected priority instead of forcing every player toward a single maximum or minimum.
 
-The final gate does not reward the pre-reveal guess. It inspects the actual ledger for one live read and one later expired write, then requires a post-evidence explanation action. Only after that action does the level state the rule and unlock the exact reference/anti-pattern schedules. Those comparisons remain informational and cannot retroactively punish the attempt.
+The follow-up reveal is immediate and legible: Coffee catches the live entry and turns the row blue; Standup reaches zero and turns the byte-identical row red. The explanation comes only after the actual row is visible. Prediction correctness remains non-punitive.
 
-Assumption/tradeoff: the level deliberately assigns `expectedOutputTok=0` `[FICTION]` to isolate TTL-driven read-versus-rewrite economics. The Standup is a free scripted `UnitInstance` whose `90 min` duration and blocker consequence are modeled in reducer state without inventing another priced request. `UI_TAPE_RENDERER` nevertheless retains canonical output-inclusive cost geometry.
+The level intentionally has no punitive freeze. Standup’s expensive request cannot be compared to Coffee as though the two actions were locally equivalent, because Standup has already completed real work and preserved twenty minutes of deadline slack. Treating that viable route as failure would make the apparent tradeoff fictitious. The post-attempt drift projection supplies the genuinely bad comparison—same expired-write cost, no blocker progress during the gap, completion at minute `180`—without mutating or punishing the completed attempt.
+
+Assumption/tradeoff: authored checks use zero fresh-input and output tokens to isolate TTL-driven read-versus-write economics. Those values, together with the seed, budget, clock cap, deadline, durations, and required counts, are registered as gameplay fixtures rather than presentation estimates.
+

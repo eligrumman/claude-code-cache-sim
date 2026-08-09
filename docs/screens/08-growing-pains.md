@@ -39,6 +39,7 @@ No route is therefore a universally dominant answer.
 - `GateDef`
 - `StatePredicate`
 - `CounterfactualDef`
+- `ScenarioFixtureDef`
 - `PRICE_REQUEST`
 - `RESOLVE_PREFIX`
 - `UI_PREFIX_STACK_VISUALIZER`
@@ -59,7 +60,7 @@ The explain-and-transfer phase uses the composition recipe in `OBJECT_MODEL.md`;
 
 ## 3. Cold-open / narrative
 
-`maxInstructionCards: 0`; `firstInteractiveBySec: 2` `[ESTIMATE]`. All beat timings below are `[ESTIMATE]`.
+`maxInstructionCards: 0`; `firstInteractiveBySec: 2` `[ESTIMATE]`. All beat timings below are presentation-only `[ESTIMATE]` values.
 
 | Time | Beat |
 |---:|---|
@@ -88,6 +89,7 @@ All requests use Sonnet (`C3`). The four-request batch resolves within one live 
    Trigger → after prediction commitment, the player independently chooses **Keep here** or **Send out**.  
    Actions → `ROUTE_UNIT { unitId: "followup-rename", contextKind }`; `RUN_UNIT { unitId: "followup-rename" }`; `REVEAL_PREDICTION { promptId: "p-followup-cost", correctOptionId: "main-costs-less" }`.  
    Mutations:
+
    - exactly one of `r-followup-main` or `r-followup-sub` appends as a `LedgerRow`;
    - scalar `wallet`, `attemptMetrics.spentUsd`, `attemptMetrics.requestCount`, `lastRequests`, the chosen `ExecutionContext`, and its `PREFIX_STACK` update;
    - the returned result enters the main conversation, leaving its next request with a fixed `56,000`-token cached history: `34,000 + 22,000` (`C29`).
@@ -99,6 +101,7 @@ All requests use Sonnet (`C3`). The four-request batch resolves within one live 
    Trigger → card: **“Read one package label. No release files are needed.”** The visible comparison shows a `56,000`-token live main prefix and a separate `26,237`-token cold spawn base, with no dollar labels or preferred styling.  
    Actions → `CREATE_CHECKPOINT { checkpointId: "cp-route-label-check", reason: "decision" }`; complete the prediction cycle for `p-label-cost`; then dispatch `ROUTE_UNIT { unitId: "package-label", contextKind }`, `RUN_UNIT { unitId: "package-label" }`, and `REVEAL_PREDICTION { promptId: "p-label-cost", correctOptionId: "main-costs-less" }`.  
    Mutations:
+
    - exactly one of `r-label-main` or `r-label-sub` appends;
    - the subagent alternative uses an isolated cold namespace with no `sharedPrefixPoolId`;
    - the later batch cannot reuse a cache written by `r-label-sub`.
@@ -108,7 +111,7 @@ All requests use Sonnet (`C3`). The four-request batch resolves within one live 
 
 5. **Expose the large independent batch — `ev-open-batch`.**  
    Trigger → four cards fan out: **“Audit auth imports,” “Check API callers,” “Review dependency licenses,”** and **“Scan package exports.”** A neutral bracket says **“Can run together.”**  
-   Actions → `SET_PREFIX_BLOCK_CONTENT` sets the batch-phase main `PB_HISTORY` to `600,000` tokens `[FICTION]`; `CREATE_CHECKPOINT { checkpointId: "cp-parallel-route", reason: "decision" }`; `OPEN_PREDICTION { promptId: "p-batch-cost" }`.  
+   Actions → `SET_PREFIX_BLOCK_CONTENT` sets the batch-phase main `PB_HISTORY` to `GP_BATCH_HISTORY_TOK`, the `[FICTION]` value registered by fixture `"gp-batch-history-tok"`; `CREATE_CHECKPOINT { checkpointId: "cp-parallel-route", reason: "decision" }`; `OPEN_PREDICTION { promptId: "p-batch-cost" }`.  
    Mutations → `UI_PREFIX_STACK_VISUALIZER` shows the enlarged main stack without price, good/bad styling, or a route recommendation. The four-card bracket remains unplaced.
 
 6. **Commit the batch prediction, then choose its route — `ev-route-batch`.**  
@@ -141,6 +144,7 @@ All requests use Sonnet (`C3`). The four-request batch resolves within one live 
    Preconditions → all four batch cards are routed to `SUBAGENT_CONTEXT`s and `p-batch-cost` is committed.  
    Actions → four `RUN_UNIT` actions; then `REVEAL_PREDICTION { promptId: "p-batch-cost", correctOptionId: "subagent-batch-costs-less" }`.  
    Mutations:
+
    - `r-audit-sub` writes the measured `26,237`-token identical spawn prefix at `CACHE_TIER_5M` (`C10`);
    - `r-callers-sub`, `r-licenses-sub`, and `r-exports-sub` each read that live `26,237`-token prefix (`C10`, `C12`);
    - four isolated `PREFIX_STACK` records and four `LedgerRow`s append;
@@ -182,15 +186,20 @@ All requests use Sonnet (`C3`). The four-request batch resolves within one live 
 Level-specific calibrated values:
 
 ```ts
-const GP_BUDGET_USD = 1.00;                 // [FICTION]
+const GP_SEED = 8_292;                       // [FICTION]
+const GP_BUDGET_USD = 1.00;                  // [FICTION]
+const GP_CLOCK_CAP_MIN = 5;                  // [FICTION]
+const GP_UNIT_HOURS = 1;                     // [FICTION]
 const GP_BATCH_HISTORY_TOK = 600_000;        // [FICTION]
 const GP_INDEPENDENT_OUT_TOK = 4_000;        // [FICTION]
+const GP_DEPENDENT_IN_TOK = 2_000;           // [FICTION]
+const GP_DEPENDENT_OUT_TOK = 4_000;          // [FICTION]
 const GP_TINY_IN_TOK = 500;                  // [FICTION]
 const GP_TINY_OUT_TOK = 500;                 // [FICTION]
 
 const GP_REFERENCE_USD = 0.53600205;         // derived in §6
-const GP_ALL_INLINE_USD = 1.1736;             // derived in §6
-const GP_ROUTE_DELTA_USD = 0.63759795;        // derived in §6
+const GP_ALL_INLINE_USD = 1.1736;            // derived in §6
+const GP_ROUTE_DELTA_USD = 0.63759795;       // derived in §6
 ```
 
 `GP_BATCH_HISTORY_TOK` is followed by the canonical `22,000`-token inline growth step from `C29`, producing the four all-inline batch history sizes priced in §6. Lowering the batch review/scan tasks to `GP_INDEPENDENT_OUT_TOK` keeps output present and fully priced while allowing routing to drive the batch decision.
@@ -199,14 +208,14 @@ The six fixture `UnitSeed` values are:
 
 | `id` | `kind` | `deps` | `workIn` | `outTok` | Notes |
 |---|---|---|---:|---:|---|
-| `followup-rename` | `TASK` | `[]` | `2,000` `[FICTION]` | `4,000` `[FICTION]` | Depends on pre-level conversation content; its report leaves main history at `56,000` tokens (`C29`). |
+| `followup-rename` | `TASK` | `[]` | `GP_DEPENDENT_IN_TOK` | `GP_DEPENDENT_OUT_TOK` | Depends on pre-level conversation content; its report leaves main history at `56,000` tokens (`C29`). |
 | `package-label` | `TASK` | `[]` | `GP_TINY_IN_TOK` | `GP_TINY_OUT_TOK` | Independent and deliberately too small to amortize a cold spawn write. |
 | `audit-imports` | `TASK` | `[]` | `6,000` (`C28`) | `GP_INDEPENDENT_OUT_TOK` | Independent batch leader. |
 | `check-callers` | `TASK` | `[]` | `6,000` (`C28`) | `GP_INDEPENDENT_OUT_TOK` | Independent. |
 | `review-licenses` | `TASK` | `[]` | `6,000` (`C28`) | `GP_INDEPENDENT_OUT_TOK` | Independent. |
 | `scan-exports` | `TASK` | `[]` | `6,000` (`C28`) | `GP_INDEPENDENT_OUT_TOK` | Independent. |
 
-All six use ticket `1`, Sonnet, and an authored one-hour unit duration `[FICTION]`; those hours do not set simulated request spacing. The four batch requests resolve inside the five-minute live shared-prefix window (`C1`, `C27`).
+All six use ticket `1`, Sonnet, and `hours: GP_UNIT_HOURS`. The one-hour authored unit value is registered by fixture `"gp-unit-hours"` and does not set simulated request spacing. The four batch requests resolve inside the five-minute live shared-prefix window (`C1`, `C27`).
 
 Context seeds instantiate:
 
@@ -265,9 +274,9 @@ const growingPains: LevelDef = {
   ],
 
   scope: "session",
-  seed: 8292, // [FICTION] deterministic identifier
+  seed: GP_SEED,
   budgetUsd: GP_BUDGET_USD,
-  clockCapMin: 5, // C1
+  clockCapMin: GP_CLOCK_CAP_MIN,
   cfgOverride: {
     devModel: "sonnet",
     who: "inline",
@@ -282,36 +291,92 @@ const growingPains: LevelDef = {
     prefixStacks: GP_PREFIX_STACK_SEEDS,
     workloads: GP_WORKLOAD_SEEDS,
     allowedCfg: { who: ["inline", "subagent"] },
-    estimates: [
-      { label: "budgetUsd", value: GP_BUDGET_USD, tag: "[FICTION]" },
+    fixtures: [
       {
-        label: "batch-phase main history",
+        id: "gp-seed",
+        label: "Level seed",
+        semanticRole: "Deterministic replay seed for the Growing Pains scenario",
+        value: GP_SEED,
+        unit: "count",
+        tag: "[FICTION]"
+      },
+      {
+        id: "gp-budget-usd",
+        label: "Attempt budget",
+        semanticRole: "Initial wallet and spend cap for the routing attempt",
+        value: GP_BUDGET_USD,
+        unit: "usd",
+        tag: "[FICTION]"
+      },
+      {
+        id: "gp-clock-cap-min",
+        label: "Level clock cap",
+        semanticRole:
+          "Maximum simulated minutes available to the Growing Pains attempt",
+        value: GP_CLOCK_CAP_MIN,
+        unit: "min",
+        tag: "[FICTION]"
+      },
+      {
+        id: "gp-unit-hours",
+        label: "Unit duration",
+        semanticRole: "UnitSeed hours assigned to each of the six routed tickets",
+        value: GP_UNIT_HOURS,
+        unit: "count",
+        tag: "[FICTION]"
+      },
+      {
+        id: "gp-batch-history-tok",
+        label: "Batch-phase main history",
+        semanticRole:
+          "Main-session PB_HISTORY tokens carried into the first large batch request",
         value: GP_BATCH_HISTORY_TOK,
+        unit: "tok",
         tag: "[FICTION]"
       },
       {
-        label: "batch review output per request",
+        id: "gp-batch-output-tok",
+        label: "Batch output per request",
+        semanticRole:
+          "Expected output tokens generated by each independent batch request",
         value: GP_INDEPENDENT_OUT_TOK,
+        unit: "tok",
         tag: "[FICTION]"
       },
       {
-        label: "dependent follow-up input",
-        value: 2000,
+        id: "gp-dependent-input-tok",
+        label: "Dependent follow-up input",
+        semanticRole:
+          "Fresh current-input tokens required by the dependent rename request",
+        value: GP_DEPENDENT_IN_TOK,
+        unit: "tok",
         tag: "[FICTION]"
       },
       {
-        label: "dependent follow-up output",
-        value: 4000,
+        id: "gp-dependent-output-tok",
+        label: "Dependent follow-up output",
+        semanticRole:
+          "Expected output tokens generated by the dependent rename request",
+        value: GP_DEPENDENT_OUT_TOK,
+        unit: "tok",
         tag: "[FICTION]"
       },
       {
-        label: "package-label input",
+        id: "gp-label-input-tok",
+        label: "Package-label input",
+        semanticRole:
+          "Fresh current-input tokens required by the tiny package-label request",
         value: GP_TINY_IN_TOK,
+        unit: "tok",
         tag: "[FICTION]"
       },
       {
-        label: "package-label output",
+        id: "gp-label-output-tok",
+        label: "Package-label output",
+        semanticRole:
+          "Expected output tokens generated by the tiny package-label request",
         value: GP_TINY_OUT_TOK,
+        unit: "tok",
         tag: "[FICTION]"
       }
     ]
@@ -616,6 +681,8 @@ const growingPains: LevelDef = {
 };
 ```
 
+`GP_SEED`, `GP_CLOCK_CAP_MIN`, and `GP_UNIT_HOURS` are independent calibrated scenario fixtures. In particular, `GP_CLOCK_CAP_MIN = 5` is not derived from or justified by the five-minute cache TTL in `C1`; the numerical equality is coincidental.
+
 The reference route vector is `[main, main, subagent, subagent, subagent, subagent]`: dependent follow-up in main, tiny independent label check in main, and the four large independent jobs in the shared subagent pool. `referenceCfg.who` is the four-card batch default; the first two routes are explicit player actions. `GP_ALL_INLINE_ROUTE_PATCH` is `[main, main, main, main, main, main]`.
 
 ## 6. Pricing walkthrough
@@ -628,18 +695,18 @@ This is the level’s sole authoritative request-price table:
 
 | Request | Route | Authoritative buckets | Exact USD |
 |---|---|---|---:|
-| `r-followup-main` | main | `34,000 read` (`C29`) + `2,000 input` `[FICTION]` + `4,000 output` `[FICTION]` | `$0.0762` |
-| `r-followup-sub` | isolated cold subagent | `26,237 write` (`C10`) + `36,000 input` (`34,000` required context plus `2,000` current) + `4,000 output` | `$0.26638875` |
-| `r-label-main` | main | `56,000 read` (`34,000 + C29 growth`) + `500 input` `[FICTION]` + `500 output` `[FICTION]` | `$0.0258` |
-| `r-label-sub` | isolated cold subagent | `26,237 write` (`C10`) + `500 input` `[FICTION]` + `500 output` `[FICTION]` | `$0.10738875` |
-| `r-audit-sub` | shared-pool cold subagent | `26,237 write` (`C10`) + `6,000 input` (`C28`) + `4,000 output` `[FICTION]` | `$0.17638875` |
-| `r-callers-sub` | shared-pool warm subagent | `26,237 read` (`C10`) + `6,000 input` (`C28`) + `4,000 output` `[FICTION]` | `$0.0858711` |
+| `r-followup-main` | main | `34,000 read` (`C29`) + `GP_DEPENDENT_IN_TOK` input (fixture `"gp-dependent-input-tok"`) + `GP_DEPENDENT_OUT_TOK` output (fixture `"gp-dependent-output-tok"`) | `$0.0762` |
+| `r-followup-sub` | isolated cold subagent | `26,237 write` (`C10`) + `36,000 input` (`34,000` required context plus `GP_DEPENDENT_IN_TOK` current) + `GP_DEPENDENT_OUT_TOK` output | `$0.26638875` |
+| `r-label-main` | main | `56,000 read` (`34,000 + C29 growth`) + `GP_TINY_IN_TOK` input (fixture `"gp-label-input-tok"`) + `GP_TINY_OUT_TOK` output (fixture `"gp-label-output-tok"`) | `$0.0258` |
+| `r-label-sub` | isolated cold subagent | `26,237 write` (`C10`) + `GP_TINY_IN_TOK` input + `GP_TINY_OUT_TOK` output | `$0.10738875` |
+| `r-audit-sub` | shared-pool cold subagent | `26,237 write` (`C10`) + `6,000 input` (`C28`) + `GP_INDEPENDENT_OUT_TOK` output (fixture `"gp-batch-output-tok"`) | `$0.17638875` |
+| `r-callers-sub` | shared-pool warm subagent | `26,237 read` (`C10`) + `6,000 input` (`C28`) + `GP_INDEPENDENT_OUT_TOK` output | `$0.0858711` |
 | `r-licenses-sub` | shared-pool warm subagent | same authoritative buckets as `r-callers-sub` | `$0.0858711` |
 | `r-exports-sub` | shared-pool warm subagent | same authoritative buckets as `r-callers-sub` | `$0.0858711` |
-| `r-audit-main` | main | `600,000 read` `[FICTION]` + `6,000 input` (`C28`) + `4,000 output` `[FICTION]` | `$0.2580` |
-| `r-callers-main` | main | `622,000 read` (`600,000 + C29`) + `6,000 input` (`C28`) + `4,000 output` `[FICTION]` | `$0.2646` |
-| `r-licenses-main` | main | `644,000 read` (`600,000 + 2×C29`) + `6,000 input` (`C28`) + `4,000 output` `[FICTION]` | `$0.2712` |
-| `r-exports-main` | main | `666,000 read` (`600,000 + 3×C29`) + `6,000 input` (`C28`) + `4,000 output` `[FICTION]` | `$0.2778` |
+| `r-audit-main` | main | `GP_BATCH_HISTORY_TOK` read (fixture `"gp-batch-history-tok"`) + `6,000 input` (`C28`) + `GP_INDEPENDENT_OUT_TOK` output | `$0.2580` |
+| `r-callers-main` | main | `622,000 read` (`GP_BATCH_HISTORY_TOK + C29`) + `6,000 input` (`C28`) + `GP_INDEPENDENT_OUT_TOK` output | `$0.2646` |
+| `r-licenses-main` | main | `644,000 read` (`GP_BATCH_HISTORY_TOK + 2×C29`) + `6,000 input` (`C28`) + `GP_INDEPENDENT_OUT_TOK` output | `$0.2712` |
+| `r-exports-main` | main | `666,000 read` (`GP_BATCH_HISTORY_TOK + 3×C29`) + `6,000 input` (`C28`) + `GP_INDEPENDENT_OUT_TOK` output | `$0.2778` |
 
 The tiny independent ticket supplies the required counter-pressure:
 
@@ -712,7 +779,7 @@ GP_ROUTE_SAVINGS_RATIO
   = 0.5432838701431493
 ```
 
-The mixed route reduces the six-ticket bill by `54.33%`, exceeding the required `20%` effect. `GP_ROUTE_DELTA_USD` is arithmetic derived from the priced rows; it is not a separate `[FICTION]` estimate. Its underlying `600,000`-token history, `500`-token tiny payload buckets, and `4,000`-token batch outputs remain explicitly tagged `[FICTION]`.
+The mixed route reduces the six-ticket bill by `54.33%`, exceeding the required `20%` effect. `GP_ROUTE_DELTA_USD` is arithmetic derived from the priced rows; it is not a separate fiction fixture. Its underlying `600,000`-token history, `500`-token tiny payload buckets, and `4,000`-token batch outputs are registered once in `scenarioData.fixtures`.
 
 With `GP_BUDGET_USD`, the reference leaves `$0.46399795`; the all-inline comparison exceeds the budget by `$0.1736`. Budget is presentation evidence only and is not part of the pass gate.
 
@@ -886,7 +953,7 @@ Result copy:
 | `t-route-rule` | After the correct post-evidence explanation | **“Judge required context, carried history, and cold setup together.”** |
 | `t-reference` | After the all-inline counterfactual reveals | **“One bounded write and three reads replaced four growing main-history reads.”** |
 
-`t-inline-cause` has `priority: "cause"`, uses `aria-live="assertive"`, and remains visible while frozen. Other toasts are polite, use the default `3,500ms` duration `[ESTIMATE]`, and deduplicate per attempt.
+`t-inline-cause` has `priority: "cause"`, uses `aria-live="assertive"`, and remains visible while frozen. Other toasts are polite, use the default `3,500ms` duration `[ESTIMATE]`, and deduplicate per attempt. The duration is presentation-only and cannot affect reducer state, pass, stars, spend, or request timing.
 
 ## 12. QA gate
 
@@ -929,7 +996,10 @@ Real-browser click-through must establish:
 35. The player can win with only documented prediction, route, rewind, explanation, and completion controls.
 36. At `320px` CSS width, the active route target, decisive tape row, cause toast, comparison quote, and rewind control do not overlap.
 37. Screen-reader order is ticket → prediction → route controls → revealed row → causal caption; the failure announcement is assertive.
-38. No stale assertion request, superseded price, stale `53.24%` value, symbolic `GP_*` predicate, illegal predicate op, unreachable price branch, uppercase pattern alias, or legacy level/concept ID appears.
+38. `scenarioData.fixtures` contains distinct `ScenarioFixtureDef`s for seed `8292`, budget `$1.00`, clock cap `5min`, unit duration `1`, batch history, request outputs, and tiny/dependent payload buckets; every fixture has an `id`, `semanticRole`, legal `unit`, and `[FICTION]` tag.
+39. `scenarioData.estimates` contains no gameplay quantity; presentation-only timing estimates do not affect pass, stars, spend, deadlines, request spacing, or reducer state.
+40. `GP_CLOCK_CAP_MIN` resolves through fixture `"gp-clock-cap-min"` and does not cite or borrow provenance from the semantically unrelated five-minute cache TTL.
+41. No stale assertion request, superseded price, stale `53.24%` value, symbolic `GP_*` predicate, illegal predicate op, unreachable price branch, uppercase pattern alias, or legacy level/concept ID appears.
 
 ## 13. Reference-bar justification
 
@@ -939,4 +1009,5 @@ Only then does the main stack enlarge to `600,000` tokens. Choosing main for the
 
 The post-attempt overlay confirms a material result—`54.33%` lower spend—without becoming a pre-play answer key. The informational counterfactual cannot freeze or mutate the completed attempt. This preserves the predict, act, reveal, rewind, explain, and transfer rhythm of the reference experiences.
 
-Significant calibration tradeoff: the batch jobs use `4,000 outTok` `[FICTION]` instead of the `44,000` development-task output fixture in `C28`; the tiny label job uses `500 inputTok` and `500 outTok` `[FICTION]`; and the pre-batch main history is `600,000` tokens `[FICTION]`. These choices create two reachable sides of the routing tradeoff while retaining the canonical `6,000` batch input (`C28`), measured `26,237` spawn prefix (`C10`), `22,000` inline growth (`C29`), and full output-cost contribution required by `C1`, `C3`, and `UI_TAPE_RENDERER`.
+Significant calibration tradeoff: the batch jobs use the `4,000 outTok` fixture `"gp-batch-output-tok"` instead of the `44,000` development-task output fixture in `C28`; the tiny label job uses the `500 inputTok` and `500 outTok` fixtures `"gp-label-input-tok"` and `"gp-label-output-tok"`; and the pre-batch main history uses the `600,000`-token fixture `"gp-batch-history-tok"`. These choices create two reachable sides of the routing tradeoff while retaining the canonical `6,000` batch input (`C28`), measured `26,237` spawn prefix (`C10`), `22,000` inline growth (`C29`), and full output-cost contribution required by `C1`, `C3`, and `UI_TAPE_RENDERER`. The seed, clock cap, and unit hours are separately registered fiction fixtures; none borrows provenance merely because it resembles a measured constant.
+

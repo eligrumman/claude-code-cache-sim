@@ -5,14 +5,14 @@
 - `id`: `"01-red-or-blue"`
 - `title`: `Bob’s Login Bug`
 - `tier`: `1`
-- `objective`: “Finish Bob’s login, logout, and test work without draining his $0.30 wallet.”
+- `objective`: “Finish Bob’s login, logout, and test work, then explain the third bill.”
 - ONE concept: Reusing an unchanged context converts the saved prefix from `RATE_CACHE_WRITE_1H` to `RATE_CACHE_READ`.
 - Prerequisite concepts: none.
 - `concept.id`: `"write-vs-read"`
 - `conceptScope`: `{ kind: "single", reusedConceptIds: [] }`
 - `concept.privateDesignerSummary`: Reusing the same `MAIN_SESSION_CONTEXT` makes its saved prefix a read on later requests.
 - `concept.postRevealRule`: “The expensive part was the saved context, not the new sentence.”
-- `concept.solutionVocabulary`: `["red", "blue", "write", "read", "cache", "cached", "context", "reuse", "reusing", "same chat", "clean chat"]`
+- `concept.solutionVocabulary`: `["red", "blue", "write", "read", "cache", "cached", "context", "reuse", "reusing", "same chat", "clean chat", "isolated thread"]`
 
 Neither `title` nor `objective` contains registered solution vocabulary. Mechanic terms appear only after the player produces the corresponding evidence.
 
@@ -32,72 +32,74 @@ Neither `title` nor `objective` contains registered solution vocabulary. Mechani
 - `Wallet`
 - `Budget`
 - `Clock`
-- `Checkpoint`
 - `AttemptMetrics`
 - `AttemptResult`
 - `StatePredicate`
-- `FailureRuleDef`
 - `GateDef`
 - `StarDef`
 - `RESOLVE_PREFIX`
 - `PRICE_REQUEST`
 - `ReducerState`
+- `UnitSeed`
+- `ContextSeed`
+- `PrefixStackSeed`
+- `ScenarioFixtureDef`
 - `UI_TAPE_RENDERER`
 - `UI_MAIN_CACHE_PANEL`
 - `UI_HOVER_PRICE_CALCULATOR`
 - `UI_TOAST_SYSTEM`
 - `UI_PREDICTION_PROMPT`
-- `UI_REWIND_CONTROL`
 - `UI_COUNTERFACTUAL_OVERLAY`
 - `UI_RESULT_SCREEN`
 - `"predict-before-reveal"`
-- `"fail-freeze-rewind"`
 - `"just-in-time-toast"`
 - `"counterfactual-after-attempt"`
 
 ## 3. Cold-open / narrative
 
-`maxInstructionCards: 0`; first interaction appears by `1s` `[ESTIMATE]`.
+`maxInstructionCards: 0`; first interaction appears within `1s` `[ESTIMATE]`.
 
 | Time | Beat |
 |---:|---|
-| `0.0s` | Show Bob’s task card, an empty `UI_TAPE_RENDERER`, and scalar `wallet` at **$0.30** `[FICTION]`. The cache panel and its terminology remain hidden. |
+| `0s` | Show Bob’s task card, an empty `UI_TAPE_RENDERER`, and scalar `wallet` at **$0.30** from fixture `l1-budget`. Cache terminology remains hidden. |
 | `0.3s` `[ESTIMATE]` | Bob: “Login is broken. Ask Claude to fix it?” |
 | `0.8s` `[ESTIMATE]` | Primary control appears: **Send**. No rate table, comparison, color legend, or explanation is visible. |
 | First click | `l1-r1` settles as a red-dominant row; wallet becomes **$0.089736**. |
-| After settle | `UI_MAIN_CACHE_PANEL` appears with the evidence. Toast: “First request: Claude saved **34,738 tokens** of context. **WRITE · $0.210264**.” |
+| After settle | `UI_MAIN_CACHE_PANEL` appears. Toast: “First request: Claude saved **34,738 tokens** of context. **WRITE · $0.210264**.” |
 | `+1.2s` `[ESTIMATE]` | Bob replaces the task text with: “Add the matching logout route.” |
 | Second click | `l1-r2` settles as a blue-dominant row; wallet becomes **$0.0774726**. |
 | After settle | Toast: “Same saved context. **READ · $0.0122634**.” |
-| `+0.8s` `[ESTIMATE]` | A related third task appears: “Add a test for both routes.” Bob asks whether to keep it in this chat or give it a clean thread. |
+| `+0.8s` `[ESTIMATE]` | A related third task appears: “Add a test for both routes.” Bob asks whether its review trail should stay with the implementation or remain isolated. |
 
-The third-task choice is an ordinary workspace decision:
+The third-task decision has two completable routes and two reducer-visible benefits:
 
-- **Keep working here** — keeps the related login, logout, and test work together.
-- **Open a clean chat** — gives the test a tidier isolated thread but leaves the prior saved context behind.
+- **Keep working here** — the third request uses `l1-main`; its live prefix lowers `attemptMetrics.spentUsd`.
+- **Open an isolated test thread** — the third request uses the separate `l1-clean` cache namespace. Completing that branch appends `l1-isolated-test-completed` to `completedEventIds`, which is an alternative route to `L1_STAR2`.
 
-Both routes produce the correct test. This first-level choice is the explicit taught one-shot exception documented in §13; no score, gate, or state predicate pretends that the qualitative organization benefit is a modeled gameplay reward.
+Both routes produce the requested test, permit the causal explanation, satisfy `l1Pass(st)`, and can earn three stars. Same-chat receives the economic benefit; isolated-thread receives the star-bearing separation benefit. Neither route dispatches `FREEZE_FAILURE`.
 
 Vocabulary timing:
 
 - “token” and “write” first appear after `l1-r1`.
 - “read” first appears after `l1-r2`.
+- Cache-namespace evidence may appear only after `l1-r2`.
 - TTL terminology remains hidden; expiry is not this level’s concept.
 
 ## 4. Exact event sequence
 
-The reference route keeps the same `MAIN_SESSION_CONTEXT`. Its cacheable prefix is `MAIN_PREFIX_HEY = 34,738` tokens (`C34`). All cacheable `PrefixBlock.identityHash` values remain byte-identical; only the fresh current sentence changes. Current-sentence and output fixtures are `[FICTION]`.
+The economical route keeps `l1-main`. Its cacheable prefix is `MAIN_PREFIX_HEY = 34,738` tokens (`C34`). All cacheable `PrefixBlock.identityHash` values remain byte-identical; only the fresh current sentence changes. The isolated route uses the independently seeded `l1-clean` namespace with the same base content but no live entry.
 
 1. **Enter the level**
    - Event: route opens `"01-red-or-blue"`.
    - Action: `ENTER_LEVEL { levelId: "01-red-or-blue" }`.
-   - Mutates: `ReducerState`, scalar `wallet`, scalar `budget`, clock fields, `MAIN_SESSION_CONTEXT`, `PREFIX_STACK`, `attemptMetrics`, and empty ledger/tape state.
-   - Numbers: `wallet=$0.30` `[FICTION]`; `budget=$0.30` `[FICTION]`; `clockMin=0`; reusable prefix `34,738 tok` (`C34`).
+   - Mutates: `ReducerState`, scalar `wallet`, scalar `budget`, clock fields, `units`, the two `MAIN_SESSION_CONTEXT` objects, both `PREFIX_STACK` entries, `attemptMetrics`, and empty ledger/tape state.
+   - Numbers: `wallet=$0.30`, `budget=$0.30`, and `clockCapMin=60` come from fixtures `l1-budget` and `l1-clock-cap`; reusable prefix `34,738 tok` is `C34`.
    - Copy: “Login is broken. Ask Claude to fix it?”
 
 2. **First send**
    - Event: player clicks **Send** for “Fix the login route.”
    - Action: `SEND_REQUEST { request: l1-r1 }`.
+   - Request context: `l1-main`.
    - Mutates: `CacheEntry`, `UI_MAIN_CACHE_PANEL`, `ledger`, `lastRequests`, `wallet`, `attemptMetrics.spentUsd`, `attemptMetrics.requestCount`, and the `UI_TAPE_RENDERER` payload.
    - Resolution: `readTok=0`, `inputTok=12`, `writeTok=34,738`, `outTok=120`, `cold=true`.
    - Price:
@@ -107,12 +109,13 @@ The reference route keeps the same `MAIN_SESSION_CONTEXT`. Its cacheable prefix 
      - total: `$0.210264`
    - Wallet: `$0.3000000 → $0.0897360`.
    - Attempt metrics: `spentUsd=$0.210264`; `requestCount=1`.
-   - Citations: `C1`, `C3`, `C34`; `12 input tok` and `120 outTok` `[FICTION]`.
+   - Citations: `C1`, `C3`, `C34`; fresh input and output use fixtures `l1-r1-fresh-input` and `l1-output-per-request`.
    - Render: red write, red fresh-input, and violet output segments. No claim about later requests appears.
 
 3. **Second send**
    - Event: player clicks **Send** for “Add the matching logout route.”
    - Action: `SEND_REQUEST { request: l1-r2 }`.
+   - Request context: `l1-main`.
    - Mutates: the live `CacheEntry`, its touch/expiry values, `ledger`, `lastRequests`, `wallet`, `attemptMetrics`, and tape.
    - Resolution: `readTok=34,738`, `inputTok=14`, `writeTok=0`, `outTok=120`, `cold=false`.
    - Price:
@@ -122,43 +125,39 @@ The reference route keeps the same `MAIN_SESSION_CONTEXT`. Its cacheable prefix 
      - total: `$0.0122634`
    - Wallet: `$0.0897360 → $0.0774726`.
    - Attempt metrics: `spentUsd=$0.2225274`; `requestCount=2`.
-   - Citations: `C1`, `C3`, `C12`, `C34`; `14 input tok` and `120 outTok` `[FICTION]`.
+   - Citations: `C1`, `C3`, `C12`, `C34`; fresh input and output use fixtures `l1-r2-fresh-input` and `l1-output-per-request`.
    - Render: blue-dominant row with visible red and violet contributions. Only now may copy say that saved context was read.
 
-4. **Create the route checkpoint**
-   - Event: the related test task and two thread choices appear.
-   - Action: `CREATE_CHECKPOINT { checkpointId: "l1-before-third-route", reason: "decision" }`.
-   - Mutates: `checkpoints` only.
-   - State remains: two ledger rows, live cache, `wallet=$0.0774726`.
+4. **Choose the third task’s thread**
+   - Availability: only after `l1-r2` evidence is visible.
+   - Same-chat event: player clicks **Keep working here**.
+   - Same-chat action: `BEGIN_TRANSFER { challengeId: "l1-third-same-chat" }`.
+   - Same-chat event completion appends `"l1-route-same-chat-chosen"` to `completedEventIds`.
+   - Isolated event: player clicks **Open an isolated test thread**.
+   - Isolated action: `BEGIN_TRANSFER { challengeId: "l1-third-isolated" }`.
+   - Isolated event completion appends `"l1-route-isolated-chosen"` to `completedEventIds`.
+   - Each accepted choice records exactly one route marker. Neither action creates a `LedgerRow`, changes `wallet`, changes `attemptMetrics.spentUsd`, or invalidates the other context’s cache.
 
-5. **Choose where the related test goes**
-   - Reference event: player clicks **Keep working here**.
-   - Reference action: `BEGIN_TRANSFER { challengeId: "l1-third-same-chat" }`.
-   - Reference mutation: records the route choice without altering cache, ledger, or wallet.
-   - Clean-chat event: player clicks **Open a clean chat**.
-   - Clean-chat action: `DISCARD_CONTEXT { contextId: "l1-main" }`.
-   - Clean-chat mutation: invalidates only the named cache namespace; `UI_MAIN_CACHE_PANEL` shows its cleared state.
-   - Neither action produces a `LedgerRow`, changes `wallet`, or changes `attemptMetrics.spentUsd`.
-
-6. **Open the route-specific prediction**
-   - Event: after either route choice, player clicks **Predict, then send**.
+5. **Open the route-specific prediction**
+   - Event: after either route marker is recorded, player clicks **Predict, then send**.
    - Action: `OPEN_PREDICTION { promptId: "l1-third-color-cost" }`.
    - Mutates: `phase="predict"` and `prediction`.
    - The prompt repeats the chosen route but shows no correctness treatment or numeric result.
 
-7. **Commit the prediction**
+6. **Commit the prediction**
    - Event: player selects an option and clicks **Lock prediction**.
    - Actions, in order:
      - `SELECT_PREDICTION { promptId: "l1-third-color-cost", optionId }`
      - `COMMIT_PREDICTION { promptId: "l1-third-color-cost" }`
    - Mutates: `prediction.optionId`, then `prediction.committed=true`.
-   - No request, cache touch, ledger row, wallet mutation, score, gate, or star change occurs.
+   - No request, cache touch, ledger row, wallet mutation, score, gate, star, or route-benefit change occurs.
    - The third `SEND_REQUEST` remains disabled until commitment.
 
-8. **Reference third send — aha frame**
-   - Preconditions: route is `l1-third-same-chat`; prediction is committed.
+7. **Same-chat third send**
+   - Preconditions: `completedEventIds` includes `"l1-route-same-chat-chosen"` and the prediction is committed.
    - Event: player clicks **Send and find out**.
    - Action: `SEND_REQUEST { request: l1-r3 }`.
+   - Request context: `l1-main`.
    - Mutates: the live `CacheEntry`, `ledger`, `lastRequests`, `wallet`, `attemptMetrics`, and tape.
    - Resolution: `readTok=34,738`, `inputTok=13`, `writeTok=0`, `outTok=120`, `cold=false`.
    - Price:
@@ -168,91 +167,70 @@ The reference route keeps the same `MAIN_SESSION_CONTEXT`. Its cacheable prefix 
      - total: `$0.0122604`
    - Wallet: `$0.0774726 → $0.0652122`.
    - Attempt metrics: `spentUsd=$0.2347878`; `requestCount=3`.
-   - Citations: `C1`, `C3`, `C12`, `C34`; `13 input tok` and `120 outTok` `[FICTION]`.
-   - Render: the third differently worded request settles blue-dominant beside the first two rows.
+   - Citations: `C1`, `C3`, `C12`, `C34`; fresh input and output use fixtures `l1-r3-fresh-input` and `l1-output-per-request`.
+   - Event completion appends `"l1-third-same-chat-settled"` to `completedEventIds`.
+   - Consequential benefit: the route retains the lower reducer-owned spend.
 
-9. **Reveal the reference prediction**
+8. **Reveal the same-chat prediction**
    - Event: `l1-r3` is fully priced and rendered.
    - Action: `REVEAL_PREDICTION { promptId: "l1-third-color-cost", correctOptionId: "blue-pennies" }`.
-   - Mutates: `prediction.correctOptionId`, `prediction.revealed=true`, `phase="reveal"`, and `completedEventIds`.
+   - Mutates: prediction evidence, `phase="reveal"`, and `completedEventIds`.
+   - Event ID: `"l1-reveal-third-same-chat"`.
    - Copy: “The sentence was new. The **34,738-token context** was already saved.”
-   - This is evidence event `l1-reveal-third-reference`.
 
-10. **Post-evidence explanation choice**
-    - Event: after `l1-reveal-third-reference`, the player answers: “Why was this request cheap even though the sentence was new?”
+9. **Isolated-thread third send**
+   - Preconditions: `completedEventIds` includes `"l1-route-isolated-chosen"` and the prediction is committed.
+   - Event: player clicks **Send and find out**.
+   - Action: `SEND_REQUEST { request: l1-r3-clean }`.
+   - Request context: `l1-clean`.
+   - Mutates: a new `CacheEntry` in `l1-clean`, `ledger`, `lastRequests`, `wallet`, `attemptMetrics`, and tape. The live `l1-main` entry remains intact.
+   - Resolution: `readTok=0`, `inputTok=13`, `writeTok=34,738`, `outTok=120`, `cold=true`.
+   - Price:
+     - write: `$0.208428`
+     - input: `$0.000039`
+     - output: `$0.001800`
+     - total: `$0.210267`
+   - Wallet: `$0.0774726 → -$0.1327944`.
+   - Attempt metrics: `spentUsd=$0.4327944`; `requestCount=3`.
+   - Citations: `C1`, `C3`, `C34`; fresh input and output use fixtures `l1-r3-fresh-input` and `l1-output-per-request`.
+   - Event completion atomically appends both `"l1-third-isolated-settled"` and `"l1-isolated-test-completed"` to `completedEventIds`.
+   - Consequential benefit: `"l1-isolated-test-completed"` is the reducer-visible alternative route in `L1_STAR2`.
+   - No failure freezes. A negative scalar wallet is permitted by `Wallet` and is not the behavioral gate.
+
+10. **Reveal the isolated-thread prediction**
+    - Event: `l1-r3-clean` is fully priced and rendered.
+    - Action: `REVEAL_PREDICTION { promptId: "l1-third-color-cost", correctOptionId: "red-much-more" }`.
+    - Mutates prediction evidence, `phase="reveal"`, and `completedEventIds`.
+    - Event ID: `"l1-reveal-third-isolated"`.
+    - Copy: “The isolated thread got its own work trail—and had to save its own **34,738-token context**.”
+    - Prediction correctness has no effect on route completion or rewards.
+
+11. **Post-evidence explanation choice**
+    - Availability: after either `"l1-reveal-third-same-chat"` or `"l1-reveal-third-isolated"`.
+    - Prompt: “Why did the two thread choices produce different bills?”
     - Correct action: `ACK_EXPLANATION { explanationId: "l1-context-not-sentence" }`.
-    - Other choices dispatch `ACK_EXPLANATION` with their own explanation IDs and return focus to the evidence; they do not spend money, freeze, alter the prediction, or complete the gate.
-    - Correct copy: “It read the saved context; only the task sentence was new.”
+    - Other choices dispatch `ACK_EXPLANATION` with their own IDs and return focus to the evidence. They do not spend money, freeze, alter route rewards, or complete the gate.
+    - Correct copy: “The sentence stayed small; the bill changed because one thread could read saved context and the other had to write its own.”
     - Mutates: `acknowledgedExplanationIds` and `phase`.
     - This post-evidence action, not the prediction, supplies the one-star gate evidence.
 
-11. **Complete the reference attempt**
-    - Event ID: `l1-complete-reference`.
-    - Preconditions: three requests completed and `l1-context-not-sentence` was acknowledged after `l1-reveal-third-reference`.
+12. **Complete either attempt**
+    - Event ID: `"l1-complete-attempt"`.
+    - Preconditions: three requests completed, one route marker and its matching reveal are complete, and `"l1-context-not-sentence"` was acknowledged after that reveal.
     - Action: `COMPLETE_ATTEMPT`.
     - Mutates: gate result, stars, `attemptResult`, `phase="result"`, and `UI_RESULT_SCREEN`.
-    - Numbers: three ledger rows; `attemptResult.spentUsd=$0.2347878`; `wallet=$0.0652122`.
+    - Same-chat result: `attemptResult.spentUsd=$0.2347878`; `wallet=$0.0652122`.
+    - Isolated result: `attemptResult.spentUsd=$0.4327944`; `wallet=-$0.1327944`.
+    - Both results pass and are three-star eligible.
 
-12. **Clean-chat third send**
-    - Preconditions: player chose **Open a clean chat** and committed any prediction.
-    - Event: player clicks **Send and find out**.
-    - Action: `SEND_REQUEST { request: l1-r3-clean }`.
-    - Mutates: a new `CacheEntry`, `ledger`, `lastRequests`, `wallet`, `attemptMetrics`, and tape.
-    - Resolution: `readTok=0`, `inputTok=13`, `writeTok=34,738`, `outTok=120`, `cold=true`.
-    - Price:
-      - write: `$0.208428`
-      - input: `$0.000039`
-      - output: `$0.001800`
-      - total: `$0.210267`
-    - Wallet: `$0.0774726 → -$0.1327944`.
-    - Attempt metrics: `spentUsd=$0.4327944`; `requestCount=3`.
-    - Citations: `C1`, `C3`, `C34`; `13 input tok` and `120 outTok` `[FICTION]`.
-    - Render: event `l1-third-clean-settled` leaves the actual third row red-dominant while the earlier blue row remains visible.
-
-13. **Reveal the clean-chat prediction**
-    - Event: `l1-r3-clean` is fully priced and rendered.
-    - Action: `REVEAL_PREDICTION { promptId: "l1-third-color-cost", correctOptionId: "red-much-more" }`.
-    - Mutates prediction evidence only.
-    - Prediction correctness has no effect on failure; the costly clean-chat request is the cause.
-
-14. **Freeze the economically true failure**
-    - Decisive actual-attempt event: `l1-third-clean-settled`.
-    - Actual request: `$0.210267`.
-    - Valid same-chat alternative: `$0.0122604`.
-    - Visible excess: `$0.1980066`; the clean-chat request costs about `17.15×` the same-chat request.
-    - The freeze frame presents both prices before dispatch.
-    - Action:
-
-```ts
-FREEZE_FAILURE {
-  failure: {
-    failureId: "l1-clean-chat-rewrite",
-    causeCode: "CONTEXT_DISCARDED",
-    message:
-      "The clean chat left the saved context behind, so 34,738 tokens were written again.",
-    checkpointId: "l1-before-third-route"
-  }
-}
-```
-
-   - Mutates: `clockFrozen=true` and `frozenFailure`; blocks economic actions.
-   - Highlights: cleared `UI_MAIN_CACHE_PANEL`, red `l1-r3-clean`, blue `l1-r2`, and `wallet=-$0.1327944`.
-   - This is an actual-attempt freeze. No counterfactual or reference-reveal action dispatches `FREEZE_FAILURE`.
-
-15. **Rewind**
-    - Event: player clicks **Choose the thread again**.
-    - Action: `REWIND_TO_CHECKPOINT { checkpointId: "l1-before-third-route" }`.
-    - Mutates: deterministic replay restores the live cache, two-row ledger, `wallet=$0.0774726`, `attemptMetrics.spentUsd=$0.2225274`, unchosen route, and no committed prediction.
-    - The introduction and first two sends are not replayed; no duplicate ledger rows are created.
-
-16. **Optional post-attempt comparison**
-    - Availability: only after a passing attempt.
+13. **Optional post-attempt comparison**
+    - Availability: only after `"l1-complete-attempt"`.
     - Actions:
-      - `REQUEST_COUNTERFACTUAL { comparisonId: "l1-clean-chat-comparison" }`
-      - `REVEAL_COUNTERFACTUAL { comparisonId: "l1-clean-chat-comparison" }`
+      - `REQUEST_COUNTERFACTUAL { comparisonId: "l1-thread-choice-comparison" }`
+      - `REVEAL_COUNTERFACTUAL { comparisonId: "l1-thread-choice-comparison" }`
     - `UI_COUNTERFACTUAL_OVERLAY` pairs `l1-r3` with `l1-r3-clean`.
-    - It shows `$0.0122604` versus `$0.210267` and the `$0.1980066` delta without mutating the completed attempt.
-    - Neither action may dispatch `FREEZE_FAILURE`.
+    - It shows `$0.0122604` versus `$0.210267` and the `$0.1980066` delta, alongside the isolated route’s `"l1-isolated-test-completed"` reward.
+    - Neither action mutates the completed attempt or dispatches `FREEZE_FAILURE`.
 
 ## 5. Level data
 
@@ -262,7 +240,7 @@ const LEVEL_01_RED_OR_BLUE: LevelDef = {
   tier: 1,
   title: "Bob’s Login Bug",
   objective:
-    "Finish Bob’s login, logout, and test work without draining his $0.30 wallet.",
+    "Finish Bob’s login, logout, and test work, then explain the third bill.",
 
   concept: {
     id: "write-vs-read",
@@ -281,7 +259,8 @@ const LEVEL_01_RED_OR_BLUE: LevelDef = {
       "reuse",
       "reusing",
       "same chat",
-      "clean chat"
+      "clean chat",
+      "isolated thread"
     ]
   },
   conceptScope: {
@@ -324,9 +303,165 @@ const LEVEL_01_RED_OR_BLUE: LevelDef = {
 
   scenario: "l1-onboarding",
   scenarioData: {
-    units: ["fix-login", "add-logout", "test-routes"],
-    contexts: ["l1-main"],
-    prefixStacks: ["l1-main-prefix-34738"],
+    units: [
+      {
+        id: "fix-login",
+        kind: "DEBUG",
+        ticket: 1,
+        deps: [],
+        hours: 0,
+        outTok: 120,
+        workIn: 12,
+        cause: null,
+        scripted: true,
+        label: "Fix login"
+      },
+      {
+        id: "add-logout",
+        kind: "DEV",
+        ticket: 1,
+        deps: ["fix-login"],
+        hours: 0,
+        outTok: 120,
+        workIn: 14,
+        cause: null,
+        scripted: true,
+        label: "Add logout"
+      },
+      {
+        id: "test-routes",
+        kind: "WRITE_TESTS",
+        ticket: 1,
+        deps: ["fix-login", "add-logout"],
+        hours: 0,
+        outTok: 120,
+        workIn: 13,
+        cause: null,
+        scripted: true,
+        label: "Test both routes"
+      }
+    ] satisfies UnitSeed[],
+
+    contexts: [
+      {
+        kind: "main",
+        id: "l1-main",
+        sessionId: "l1-bob-implementation",
+        cacheNamespace: "l1-main-ns",
+        initialPrefixStackId: "l1-main-prefix"
+      },
+      {
+        kind: "main",
+        id: "l1-clean",
+        sessionId: "l1-bob-isolated-test",
+        cacheNamespace: "l1-clean-ns",
+        initialPrefixStackId: "l1-clean-prefix"
+      }
+    ] satisfies ContextSeed[],
+
+    prefixStacks: [
+      {
+        id: "l1-main-prefix",
+        contextId: "l1-main",
+        blocks: [
+          {
+            id: "l1-main-system",
+            kind: "system",
+            label: "System",
+            tokenCount: 2750,
+            identityHash: "l1-system-c6",
+            order: 0,
+            cacheable: true,
+            breakpointAfter: false,
+            stability: "stable"
+          },
+          {
+            id: "l1-main-tools",
+            kind: "tools",
+            label: "Tools",
+            tokenCount: 16295,
+            identityHash: "l1-tools-c24",
+            order: 1,
+            cacheable: true,
+            breakpointAfter: false,
+            stability: "stable"
+          },
+          {
+            id: "l1-main-history",
+            kind: "history",
+            label: "Bob’s saved work",
+            tokenCount: 15693,
+            identityHash: "l1-bob-history-c6",
+            order: 2,
+            cacheable: true,
+            breakpointAfter: true,
+            stability: "session"
+          },
+          {
+            id: "l1-main-current",
+            kind: "current",
+            label: "Current task",
+            tokenCount: 0,
+            identityHash: "l1-current-placeholder",
+            order: 3,
+            cacheable: false,
+            breakpointAfter: false,
+            stability: "volatile"
+          }
+        ]
+      },
+      {
+        id: "l1-clean-prefix",
+        contextId: "l1-clean",
+        blocks: [
+          {
+            id: "l1-clean-system",
+            kind: "system",
+            label: "System",
+            tokenCount: 2750,
+            identityHash: "l1-system-c6",
+            order: 0,
+            cacheable: true,
+            breakpointAfter: false,
+            stability: "stable"
+          },
+          {
+            id: "l1-clean-tools",
+            kind: "tools",
+            label: "Tools",
+            tokenCount: 16295,
+            identityHash: "l1-tools-c24",
+            order: 1,
+            cacheable: true,
+            breakpointAfter: false,
+            stability: "stable"
+          },
+          {
+            id: "l1-clean-history",
+            kind: "history",
+            label: "Bob’s saved work",
+            tokenCount: 15693,
+            identityHash: "l1-bob-history-c6",
+            order: 2,
+            cacheable: true,
+            breakpointAfter: true,
+            stability: "session"
+          },
+          {
+            id: "l1-clean-current",
+            kind: "current",
+            label: "Current task",
+            tokenCount: 0,
+            identityHash: "l1-current-placeholder",
+            order: 3,
+            cacheable: false,
+            breakpointAfter: false,
+            stability: "volatile"
+          }
+        ]
+      }
+    ] satisfies PrefixStackSeed[],
+
     fixtures: [
       {
         id: "l1-budget",
@@ -337,10 +472,50 @@ const LEVEL_01_RED_OR_BLUE: LevelDef = {
         tag: "[FICTION]"
       },
       {
+        id: "l1-clock-cap",
+        label: "Level clock cap",
+        semanticRole: "Maximum simulated duration available to the onboarding attempt",
+        value: 60,
+        unit: "min",
+        tag: "[FICTION]"
+      },
+      {
         id: "l1-seed",
         label: "Deterministic level seed",
         semanticRole: "Replay seed for the L1 onboarding scenario",
         value: 1001,
+        unit: "count",
+        tag: "[FICTION]"
+      },
+      {
+        id: "l1-task-count",
+        label: "Scripted task count",
+        semanticRole: "Number of related Bob tasks and priced requests in a completed route",
+        value: 3,
+        unit: "count",
+        tag: "[FICTION]"
+      },
+      {
+        id: "l1-context-count",
+        label: "Available thread count",
+        semanticRole: "Main implementation thread plus isolated test thread",
+        value: 2,
+        unit: "count",
+        tag: "[FICTION]"
+      },
+      {
+        id: "l1-scripted-unit-duration",
+        label: "Explicit-send unit duration",
+        semanticRole: "UnitSeed hours value because simulation time does not advance during explicit sends",
+        value: 0,
+        unit: "min",
+        tag: "[FICTION]"
+      },
+      {
+        id: "l1-first-attempt-index",
+        label: "No-restart star target",
+        semanticRole: "Attempt index required by the three-star first-try condition",
+        value: 1,
         unit: "count",
         tag: "[FICTION]"
       },
@@ -377,10 +552,36 @@ const LEVEL_01_RED_OR_BLUE: LevelDef = {
         tag: "[FICTION]"
       }
     ],
+
     estimates: [
       {
         label: "Cold-open first interaction seconds",
         value: 1,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "Bob opening-line delay seconds",
+        value: 0.3,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "Initial Send-control reveal seconds",
+        value: 0.8,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "Second-task transition seconds",
+        value: 1.2,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "Third-task transition seconds",
+        value: 0.8,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "Keyboard-and-pointer readiness QA seconds",
+        value: 2,
         tag: "[ESTIMATE]"
       }
     ]
@@ -394,12 +595,11 @@ const LEVEL_01_RED_OR_BLUE: LevelDef = {
     "l1-first-write",
     "l1-first-read",
     "l1-third-reveal",
-    "l1-clean-chat",
-    "l1-frozen"
+    "l1-isolated-thread",
+    "l1-route-benefit"
   ],
   interactionPatterns: [
     "predict-before-reveal",
-    "fail-freeze-rewind",
     "just-in-time-toast",
     "counterfactual-after-attempt"
   ],
@@ -408,18 +608,11 @@ const LEVEL_01_RED_OR_BLUE: LevelDef = {
     bucket: "none",
     cite: "C34",
     line:
-      "Opening a clean chat left the reusable context behind, so the related request rewrote 34,738 tokens."
+      "Both thread choices complete; the saved-context route spends less while the isolated route earns a reducer-recorded separation benefit."
   },
 
-  failureRules: [L1_CLEAN_CHAT_REWRITE],
-  checkpoints: [
-    {
-      id: "l1-before-third-route",
-      createBeforeEventId: "l1-third-route-choice",
-      reason: "decision",
-      resumeLabel: "Choose the thread again"
-    }
-  ],
+  failureRules: [],
+  checkpoints: [],
 
   gate: L1_GATE,
   pass: l1Pass,
@@ -440,8 +633,8 @@ const LEVEL_01_RED_OR_BLUE: LevelDef = {
 
   counterfactuals: [
     {
-      id: "l1-clean-chat-comparison",
-      unlockAfterEventId: "l1-complete-reference",
+      id: "l1-thread-choice-comparison",
+      unlockAfterEventId: "l1-complete-attempt",
       kind: "alternate-choice",
       cfg: {
         devModel: "sonnet",
@@ -449,9 +642,9 @@ const LEVEL_01_RED_OR_BLUE: LevelDef = {
         oneHourFlag: true
       },
       comparisonQuestion:
-        "What changed when the related test moved to a clean chat?",
+        "What did each thread choice gain?",
       revealCopy:
-        "The task sentence stayed tiny; the new chat had to write the 34,738-token context again."
+        "Keeping the task here preserved the lower bill; isolating it earned the separate-test-thread benefit but wrote its own 34,738-token prefix."
     }
   ],
 
@@ -462,9 +655,9 @@ const LEVEL_01_RED_OR_BLUE: LevelDef = {
 };
 ```
 
-The scenario adapter expands the three unit IDs, context ID, and prefix-stack ID into the canonical `UnitSeed`, `ContextSeed`, and `PrefixStackSeed` objects. It must use `MAIN_PREFIX_HEY`, not define a second main-prefix value.
+The two prefix stacks use measured components: system `2,750` (`C6`), tools `16,295` (`C24`), and saved messages/history `15,693` (`C6`), totaling `34,738` (`C34`). The two stacks deliberately share byte identities but remain isolated by their distinct `cacheNamespace` values.
 
-`seed`, wallet, current-sentence sizes, output size, and presentation timing are deterministic `[FICTION]`/`[ESTIMATE]` fixtures. The reusable prefix, cache behavior, and rates are grounded in `C1`, `C3`, `C12`, and `C34`.
+All gameplay fiction is declared in `scenarioData.fixtures`. `scenarioData.estimates` contains presentation timing only.
 
 ## 6. Pricing walkthrough
 
@@ -475,11 +668,11 @@ This is the sole authoritative request-price table for the level:
 | Request | Route | Priced buckets | `PRICE_REQUEST` calculation | Cost |
 |---|---|---|---:|---:|
 | `l1-r1` | First request | `0 read + 12 input + 34,738 write + 120 output` | `0 + 12×$3/M + 34,738×$6/M + 120×$15/M` | `$0.210264` |
-| `l1-r2` | Same chat | `34,738 read + 14 input + 0 write + 120 output` | `34,738×$0.30/M + 14×$3/M + 120×$15/M` | `$0.0122634` |
+| `l1-r2` | Same implementation thread | `34,738 read + 14 input + 0 write + 120 output` | `34,738×$0.30/M + 14×$3/M + 120×$15/M` | `$0.0122634` |
 | `l1-r3` | Keep working here | `34,738 read + 13 input + 0 write + 120 output` | `34,738×$0.30/M + 13×$3/M + 120×$15/M` | `$0.0122604` |
-| `l1-r3-clean` | Open a clean chat | `0 read + 13 input + 34,738 write + 120 output` | `0 + 13×$3/M + 34,738×$6/M + 120×$15/M` | `$0.210267` |
+| `l1-r3-clean` | Isolated test thread | `0 read + 13 input + 34,738 write + 120 output` | `0 + 13×$3/M + 34,738×$6/M + 120×$15/M` | `$0.210267` |
 
-Three-star reference result:
+Same-chat three-star-eligible result:
 
 ```text
 spend
@@ -491,7 +684,7 @@ wallet remaining
 = $0.0652122
 ```
 
-Clean-chat failed-branch result:
+Isolated-thread three-star-eligible result:
 
 ```text
 spend
@@ -503,17 +696,17 @@ wallet remaining
 = -$0.1327944
 ```
 
-Economically true failure comparison:
+Request-local comparison:
 
 ```text
-third-request excess
+third-request difference
 = $0.210267 - $0.0122604
 = $0.1980066
 ```
 
-The clean-chat third request is about `17.15×` the same-chat third request. The failed branch costs about `84.33%` more than the reference attempt. Both comparisons derive from `C1`, `C3`, and `C34`.
+The isolated third request is about `17.15×` the same-chat third request. This is informational evidence, not a failure trigger: the isolated route also records `"l1-isolated-test-completed"` and remains completable.
 
-The `20×` one-hour-write-to-read input-side rate ratio (`C5`) may appear only after the attempt. It is not shown before the player has produced the evidence.
+The `20×` one-hour-write-to-read input-side rate ratio (`C5`) may appear only after an attempt. It is not shown before the player produces the evidence.
 
 ## 7. Tape sequence
 
@@ -529,30 +722,37 @@ The `20×` one-hour-write-to-read input-side rate ratio (`C5`) may appear only a
    - ordered segments: `read(34,738)`, `input(14)`, `output(120)`
    - label: `Add logout`
 
-3. Reference reveal group `l1-third-reference`
+3. Same-chat reveal group `l1-third-same-chat`
    - request: `l1-r3`
    - `gatedByPredictionId: "l1-third-color-cost"`
    - ordered segments: `read(34,738)`, `input(13)`, `output(120)`
-   - label: `Test both`
+   - label: `Test both · work thread`
 
-4. Clean-chat branch reveal group `l1-third-clean`
+4. Isolated-thread reveal group `l1-third-isolated`
    - request: `l1-r3-clean`
    - `gatedByPredictionId: "l1-third-color-cost"`
    - ordered segments: `write(34,738)`, `input(13)`, `output(120)`
-   - label: `Test both · clean chat`
+   - label: `Test both · isolated thread`
 
-`ahaRequestId: "l1-r3"`.
+`ahaRequestIds: ["l1-r3", "l1-r3-clean"]`, selected by the executed route.
 
-Aha frame: the three settled reference rows remain visible together. Row one is red-dominant; rows two and three are blue-dominant despite their different current sentences. Only after `REVEAL_PREDICTION` does the caption appear: “Three different requests. One saved context.”
+Same-chat aha frame: the three settled rows remain visible together. Row one is red-dominant; rows two and three are blue-dominant despite their different current sentences.
 
-The tape cites the canonical output-aware geometry from `UI_TAPE_RENDERER`:
+Isolated aha frame: the original red/blue pair stays visible beside the isolated red-dominant third row. A separate-namespace badge is backed by `"l1-isolated-test-completed"` rather than view-local state.
+
+Only after `REVEAL_PREDICTION` does the route-specific caption appear:
+
+- Same-chat: “Three different requests. One saved context.”
+- Isolated: “One separate work trail. One separate context write.”
+
+The tape uses canonical output-aware geometry:
 
 ```text
 segment.widthRatio = segment.usd / row.usd
 segment.startRatio = sum(previousSegment.usd) / row.usd
 ```
 
-Therefore each request’s `$0.001800` output charge contributes violet visual width from its first render. Hiding or delaying an output label may not remove `outTok` from bar weight. `UI_HOVER_PRICE_CALCULATOR` shows every nonzero bucket and asserts its contributions against the authoritative `LedgerRow.usd`.
+Each request’s `$0.001800` output charge contributes violet visual width from its first render. Hiding or delaying an output label may not remove `outTok` from bar weight. `UI_HOVER_PRICE_CALCULATOR` shows every nonzero bucket and asserts its contributions against the authoritative `LedgerRow.usd`.
 
 Static final bars render before hover.
 
@@ -562,7 +762,7 @@ Static final bars render before hover.
 
 Route-specific question:
 
-> “You chose **{Keep working here | Open a clean chat}**. Before you send: which color will dominate, and will the cost stay small or jump?”
+> “You chose **{Keep working here | Open an isolated test thread}**. Before you send: which color will dominate, and will the cost stay small or jump?”
 
 Options:
 
@@ -570,7 +770,7 @@ Options:
 - `red-much-more`: “Red — much more”
 - `violet-mostly-output`: “Violet — mostly output”
 
-The prompt does not expose the clean-chat branch’s `$0.210267` magnitude before play.
+The prompt does not expose the isolated branch’s `$0.210267` magnitude before play.
 
 Controls:
 
@@ -587,126 +787,123 @@ The selected option and its correctness remain hidden until the corresponding th
 
 - changes no wallet value;
 - changes no request resolution;
-- causes no freeze;
+- causes no failure;
 - removes no star;
 - does not affect the gate or `pass(st)`.
 
 Keyboard and pointer selection dispatch identical action sequences.
 
-After the reference reveal, the post-evidence explanation prompt asks:
+After either reveal, the post-evidence explanation prompt asks:
 
-> “Why was this request cheap even though the sentence was new?”
+> “Why did the two thread choices produce different bills?”
 
 Options:
 
-- `l1-context-not-sentence`: “It read the saved context; only the task sentence was new.”
+- `l1-context-not-sentence`: “One thread could read saved context; the isolated thread had to write its own.”
 - `l1-short-is-always-cheap`: “Short requests are always cheap.”
 - `l1-tests-cost-less`: “Tests are billed at a cheaper rate.”
 
-Only `l1-context-not-sentence`, chosen after `l1-reveal-third-reference`, satisfies the behavioral gate. Incorrect explanation choices spend nothing and leave the evidence visible for another choice.
+Only `l1-context-not-sentence`, chosen after the executed route’s reveal, satisfies the behavioral gate. Incorrect explanation choices spend nothing and leave the evidence visible for another choice.
 
 ## 9. Fail-state
 
-The authoritative failure rule is:
+There is no punitive branch in this level:
 
 ```ts
-const L1_CLEAN_CHAT_REWRITE: FailureRuleDef = {
-  id: "l1-clean-chat-rewrite",
-  predicate: {
-    id: "l1-clean-request-settled",
-    kind: "all",
-    predicates: [
-      {
-        id: "l1-last-request-is-clean",
-        kind: "compare",
-        path: "lastRequests.0.requestId",
-        op: "eq",
-        value: "l1-r3-clean"
-      },
-      {
-        id: "l1-clean-request-is-cold",
-        kind: "compare",
-        path: "lastRequests.0.cold",
-        op: "eq",
-        value: true
-      },
-      {
-        id: "l1-clean-request-rewrote-prefix",
-        kind: "compare",
-        path: "lastRequests.0.writeTok",
-        op: "eq",
-        value: 34738
-      },
-      {
-        id: "l1-clean-request-cost-reached",
-        kind: "compare",
-        path: "lastRequests.0.usd",
-        op: "gte",
-        value: 0.210267
-      }
-    ]
-  },
-  decisiveEventId: "l1-third-clean-settled",
-  causeCode: "CONTEXT_DISCARDED",
-  message:
-    "The clean chat left the saved context behind, so 34,738 tokens were written again.",
-  checkpointId: "l1-before-third-route",
-  highlightObjectIds: [
-    "l1-r3-clean",
-    "l1-r2",
-    "UI_MAIN_CACHE_PANEL",
-    "wallet"
-  ],
-  actualUsd: 0.210267,
-  validAlternativeUsd: 0.0122604
-};
+const L1_FAILURE_RULES: FailureRuleDef[] = [];
 ```
 
-Failure presentation:
+Both third-task routes are intentional, completable decisions:
 
-- Plausible player action: **Open a clean chat**, offered as the normal way to give the related test a tidy isolated thread.
-- Decisive actual-attempt event: `l1-third-clean-settled`.
-- Actual request cost: `$0.210267`.
-- Valid same-chat alternative: `$0.0122604`.
-- Visible excess: `$0.1980066`.
-- Freeze frame:
-  - cleared `UI_MAIN_CACHE_PANEL`;
-  - red-dominant `l1-r3-clean`;
-  - prior blue `l1-r2`;
-  - `wallet=-$0.1327944`;
-  - both third-request prices visible for comparison.
-- Causal message: **“The clean chat left the saved context behind, so 34,738 tokens were written again.”**
-- Supporting line: “The new test sentence was only 13 tokens `[FICTION]`; rebuilding `MAIN_PREFIX_HEY` caused the drop.”
-- Rewind control: **Choose the thread again**
-- Rewind target: `l1-before-third-route`
-- Restored state: live cache, two ledger rows, `wallet=$0.0774726`, `attemptMetrics.spentUsd=$0.2225274`, route unchosen, prediction uncommitted.
-- No cold-open, first request, or second request is replayed.
-- Freeze blocks all economic actions until rewind.
+- **Keep working here** confers the lower `attemptMetrics.spentUsd`.
+- **Open an isolated test thread** confers `"l1-isolated-test-completed"`, which affects `L1_STAR2`.
 
-The freeze is independent of prediction correctness and is economically true because `$0.210267 > $0.0122604`. It is dispatched only from the actual economic branch, never from `REQUEST_COUNTERFACTUAL`, `REVEAL_COUNTERFACTUAL`, or any reference/counterfactual reveal.
+The isolated request is more expensive, but cost alone does not make an otherwise valid, rewarded route a failure. Therefore:
+
+- no `FREEZE_FAILURE` follows `l1-r3` or `l1-r3-clean`;
+- no rewind checkpoint is created;
+- a negative wallet does not substitute for the behavioral gate;
+- prediction correctness never creates failure;
+- counterfactual events are informational and cannot freeze.
+
+An invalid premature send is rejected before request creation. It produces no `LedgerRow`, spend, freeze, or completed route marker.
 
 ## 10. Gate & stars
 
 The authoritative gate uses only legal `StatePredicate` kinds and canonical state paths:
 
 ```ts
-const L1_GATE: GateDef = {
-  predicateId: "l1-post-reveal-causal-explanation",
-
-  evidenceRevealEventIds: [
-    "l1-reveal-third-reference"
-  ],
-
-  postEvidenceActionRequirements: [
+const L1_ROUTE_REVEALED: StatePredicate = {
+  id: "l1-route-revealed",
+  kind: "any",
+  predicates: [
     {
-      id: "l1-explanation-action-after-reveal",
+      id: "l1-same-chat-reveal-completed",
+      kind: "event-completed",
+      eventId: "l1-reveal-third-same-chat"
+    },
+    {
+      id: "l1-isolated-reveal-completed",
+      kind: "event-completed",
+      eventId: "l1-reveal-third-isolated"
+    }
+  ]
+};
+
+const L1_ROUTE_RECORDED: StatePredicate = {
+  id: "l1-route-recorded",
+  kind: "any",
+  predicates: [
+    {
+      id: "l1-same-chat-route-recorded",
+      kind: "includes",
+      path: "completedEventIds",
+      value: "l1-route-same-chat-chosen"
+    },
+    {
+      id: "l1-isolated-route-recorded",
+      kind: "includes",
+      path: "completedEventIds",
+      value: "l1-route-isolated-chosen"
+    }
+  ]
+};
+
+const L1_POST_REVEAL_EXPLANATION: StatePredicate = {
+  id: "l1-explanation-action-after-executed-reveal",
+  kind: "any",
+  predicates: [
+    {
+      id: "l1-explanation-after-same-chat-reveal",
       kind: "action-observed",
       actionType: "ACK_EXPLANATION",
-      afterEventId: "l1-reveal-third-reference",
+      afterEventId: "l1-reveal-third-same-chat",
+      match: {
+        explanationId: "l1-context-not-sentence"
+      }
+    },
+    {
+      id: "l1-explanation-after-isolated-reveal",
+      kind: "action-observed",
+      actionType: "ACK_EXPLANATION",
+      afterEventId: "l1-reveal-third-isolated",
       match: {
         explanationId: "l1-context-not-sentence"
       }
     }
+  ]
+};
+
+const L1_GATE: GateDef = {
+  predicateId: "l1-post-reveal-causal-explanation",
+
+  evidenceRevealEventIds: [
+    "l1-reveal-third-same-chat",
+    "l1-reveal-third-isolated"
+  ],
+
+  postEvidenceActionRequirements: [
+    L1_POST_REVEAL_EXPLANATION
   ],
 
   behavioralRequirements: [
@@ -715,20 +912,15 @@ const L1_GATE: GateDef = {
       kind: "compare",
       path: "ledger.length",
       op: "eq",
-      value: 3,
-      observedAfterEventId: "l1-reveal-third-reference"
+      value: 3
     },
-    {
-      id: "l1-reference-reveal-completed",
-      kind: "event-completed",
-      eventId: "l1-reveal-third-reference"
-    },
+    L1_ROUTE_RECORDED,
+    L1_ROUTE_REVEALED,
     {
       id: "l1-causal-rule-acknowledged",
       kind: "includes",
       path: "acknowledgedExplanationIds",
-      value: "l1-context-not-sentence",
-      observedAfterEventId: "l1-reveal-third-reference"
+      value: "l1-context-not-sentence"
     }
   ],
 
@@ -736,19 +928,33 @@ const L1_GATE: GateDef = {
     id: "l1-explanation-required",
     kind: "includes",
     path: "acknowledgedExplanationIds",
-    value: "l1-context-not-sentence",
-    observedAfterEventId: "l1-reveal-third-reference"
+    value: "l1-context-not-sentence"
   }
 };
 ```
 
-`pass(st)` reads only declared `ReducerState` paths. The gate evaluator separately enforces the legal post-evidence `action-observed` requirement:
+`pass(st)` is pure and reads only declared `ReducerState` fields and real arrays:
 
 ```ts
 function l1Pass(st: ReducerState): GateResult {
+  const sameChatRoute =
+    st.completedEventIds.includes("l1-route-same-chat-chosen") &&
+    st.completedEventIds.includes("l1-third-same-chat-settled") &&
+    st.completedEventIds.includes("l1-reveal-third-same-chat") &&
+    st.lastRequests.length === 1 &&
+    st.lastRequests[0].requestId === "l1-r3";
+
+  const isolatedRoute =
+    st.completedEventIds.includes("l1-route-isolated-chosen") &&
+    st.completedEventIds.includes("l1-third-isolated-settled") &&
+    st.completedEventIds.includes("l1-isolated-test-completed") &&
+    st.completedEventIds.includes("l1-reveal-third-isolated") &&
+    st.lastRequests.length === 1 &&
+    st.lastRequests[0].requestId === "l1-r3-clean";
+
   const passed =
     st.ledger.length === 3 &&
-    st.completedEventIds.includes("l1-reveal-third-reference") &&
+    (sameChatRoute || isolatedRoute) &&
     st.acknowledgedExplanationIds.includes(
       "l1-context-not-sentence"
     );
@@ -756,12 +962,14 @@ function l1Pass(st: ReducerState): GateResult {
   return {
     pass: passed,
     reason: passed
-      ? "The player identified saved-context reuse after seeing the third row."
-      : "Read the third row, then choose what made it cheap.",
+      ? "The player connected the third bill to saved-context availability."
+      : "Finish either thread route, read its third row, then explain the bill.",
     evidence: passed
       ? [
-          "After the reveal: It read the saved context; only the task sentence was new.",
-          "Third request: 34,738 read · 0 written.",
+          sameChatRoute
+            ? "Same thread: 34,738 read · 0 written."
+            : "Isolated thread: 0 read · 34,738 written.",
+          "The route choice was recorded before the third request.",
           "Three requests produced three ledger rows."
         ]
       : []
@@ -769,164 +977,134 @@ function l1Pass(st: ReducerState): GateResult {
 }
 ```
 
+The gate evaluator additionally enforces `L1_POST_REVEAL_EXPLANATION`, so an acknowledgment created before the executed reveal cannot pass.
+
 The authoritative star predicates are:
 
 ```ts
 const L1_STAR2: StarDef = {
-  label: "Kept the thread",
+  label: "Made the tradeoff count",
   reason:
-    "Kept the related work in the context that already contained it.",
+    "Either preserved the lower bill in one thread or completed the reducer-recorded isolated-test benefit.",
   predicate: {
     id: "l1-star2",
-    kind: "all",
+    kind: "any",
     predicates: [
       {
-        id: "l1-star2-reference-revealed",
-        kind: "event-completed",
-        eventId: "l1-reveal-third-reference"
+        id: "l1-star2-economy-route",
+        kind: "all",
+        predicates: [
+          {
+            id: "l1-star2-same-chat-chosen",
+            kind: "includes",
+            path: "completedEventIds",
+            value: "l1-route-same-chat-chosen"
+          },
+          {
+            id: "l1-star2-same-chat-request",
+            kind: "compare",
+            path: "lastRequests.0.requestId",
+            op: "eq",
+            value: "l1-r3"
+          },
+          {
+            id: "l1-star2-same-chat-spend",
+            kind: "compare",
+            path: "attemptMetrics.spentUsd",
+            op: "lte",
+            value: 0.2347878
+          }
+        ]
       },
       {
-        id: "l1-star2-explanation-after-reveal",
-        kind: "action-observed",
-        actionType: "ACK_EXPLANATION",
-        afterEventId: "l1-reveal-third-reference",
-        match: {
-          explanationId: "l1-context-not-sentence"
-        }
-      },
-      {
-        id: "l1-star2-explanation-acknowledged",
-        kind: "includes",
-        path: "acknowledgedExplanationIds",
-        value: "l1-context-not-sentence"
-      },
-      {
-        id: "l1-star2-three-rows",
-        kind: "compare",
-        path: "ledger.length",
-        op: "eq",
-        value: 3
-      },
-      {
-        id: "l1-star2-one-last-request",
-        kind: "compare",
-        path: "lastRequests.length",
-        op: "eq",
-        value: 1
-      },
-      {
-        id: "l1-star2-reference-request",
-        kind: "compare",
-        path: "lastRequests.0.requestId",
-        op: "eq",
-        value: "l1-r3"
-      },
-      {
-        id: "l1-star2-reference-read",
-        kind: "compare",
-        path: "lastRequests.0.readTok",
-        op: "eq",
-        value: 34738
-      },
-      {
-        id: "l1-star2-no-reference-write",
-        kind: "compare",
-        path: "lastRequests.0.writeTok",
-        op: "eq",
-        value: 0
-      },
-      {
-        id: "l1-star2-reference-warm",
-        kind: "compare",
-        path: "lastRequests.0.cold",
-        op: "eq",
-        value: false
+        id: "l1-star2-isolation-route",
+        kind: "all",
+        predicates: [
+          {
+            id: "l1-star2-isolated-chosen",
+            kind: "includes",
+            path: "completedEventIds",
+            value: "l1-route-isolated-chosen"
+          },
+          {
+            id: "l1-star2-isolated-benefit",
+            kind: "includes",
+            path: "completedEventIds",
+            value: "l1-isolated-test-completed"
+          },
+          {
+            id: "l1-star2-isolated-request",
+            kind: "compare",
+            path: "lastRequests.0.requestId",
+            op: "eq",
+            value: "l1-r3-clean"
+          },
+          {
+            id: "l1-star2-isolated-cold",
+            kind: "compare",
+            path: "lastRequests.0.cold",
+            op: "eq",
+            value: true
+          }
+        ]
       }
     ]
   }
 };
 
 const L1_STAR3: StarDef = {
-  label: "Three in a row",
+  label: "Explained it first try",
   reason:
-    "Completed all three related requests with one write and two reads.",
+    "Completed either consequential route and identified the saved-context cause without restarting.",
   predicate: {
     id: "l1-star3",
     kind: "all",
     predicates: [
       L1_STAR2.predicate,
+      L1_ROUTE_REVEALED,
+      L1_POST_REVEAL_EXPLANATION,
       {
-        id: "l1-star3-first-request",
+        id: "l1-star3-explanation-acknowledged",
+        kind: "includes",
+        path: "acknowledgedExplanationIds",
+        value: "l1-context-not-sentence"
+      },
+      {
+        id: "l1-star3-three-rows",
         kind: "compare",
-        path: "ledger.0.requestId",
+        path: "ledger.length",
         op: "eq",
-        value: "l1-r1"
+        value: 3
       },
       {
-        id: "l1-star3-first-cold",
+        id: "l1-star3-one-last-request",
         kind: "compare",
-        path: "ledger.0.cold",
+        path: "lastRequests.length",
         op: "eq",
-        value: true
+        value: 1
       },
       {
-        id: "l1-star3-first-write",
-        kind: "compare",
-        path: "ledger.0.writeTok",
-        op: "eq",
-        value: 34738
+        id: "l1-star3-valid-third-request",
+        kind: "any",
+        predicates: [
+          {
+            id: "l1-star3-same-chat-third",
+            kind: "compare",
+            path: "lastRequests.0.requestId",
+            op: "eq",
+            value: "l1-r3"
+          },
+          {
+            id: "l1-star3-isolated-third",
+            kind: "compare",
+            path: "lastRequests.0.requestId",
+            op: "eq",
+            value: "l1-r3-clean"
+          }
+        ]
       },
       {
-        id: "l1-star3-second-request",
-        kind: "compare",
-        path: "ledger.1.requestId",
-        op: "eq",
-        value: "l1-r2"
-      },
-      {
-        id: "l1-star3-second-warm",
-        kind: "compare",
-        path: "ledger.1.cold",
-        op: "eq",
-        value: false
-      },
-      {
-        id: "l1-star3-second-read",
-        kind: "compare",
-        path: "ledger.1.readTok",
-        op: "eq",
-        value: 34738
-      },
-      {
-        id: "l1-star3-third-request",
-        kind: "compare",
-        path: "ledger.2.requestId",
-        op: "eq",
-        value: "l1-r3"
-      },
-      {
-        id: "l1-star3-third-warm",
-        kind: "compare",
-        path: "ledger.2.cold",
-        op: "eq",
-        value: false
-      },
-      {
-        id: "l1-star3-third-read",
-        kind: "compare",
-        path: "ledger.2.readTok",
-        op: "eq",
-        value: 34738
-      },
-      {
-        id: "l1-star3-reference-spend",
-        kind: "compare",
-        path: "attemptMetrics.spentUsd",
-        op: "lte",
-        value: 0.2347878
-      },
-      {
-        id: "l1-star3-no-rewind",
+        id: "l1-star3-no-restart",
         kind: "compare",
         path: "attempt",
         op: "eq",
@@ -941,19 +1119,18 @@ No gate or star predicate reads `prediction.optionId`, `prediction.correctOption
 
 Stars:
 
-- **1 star — Read the evidence:** `l1Pass(st).pass` succeeds after the canonical post-evidence action requirement.
-- **2 stars — Kept the thread:** `L1_STAR2.predicate` succeeds.
-- **3 stars — Three in a row:** `L1_STAR3.predicate` succeeds.
-
-The reference route is winnable from seed `1001` and earns three stars regardless of prediction correctness. The clean-chat route produces two cold writes and freezes on its visibly more expensive third request. After rewind, the player can pass without replaying mastered setup.
+- **1 star — Read the evidence:** `l1Pass(st).pass` succeeds after the executed route’s post-evidence explanation.
+- **2 stars — Made the tradeoff count:** `L1_STAR2.predicate` recognizes the lower-spend same-chat benefit or the reducer-recorded isolated-test benefit.
+- **3 stars — Explained it first try:** `L1_STAR3.predicate` succeeds on either route without a restart.
 
 Result copy:
 
-- Pass headline: **“You found the reuse.”**
+- Pass headline: **“You found what changed.”**
 - Pass rule: **“The expensive part was the saved context, not the new sentence.”**
-- Fail headline: **“The clean chat rebuilt the context.”**
+- Same-chat benefit: **“Lower bill: the existing thread read its saved context.”**
+- Isolated benefit: **“Separate trail: the test completed in its own recorded thread.”**
 - Continue: **Next level**
-- Retry: **Choose the thread again**
+- Retry explanation: **Read the third row again**
 
 ## 11. Toasts
 
@@ -961,9 +1138,9 @@ Result copy:
 |---|---|---|
 | `l1-first-write` | `l1-r1` settles | “First request: Claude saved **34,738 tokens** of context. **WRITE · $0.210264**.” |
 | `l1-first-read` | `l1-r2` settles | “Same saved context. **READ · $0.0122634**.” |
-| `l1-third-reveal` | Reference `REVEAL_PREDICTION` | “Three different requests. One saved context.” |
-| `l1-clean-chat` | `DISCARD_CONTEXT` from **Open a clean chat** | “Clean chat opened. The previous saved context stays behind.” |
-| `l1-frozen` | `FREEZE_FAILURE` | “That related request had to write the context again.” |
+| `l1-third-reveal` | Either route’s `REVEAL_PREDICTION` | “The new sentence was tiny. The available saved context decided the bill.” |
+| `l1-isolated-thread` | `l1-route-isolated-chosen` completes | “Isolated test thread ready. Its work trail will be recorded separately.” |
+| `l1-route-benefit` | `"l1-complete-attempt"` | Same-chat: “Lower spend preserved.” Isolated: “Separate test trail recorded.” |
 
 Vocabulary:
 
@@ -989,63 +1166,74 @@ Real-browser click-through assertions:
 1. `"01-red-or-blue"` validates against the canonical `LevelId` union.
 2. `"write-vs-read"` validates against the canonical `ConceptId` registry; `prerequisiteConceptIds` is exactly `[]`.
 3. `conceptScope` is exactly `{ kind: "single", reusedConceptIds: [] }`.
-4. `title` and `objective` contain none of `concept.solutionVocabulary`; the identity QA assertion is `{ kind: "identity-no-solution-vocabulary", forbiddenTerms: concept.solutionVocabulary, assertion: "title and objective contain no solution vocabulary" }`.
-5. All four `interactionPatterns` values are canonical kebab-case IDs; no uppercase `PATTERN_*` alias appears.
+4. `concept.solutionVocabulary` is present, and neither `title` nor `objective` contains any registered solution term.
+5. All three `interactionPatterns` values are canonical kebab-case IDs.
 6. Within `2s` `[ESTIMATE]`, first **Send** is keyboard- and pointer-operable; no instruction card blocks it.
-7. Before `l1-r1`, no player-facing copy or component label reveals that later requests will be blue, cheaper, read, cached, or reused.
-8. First **Send** dispatches one `SEND_REQUEST`, creates one `LedgerRow`, one tape row, and one live `CacheEntry`.
-9. `l1-r1` prices to exactly `$0.210264` from `C1`, `C3`, and `C34`.
-10. Second **Send** adds exactly one ledger/tape row; `l1-r2` prices to `$0.0122634`.
-11. `l1-r2` reads `34,738`, writes `0`, and refreshes the live entry under `C12`.
-12. The third route controls appear only after `l1-r2` evidence is visible.
-13. **Keep working here** and **Open a clean chat** are both keyboard- and pointer-operable and both produce the requested test.
-14. **Open a clean chat** dispatches `DISCARD_CONTEXT` as an ordinary thread-management action, not a control labeled as failure.
-15. `DISCARD_CONTEXT` creates no ledger row and changes neither scalar `wallet` nor `attemptMetrics.spentUsd`.
-16. After either route choice, the third `SEND_REQUEST` cannot dispatch before `COMMIT_PREDICTION`.
-17. Prediction selection alone does not unlock sending; commitment does.
-18. No correctness treatment appears before the selected route’s third request is priced and rendered.
-19. The prediction options contain no exact `$0.210267` or `21¢` magnitude; the clean-chat option reads **“Red — much more.”**
-20. Reference `l1-r3` prices to `$0.0122604`, reads `34,738`, writes `0`, and refreshes the cache.
-21. Clean-chat `l1-r3-clean` prices to `$0.210267`, reads `0`, writes `34,738`, and creates the third ledger/tape row.
-22. A wrong prediction changes no score, star, wallet, failure predicate, gate result, or request resolution.
-23. The one-star gate does not inspect `prediction.optionId`, `correctOptionId`, or prediction correctness.
-24. The gate observes `ACK_EXPLANATION { explanationId: "l1-context-not-sentence" }` after `l1-reveal-third-reference`.
-25. An explanation action before the reveal is rejected by the `ACK_EXPLANATION` contract and cannot satisfy the gate.
-26. Incorrect explanation choices create no request and no economic penalty; the player can inspect the tape and retry.
-27. Every gate, failure, and star predicate uses only canonical `ReducerState` paths, legal `StatePredicate` kinds, and legal comparison ops.
-28. Each priced request maps to exactly one `LedgerRow` and one tape row.
-29. Every real request cost is positive and equals `PRICE_REQUEST`.
-30. No positive price displays as `$0.0000`; sufficiently precise values appear in detailed views.
-31. Static final tape bars render without hover and preserve ledger order.
-32. `UI_TAPE_RENDERER` segments equal the priced buckets; no decorative segment is treated as a request.
-33. `outTok` contributes to every row’s canonical segment width and total visual weight.
-34. The `$0.001800` output contribution remains available in `UI_HOVER_PRICE_CALCULATOR`.
-35. Freeze occurs only after actual-attempt event `l1-third-clean-settled`, its `$0.210267` cost, and the `$0.0122604` valid alternative are visible.
-36. Failure rule validation asserts `actualUsd=$0.210267 > validAlternativeUsd=$0.0122604`.
-37. No `FREEZE_FAILURE` dispatch occurs while processing `REQUEST_COUNTERFACTUAL`, `REVEAL_COUNTERFACTUAL`, or any reference/counterfactual reveal.
-38. The clean-thread branch is reachable and its qualitative organization appeal is stated honestly; §13 explicitly declares the critic-authorized L1 taught one-shot exception instead of claiming an unmodeled invariant-14 reward.
-39. **Choose the thread again** restores the checkpoint byte-identically: two rows, `wallet=$0.0774726`, `attemptMetrics.spentUsd=$0.2225274`, live cache, no route, and no committed prediction.
-40. Rewind creates no duplicate rows and does not replay either mastered send.
-41. Reference seed/configuration is winnable and earns three stars regardless of prediction correctness.
-42. The failed branch freezes independently of budget-only gate logic.
-43. `UI_COUNTERFACTUAL_OVERLAY` remains unavailable before a meaningful completed attempt.
-44. The post-attempt comparison uses the same seed and authoritative `$0.0122604`, `$0.210267`, and `$0.1980066` values.
-45. Counterfactual rendering does not mutate `wallet`, `ledger`, `attemptResult`, `clockFrozen`, or `frozenFailure`.
-46. Pointer and keyboard paths produce equivalent `Action[]`.
-47. Reduced-motion mode produces identical final state, pricing, reveal order, tape geometry, and gate evidence.
-48. Refresh/replay from seed `1001` and saved `Action[]` reproduces byte-identical `ReducerState`, ledger, wallet, and result.
-49. Each authoritative request count, token count, cost, total, and threshold has only one implementable value.
-50. Every `[FICTION]` gameplay scalar has a semantically matching `ScenarioFixtureDef`; presentation timing alone uses `[ESTIMATE]`.
-51. `MAIN_PREFIX_HEY` is cited as `C34`; the level does not define a competing main-prefix constant.
+7. Before `l1-r1`, no player-facing copy reveals that later requests will be blue, cheaper, read, cached, or reused.
+8. `scenarioData.units` contains three actual `UnitSeed` objects, not string IDs.
+9. `scenarioData.contexts` contains two actual `ContextSeed` objects with distinct cache namespaces.
+10. `scenarioData.prefixStacks` contains two actual `PrefixStackSeed` objects.
+11. Each prefix stack contains ordered `system`, `tools`, `history`, and final `current` blocks.
+12. Each cacheable base totals `2,750 + 16,295 + 15,693 = 34,738` tokens from `C6`, `C24`, and `C34`.
+13. Every gameplay `[FICTION]` scalar is represented by a semantically matching `ScenarioFixtureDef`.
+14. `scenarioData.estimates` contains presentation timing only.
+15. First **Send** dispatches one `SEND_REQUEST`, creates one `LedgerRow`, one tape row, and one live `l1-main` `CacheEntry`.
+16. `l1-r1` prices exactly to `$0.210264` from `C1`, `C3`, and `C34`.
+17. Second **Send** adds exactly one ledger/tape row; `l1-r2` prices to `$0.0122634`.
+18. `l1-r2` reads `34,738`, writes `0`, and refreshes the live `l1-main` entry under `C12`.
+19. The third route controls appear only after `l1-r2` evidence is visible.
+20. Both thread choices are keyboard- and pointer-operable and produce the requested test.
+21. Same-chat choice records `"l1-route-same-chat-chosen"` through its accepted `BEGIN_TRANSFER`.
+22. Isolated choice records `"l1-route-isolated-chosen"` through its accepted `BEGIN_TRANSFER`.
+23. Exactly one route-choice marker exists before the third request.
+24. Neither choice action creates a ledger row or changes scalar `wallet`.
+25. The same-chat request uses `l1-main`; the isolated request uses `l1-clean`.
+26. Choosing the isolated thread neither deletes nor invalidates the live `l1-main` entry.
+27. After either route choice, the third `SEND_REQUEST` cannot dispatch before `COMMIT_PREDICTION`.
+28. Prediction selection alone does not unlock sending.
+29. No correctness treatment appears before the selected route’s third request is priced and rendered.
+30. The prediction options expose no exact `$0.210267` or `21¢` magnitude.
+31. `l1-r3` prices to `$0.0122604`, reads `34,738`, writes `0`, and refreshes `l1-main`.
+32. `l1-r3-clean` prices to `$0.210267`, reads `0`, writes `34,738`, and creates a live entry in `l1-clean`.
+33. Same-chat completion leaves `attemptMetrics.spentUsd=$0.2347878`.
+34. Isolated completion leaves `attemptMetrics.spentUsd=$0.4327944` and appends `"l1-isolated-test-completed"`.
+35. The same-chat benefit affects reducer-owned spend.
+36. The isolated-thread benefit affects `L1_STAR2`.
+37. Both branches reach `COMPLETE_ATTEMPT` and can earn three stars.
+38. Neither third request dispatches `FREEZE_FAILURE`.
+39. A negative wallet on the isolated branch does not replace or fail the behavioral gate.
+40. A wrong prediction changes no score, star, wallet, failure state, gate result, or request resolution.
+41. The one-star gate does not inspect prediction option identity or correctness.
+42. The gate observes `ACK_EXPLANATION { explanationId: "l1-context-not-sentence" }` after the executed reveal.
+43. An explanation action before the executed reveal is rejected and cannot satisfy the gate.
+44. Incorrect explanation choices create no request or economic penalty.
+45. `l1Pass(st)` is pure and reads only `ledger`, `lastRequests`, `completedEventIds`, and `acknowledgedExplanationIds`.
+46. Every gate and star predicate uses only canonical state paths, legal predicate kinds, and legal comparison ops.
+47. Array state uses indexed paths such as `lastRequests.0.requestId`; no object-style unit-ID path appears.
+48. Each priced request maps to exactly one `LedgerRow` and one tape row.
+49. Every real request cost is positive and equals `PRICE_REQUEST`.
+50. No positive price displays as `$0.0000`.
+51. Static final tape bars render without hover and preserve ledger order.
+52. `UI_TAPE_RENDERER` segments equal the priced buckets; no decorative segment is treated as a request.
+53. `outTok` contributes to every row’s canonical segment width and total visual weight.
+54. The `$0.001800` output contribution remains available in `UI_HOVER_PRICE_CALCULATOR`.
+55. `UI_COUNTERFACTUAL_OVERLAY` remains unavailable before `"l1-complete-attempt"`.
+56. The comparison uses the same seed and authoritative `$0.0122604`, `$0.210267`, and `$0.1980066` values.
+57. Counterfactual rendering does not mutate `wallet`, `ledger`, `attemptResult`, `clockFrozen`, or `frozenFailure`.
+58. No `FREEZE_FAILURE` dispatch occurs during either actual route, `REQUEST_COUNTERFACTUAL`, or `REVEAL_COUNTERFACTUAL`.
+59. Pointer and keyboard paths produce equivalent `Action[]`.
+60. Reduced-motion mode produces identical final state, pricing, reveal order, tape geometry, route benefit, and gate evidence.
+61. Refresh/replay from seed `1001` and saved `Action[]` reproduces byte-identical `ReducerState`, ledger, wallet, and result.
+62. Each authoritative request count, token count, cost, total, and threshold has only one implementable value.
+63. `MAIN_PREFIX_HEY` is cited as `C34`; the level defines no competing main-prefix constant.
 
 ## 13. Reference-bar justification
 
-The screen opens on one inviting action and lets the first wallet hit land before naming anything. A second related request then produces the surprising blue contrast through play, not explanation. The player applies that evidence to an ordinary workspace choice, commits a deliberately coarse prediction, and only then sees the third request settle.
+The screen opens on one inviting action and lets the first wallet hit land before naming anything. A second related request produces the surprising blue contrast through play. Only then does the player apply that evidence to a real workspace decision and commit a coarse prediction.
 
-The clean-thread route has recognizable real-world organization appeal, but the canonical model contains no scored organization metric and the route’s actual request is economically and mechanically worse in this onboarding fixture. This specification therefore makes the binding, explicit declaration permitted by the L1 round-3 work order: **Level 1 is a taught one-shot onboarding exception to invariant 14.** It does not claim that qualitative tidiness is a modeled counter-pressure or that the two routes are equally viable. The exception is confined to this first guided application; later core decisions must carry live modeled tradeoffs.
+The third-task choice obeys invariant 14 without an exception. Keeping the task in the implementation thread provides the reducer-visible spend benefit: the third request costs `$0.0122604`, and the completed route retains `attemptMetrics.spentUsd=$0.2347878`. Opening an isolated test thread provides a different reducer-visible benefit: the work uses a distinct `cacheNamespace`, completes normally, and records `"l1-isolated-test-completed"` as an alternative route through `L1_STAR2`. Neither choice dominates on every scored dimension, and both can pass and earn three stars.
 
-Choosing the clean thread exposes a genuine, visible economic consequence, freezes only after the actual-attempt ledger proves it is more expensive, and rewinds directly to the thread decision. The freeze is never attached to the optional counterfactual comparison.
+No failure is fabricated from the higher isolated-thread cost. The differing prices become causal evidence for the concept and an optional post-attempt comparison. Prediction correctness remains non-punitive, while the required post-reveal explanation demonstrates understanding.
 
-Finally, the one-star gate asks for a causal explanation after the reveal. The pre-reveal guess remains psychologically useful but economically and mechanically non-punitive. The rhythm is act, notice, choose, predict, reveal, explain, and—if necessary—rewind, preserving the surprise while requiring demonstrated understanding.
+The rhythm is act, notice, choose, predict, reveal, explain, and compare. The implementation-thread route is the economic reference; the isolated-thread route is the deliberate separation tradeoff. All request prices remain derived from `C1`, `C3`, `C12`, and `C34`, and no correct dollar figure changed.
 
-Assumption: this level uses the measured `MAIN_PREFIX_HEY = 34,738` tokens (`C34`). Tiny request/output sizes, wallet, seed, and presentation timings remain explicitly `[FICTION]` or `[ESTIMATE]`. No dollar figure changed in this revision.
