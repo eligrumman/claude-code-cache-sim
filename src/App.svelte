@@ -58,8 +58,8 @@
         <span class="icon" aria-hidden="true">🎈</span>
         <span class="card-copy">
           <strong>Tokenloons TD</strong>
-          <span class="hook">Survive the context swarm.</span>
-          <small>Defend your budget before the tokenloons reach the cache.</small>
+          <span class="hook">Route the work. Save the budget.</span>
+          <small>Dispatch live tasks to the right model and effort before Opus-high grabs everything.</small>
         </span>
         <span class="arrow" aria-hidden="true">→</span>
       </button>

@@ -1,6 +1,6 @@
 // types.ts - the engine's shared type vocabulary, from SIMULATOR_SPEC.md 5.1.
 
-export type Model = "sonnet" | "opus" | "fable";
+export type Model = "haiku" | "sonnet" | "opus" | "fable";
 export type Tier = "read" | "input" | "w5m" | "w1h" | "output";
 export type WriteTier = "5m" | "1h";
 export type Who = "inline" | "subagent";

@@ -2,6 +2,13 @@ import { describe, it, expect } from "vitest";
 import { RATE, MODEL_IN, priceTable, tokCost } from "./pricing.js";
 
 describe("price tables to the cent (C2-C4)", () => {
+  it("haiku is the cheap dispatch tier", () => {
+    const p = priceTable("haiku");
+    expect(p.input).toBe(1);
+    expect(p.read).toBeCloseTo(0.1, 10);
+    expect(p.output).toBe(5);
+  });
+
   it("sonnet per 1M (C3)", () => {
     const p = priceTable("sonnet");
     expect(p.input).toBe(3);
@@ -36,7 +43,7 @@ describe("rate structure", () => {
   });
 
   it("MODEL_IN base prices", () => {
-    expect(MODEL_IN).toEqual({ sonnet: 3, opus: 5, fable: 10 });
+    expect(MODEL_IN).toEqual({ haiku: 1, sonnet: 3, opus: 5, fable: 10 });
   });
 
   it("tokCost matches tok * rate * price/1e6", () => {

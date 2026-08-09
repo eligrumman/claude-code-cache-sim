@@ -1,286 +1,336 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { MODEL_IN } from "../sim/cost.js";
   import { SCENARIOS } from "../sim/scenarios.js";
-  import { economyFromLedger, isGameOver, overdraftLeft, scenarioToTDWave, shrinkToRead, type BalloonEconomy, type TDWave } from "./engine.js";
+  import {
+    DEFAULT_MONKEY, DEFAULT_TOGGLES, FIT_TABLE, ROSTER, isGameOver, overdraftLeft, priceRoutedTask,
+    routeTask, scenarioToDispatchWave, type DispatchTask, type DispatchToggles, type FitOutcome, type Monkey,
+  } from "./engine.js";
 
   interface Props { onback: () => void }
   let { onback }: Props = $props();
 
-  type TowerKind = "prefix" | "warm" | "subagent";
-  interface Tower { id: number; kind: TowerKind; x: number; y: number; range: number; upgraded: boolean; memory: Record<string, number> }
-  interface Balloon extends BalloonEconomy { id: number; prefix: string; prompt: string; subagent: boolean; atMin: number; progress: number; speed: number; processed: Set<number> }
-  interface FloatText { x: number; y: number; text: string; life: number }
+  interface LiveTask extends DispatchTask { progress: number; lane: number }
+  interface Pop { x: number; y: number; text: string; tone: FitOutcome; life: number }
 
-  const W = 800, H = 440;
-  const path = [{x:34,y:72},{x:250,y:72},{x:250,y:202},{x:548,y:202},{x:548,y:354},{x:758,y:354}];
-  const shop: Record<TowerKind, { name: string; icon: string; price: number; range: number; blurb: string }> = {
-    prefix: { name: "Prefix Cacher", icon: "📚", price: .08, range: 92, blurb: "First writes; matching prefixes read at 0.1×" },
-    warm: { name: "Keep-Warm", icon: "☕", price: .06, range: 105, blurb: "Stops TTL re-inflation; tiny upkeep" },
-    subagent: { name: "Same-Prompt", icon: "🧬", price: .10, range: 96, blurb: "Collapses identical subagent swarms" },
-  };
-  const waves: TDWave[] = SCENARIOS.map((scenario) => scenarioToTDWave(scenario));
+  const W = 900;
+  const H = 330;
+  const waves = SCENARIOS.map(scenarioToDispatchWave);
+  const typeMeta = {
+    dev: { icon: "⌨", color: "#77b7ec", short: "DEV" },
+    plan: { icon: "◇", color: "#b795d8", short: "PLAN" },
+    "browser-test": { icon: "◎", color: "#7fd2c1", short: "BROWSER" },
+    "code-review": { icon: "⌕", color: "#efbd61", short: "REVIEW" },
+    docs: { icon: "≡", color: "#a9ce73", short: "DOCS" },
+    bug: { icon: "⚠", color: "#ef806f", short: "BUG" },
+    "production-issue": { icon: "🔥", color: "#db544d", short: "PROD" },
+  } as const;
 
   let canvas = $state<HTMLCanvasElement>();
   let ctx: CanvasRenderingContext2D | null = null;
-  let phase = $state<"title"|"playing"|"dead"|"won">("title");
-  let dailyBudget = $state(2.0);
+  let phase = $state<"title" | "playing" | "dead" | "won">("title");
   let sandboxMode = $state(false);
-  let budget = $state(2.0);
-  let allowance = $state(.7);
+  let dailyBudget = $state(6);
+  let budget = $state(6);
+  let allowance = $state(2.1);
   let spend = $state(0);
-  let credits = $state(.24);
-  let totalSaved = $state(0);
+  let baseline = $state(0);
+  let reworkSpend = $state(0);
+  let clean = $state(0);
+  let bad = $state(0);
+  let overkill = $state(0);
+  let wasted = $state(0);
   let waveIndex = $state(0);
+  let live = $state<LiveTask[]>([]);
+  let queue = $state<Array<{ task: DispatchTask; at: number }>>([]);
+  let pops = $state<Pop[]>([]);
+  let selectedId = $state<string | null>(null);
   let running = $state(false);
   let speed = $state(1);
-  let selected = $state<TowerKind | null>("prefix");
-  let selectedTowerId = $state<number | null>(null);
-  let status = $state("Pick a tower, then tap a grass tile beside the path.");
-  let balloons = $state<Balloon[]>([]);
-  let towers = $state<Tower[]>([]);
-  let floats = $state<FloatText[]>([]);
-  let spawnQueue = $state<Array<TDWave["balloons"][number] & { at: number }>>([]);
+  let status = $state("Start the stream. Click a task, then dispatch a monkey.");
+  let toggles = $state<DispatchToggles>({ ...DEFAULT_TOGGLES });
   let waveElapsed = 0;
-  let simMinutes = 0;
-  let nextId = 1;
   let lastFrame = 0;
   let raf = 0;
+  let actualTouches = new Map<string, number>();
+  let baselineTouches = new Map<string, number>();
   let challengeCode = $state(`function cacheReadCost(tokens, dollarPerMTok) {\n  // TODO: warm reads use the 0.1× rate\n  return 0;\n}`);
   let testOutput = $state<string[]>([]);
   let challengePassed = $state(false);
-  let spentPct = $derived(sandboxMode ? 0 : Math.min(100, spend / budget * 100));
-  let overdraft = $derived(overdraftLeft(spend, budget, allowance));
-  let activeWave = $derived(waves[waveIndex]);
 
-  function money(n: number) { return `$${n.toFixed(n < .1 ? 3 : 2)}`; }
-  function startGame() {
-    budget = dailyBudget; allowance = sandboxMode ? 0 : dailyBudget * .35; spend = 0; credits = sandboxMode ? 999 : .24;
-    totalSaved = 0; waveIndex = 0; balloons = []; towers = []; floats = [];
-    spawnQueue = []; running = false; speed = 1; phase = "playing"; simMinutes = 0;
-    status = "Place a Prefix Cacher near the first bend, then start the wave.";
+  let selectedTask = $derived(live.find(task => task.id === selectedId));
+  let activeWave = $derived(waves[waveIndex]);
+  let delta = $derived(baseline - spend);
+  let overdraft = $derived(overdraftLeft(spend, budget, allowance));
+  let spentPct = $derived(sandboxMode ? 0 : Math.min(100, spend / budget * 100));
+
+  function money(value: number) { return `$${value.toFixed(value < 0.1 ? 3 : 2)}`; }
+  function monkeyName(monkey: Monkey) { return `${monkey.model[0].toUpperCase()}${monkey.model.slice(1)} · ${monkey.effort}`; }
+  function touchKey(task: DispatchTask, monkey: Monkey) { return `${monkey.model}:${task.prefixKey}`; }
+  function priorFor(map: Map<string, number>, task: DispatchTask, monkey: Monkey) {
+    const prior = map.get(touchKey(task, monkey));
+    return prior !== undefined && prior <= task.atMin ? prior : undefined;
   }
-  function restart() { phase = "title"; running = false; balloons = []; towers = []; spawnQueue = []; }
+  function remember(map: Map<string, number>, task: DispatchTask, monkey: Monkey) {
+    const key = touchKey(task, monkey);
+    map.set(key, Math.max(map.get(key) ?? Number.NEGATIVE_INFINITY, task.atMin));
+  }
+
+  function startGame() {
+    budget = dailyBudget;
+    allowance = sandboxMode ? 0 : dailyBudget * 0.35;
+    spend = baseline = reworkSpend = wasted = 0;
+    clean = bad = overkill = waveIndex = 0;
+    live = []; queue = []; pops = []; selectedId = null; running = false; speed = 1;
+    toggles = { ...DEFAULT_TOGGLES };
+    actualTouches = new Map(); baselineTouches = new Map();
+    phase = "playing";
+    status = "Start the first live workload. Unrouted tasks fall back to Opus-high.";
+  }
+
+  function restart() {
+    phase = "title"; running = false; live = []; queue = []; selectedId = null;
+  }
 
   function startWave() {
-    if (running || balloons.length || spawnQueue.length || phase !== "playing") return;
-    const wave = waves[waveIndex];
-    if (!wave) return;
+    if (phase !== "playing" || running || live.length || queue.length || !activeWave) return;
     waveElapsed = 0;
-    spawnQueue = wave.balloons.map(b => ({...b, at:b.delay}));
+    const gaps = activeWave.tasks.map((task, index) => index === 0 ? 0 : task.atMin - activeWave.tasks[index - 1].atMin);
+    let at = 0;
+    queue = activeWave.tasks.map((task, index) => {
+      at += index === 0 ? 0.25 : Math.min(3.2, 0.7 + Math.max(0, gaps[index]) * 0.075);
+      return { task, at };
+    });
     running = true;
-    status = `Incoming: ${wave.name}!`;
+    status = `LIVE: ${activeWave.name}. Click a task before it reaches AUTO →`;
   }
 
-  function spawn(spec: TDWave["balloons"][number]) {
-    const economy = economyFromLedger(spec.entry, waves[waveIndex].options);
-    balloons = [...balloons, {
-      id: nextId++, ...economy,
-      prefix:spec.prefix, prompt:spec.prompt ?? spec.prefix, subagent:Boolean(spec.subagent),
-      atMin: spec.entry.atMin + waveIndex * 1_000,
-      progress:0, speed:.092 + Math.min(.025, 28_000/economy.tokens*.012), processed:new Set(),
-    }];
+  function spawn(task: DispatchTask) {
+    const lane = task.type === "production-issue" ? 2 : task.type === "bug" ? 0 : live.length % 3;
+    live = [...live, { ...task, progress: 0, lane }];
   }
 
-  function pointAt(progress: number) {
-    const lengths = path.slice(1).map((p,i) => Math.hypot(p.x-path[i].x,p.y-path[i].y));
-    const total = lengths.reduce((a,b)=>a+b,0); let left = progress*total;
-    for (let i=0;i<lengths.length;i++) {
-      if (left <= lengths[i]) { const t=left/lengths[i]; return {x:path[i].x+(path[i+1].x-path[i].x)*t,y:path[i].y+(path[i+1].y-path[i].y)*t}; }
-      left -= lengths[i];
+  function quote(monkey: Monkey): number {
+    if (!selectedTask) return 0;
+    return priceRoutedTask(selectedTask, monkey, toggles, priorFor(actualTouches, selectedTask, monkey)).usd;
+  }
+
+  function dispatch(taskId: string, monkey: Monkey, automatic = false) {
+    const task = live.find(item => item.id === taskId);
+    if (!task || phase !== "playing") return;
+    const actualPrior = priorFor(actualTouches, task, monkey);
+    const baselinePrior = task.origin === "scenario" ? priorFor(baselineTouches, task, DEFAULT_MONKEY) : undefined;
+    const result = routeTask(task, monkey, toggles, actualPrior, baselinePrior);
+    spend += result.usd;
+    remember(actualTouches, task, monkey);
+    if (task.origin === "scenario") {
+      baseline += result.baselineUsd;
+      remember(baselineTouches, task, DEFAULT_MONKEY);
+    } else {
+      reworkSpend += result.usd;
     }
-    return path[path.length-1];
+    if (result.outcome === "good-fit") clean += 1;
+    if (result.outcome === "bad-output") bad += 1;
+    if (result.outcome === "overkill") { overkill += 1; wasted += result.wastedUsd; }
+
+    const laneY = 88 + task.lane * 76;
+    const x = 80 + task.progress * 700;
+    const text = result.outcome === "bad-output" ? `BAD OUTPUT → +${result.rework.length} rework`
+      : result.outcome === "overkill" ? `OVERKILL · ${money(result.wastedUsd)} waste`
+        : `CLEAN · ${money(result.usd)}`;
+    pops = [...pops, { x, y: laneY, text, tone: result.outcome, life: 1.8 }];
+    live = live.filter(item => item.id !== task.id);
+    selectedId = selectedId === task.id ? null : selectedId;
+
+    result.rework.forEach((rework, index) => {
+      queue = [...queue, { task: rework, at: waveElapsed + 1.2 + index * 1.1 }];
+    });
+    status = automatic
+      ? `AUTO routed ${task.type} to Opus-high: ${result.outcome}. Default is safe, not cheap.`
+      : `${monkeyName(monkey)} → ${task.type}: ${result.outcome.replace("-", " ")}.`;
+
+    if (!sandboxMode && isGameOver(spend, budget, allowance)) {
+      phase = "dead"; running = false; challengePassed = false; testOutput = [];
+    }
   }
-  function dist(a:{x:number;y:number}, b:{x:number;y:number}) { return Math.hypot(a.x-b.x,a.y-b.y); }
-  function addSaving(b: Balloon, amount: number, p:{x:number;y:number}) {
-    if (amount <= .000001) return;
-    credits += amount; totalSaved += amount;
-    floats = [...floats, {x:p.x,y:p.y,text:`+${money(amount)} saved`,life:1.15}];
-  }
+
   function tick(rawDt: number) {
     if (!running || phase !== "playing") return;
-    const dt = Math.min(.035, rawDt) * speed;
-    waveElapsed += dt; simMinutes += dt * 1.4;
-    const due = spawnQueue.filter(s => s.at <= waveElapsed);
-    spawnQueue = spawnQueue.filter(s => s.at > waveElapsed);
-    due.forEach(spawn);
-    for (const tower of towers) if (tower.kind === "warm" && !sandboxMode) credits = Math.max(0, credits - .00035*dt);
-
-    for (const b of balloons) {
-      b.progress += b.speed * dt;
-      const p = pointAt(b.progress);
-      for (const tower of towers) {
-        if (b.processed.has(tower.id) || dist(tower,p) > tower.range) continue;
-        b.processed.add(tower.id);
-        if (tower.kind === "prefix") {
-          const last = tower.memory[b.prefix];
-          const ttl = tower.upgraded ? 60 : 5;
-          if (last !== undefined && b.atMin-last < ttl) addSaving(b, shrinkToRead(b), p);
-          else floats = [...floats,{x:p.x,y:p.y,text:"prefix learned",life:.9}];
-          tower.memory[b.prefix] = b.atMin;
-        } else if (tower.kind === "subagent" && b.subagent) {
-          const twins = balloons.filter(o => o.subagent && o.prompt === b.prompt && Math.abs(o.progress-b.progress)<.18).length;
-          if (twins >= 2) addSaving(b, shrinkToRead(b), p);
-          else floats = [...floats,{x:p.x,y:p.y,text:"varied ≠ cached",life:.8}];
-        } else if (tower.kind === "warm") {
-          const saved = shrinkToRead(b);
-          if (saved) addSaving(b, saved, p);
-        }
+    const dt = Math.min(0.04, rawDt) * speed;
+    waveElapsed += dt;
+    const due = queue.filter(item => item.at <= waveElapsed);
+    queue = queue.filter(item => item.at > waveElapsed);
+    due.forEach(item => spawn(item.task));
+    live = live.map(task => ({ ...task, progress: task.progress + dt * (task.origin === "rework" ? 0.105 : 0.09) }));
+    const escaped = live.filter(task => task.progress >= 1).map(task => task.id);
+    escaped.forEach(id => dispatch(id, DEFAULT_MONKEY, true));
+    pops = pops.map(pop => ({ ...pop, life: pop.life - dt })).filter(pop => pop.life > 0);
+    if (phase === "playing" && running && queue.length === 0 && live.length === 0) {
+      running = false;
+      if (waveIndex >= waves.length - 1) phase = "won";
+      else {
+        waveIndex += 1;
+        status = `Workload cleared. Next: ${waves[waveIndex].name}. Reconfigure before starting.`;
       }
     }
-    const arrived = balloons.filter(b => b.progress >= 1);
-    if (arrived.length) {
-      spend += arrived.reduce((sum,b)=>sum+b.currentCost,0);
-      balloons = balloons.filter(b => b.progress < 1);
-      if (!sandboxMode && isGameOver(spend,budget,allowance)) { phase="dead"; running=false; challengePassed=false; testOutput=[]; }
-    } else balloons = [...balloons];
-    floats = floats.map(f=>({...f,life:f.life-dt})).filter(f=>f.life>0);
-    if (running && !spawnQueue.length && !balloons.length) {
-      running=false;
-      if (waveIndex >= waves.length-1) { phase="won"; }
-      else { waveIndex += 1; status=`Wave cleared. Incoming next: ${waves[waveIndex].name}`; }
+  }
+
+  function cardAt(task: LiveTask) { return { x: 62 + task.progress * 720, y: 57 + task.lane * 76, w: 154, h: 58 }; }
+
+  function boardClick(event: MouseEvent) {
+    if (!canvas || phase !== "playing") return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (event.clientX - rect.left) * W / rect.width;
+    const y = (event.clientY - rect.top) * H / rect.height;
+    const hit = [...live].reverse().find(task => {
+      const card = cardAt(task);
+      return x >= card.x && x <= card.x + card.w && y >= card.y && y <= card.y + card.h;
+    });
+    if (hit) {
+      selectedId = hit.id;
+      status = `Selected ${hit.type}. Ideal: ${FIT_TABLE[hit.type].label}. Pick a monkey now.`;
     }
   }
 
-  function canPlace(x:number,y:number) {
-    if (x<28||x>772||y<30||y>415) return false;
-    for(let i=0;i<path.length-1;i++) {
-      const a=path[i], b=path[i+1], l2=(b.x-a.x)**2+(b.y-a.y)**2;
-      const t=Math.max(0,Math.min(1,((x-a.x)*(b.x-a.x)+(y-a.y)*(b.y-a.y))/l2));
-      if (Math.hypot(x-(a.x+t*(b.x-a.x)),y-(a.y+t*(b.y-a.y)))<40) return false;
+  function drawRoundRect(x: number, y: number, w: number, h: number, radius: number) {
+    ctx?.beginPath(); ctx?.roundRect(x, y, w, h, radius);
+  }
+
+  function draw() {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = "#fffdf7"; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = "#ded9cb"; ctx.lineWidth = 1; ctx.setLineDash([3, 8]);
+    for (let y = 86; y <= 238; y += 76) { ctx.beginPath(); ctx.moveTo(26, y); ctx.lineTo(862, y); ctx.stroke(); }
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#726c61"; ctx.font = "700 12px ui-monospace"; ctx.fillText("INCOMING", 22, 28);
+    ctx.fillText("AUTO → OPUS·HIGH", 746, 28);
+    ctx.strokeStyle = "#37332d"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(854, 42); ctx.lineTo(854, 291); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(847, 51); ctx.lineTo(854, 42); ctx.lineTo(861, 51); ctx.stroke();
+
+    for (const task of live) {
+      const meta = typeMeta[task.type];
+      const card = cardAt(task);
+      drawRoundRect(card.x, card.y, card.w, card.h, 12);
+      ctx.fillStyle = selectedId === task.id ? "#fff4b8" : meta.color; ctx.fill();
+      ctx.strokeStyle = selectedId === task.id ? "#1e1d1a" : "#4b463f"; ctx.lineWidth = selectedId === task.id ? 3 : 1.5; ctx.stroke();
+      ctx.fillStyle = "#24221e"; ctx.font = "900 12px ui-monospace"; ctx.fillText(`${meta.icon} ${meta.short}`, card.x + 10, card.y + 20);
+      ctx.font = "11px system-ui";
+      const title = task.title.length > 22 ? `${task.title.slice(0, 22)}…` : task.title;
+      ctx.fillText(title, card.x + 10, card.y + 41);
+      if (task.origin === "rework") { ctx.fillStyle = "#a32d2d"; ctx.font = "900 9px ui-monospace"; ctx.fillText("REWORK", card.x + 105, card.y + 18); }
+      ctx.beginPath(); ctx.moveTo(card.x + 18, card.y + card.h); ctx.lineTo(card.x + 14, card.y + card.h + 9); ctx.stroke();
     }
-    return !towers.some(t=>Math.hypot(x-t.x,y-t.y)<48);
+    for (const pop of pops) {
+      ctx.globalAlpha = Math.min(1, pop.life * 1.4);
+      ctx.fillStyle = pop.tone === "good-fit" ? "#167a4a" : pop.tone === "overkill" ? "#996100" : "#bd332e";
+      ctx.font = "900 13px system-ui"; ctx.fillText(pop.text, pop.x, pop.y - (1.8 - pop.life) * 24);
+      ctx.globalAlpha = 1;
+    }
   }
-  function boardClick(e: MouseEvent) {
-    if (phase!=="playing") return;
-    if (!canvas) return;
-    const rect=canvas.getBoundingClientRect(), x=(e.clientX-rect.left)*W/rect.width, y=(e.clientY-rect.top)*H/rect.height;
-    const hit=towers.find(t=>dist(t,{x,y})<23);
-    if(hit){selectedTowerId=hit.id;selected=null;status=hit.kind==="prefix"?"Selected Prefix Cacher — upgrade its memory to 1 hour below.":"Tower selected.";return;}
-    if(!selected) return;
-    const item=shop[selected];
-    if(!sandboxMode && credits<item.price){status=`Need ${money(item.price-credits)} more credits.`;return;}
-    if(!canPlace(x,y)){status="That tile blocks the path (or another tower). Try the grass.";return;}
-    towers=[...towers,{id:nextId++,kind:selected,x,y,range:item.range,upgraded:false,memory:{}}];
-    if (!sandboxMode) credits-=item.price; selectedTowerId=null; status=`${item.name} placed. ${sandboxMode ? "Experiment freely." : "Efficiency must fund the next one!"}`;
-  }
-  function upgradeSelected() {
-    const tower=towers.find(t=>t.id===selectedTowerId);
-    if(!tower||tower.kind!=="prefix"||tower.upgraded) return;
-    if(!sandboxMode && credits<.08){status="The 1h TTL upgrade costs $0.08 credits.";return;}
-    if (!sandboxMode) credits-=.08;tower.upgraded=true;towers=[...towers];status="Memory upgraded: 5m → 60m. Lunch breaks no longer scare it.";
-  }
+
   function runChallenge() {
-    testOutput=[];
+    testOutput = [];
     try {
-      // The exercise receives no browser/network capabilities; only its numeric return values matter.
       const factory = new Function(
         "globalThis", "self", "window", "document", "fetch", "XMLHttpRequest", "WebSocket",
         "navigator", "location", "localStorage", "sessionStorage",
         `"use strict";\n${challengeCode}\nreturn typeof cacheReadCost === "function" ? cacheReadCost : null;`,
       );
-      const fn = factory(
-        undefined, undefined, undefined, undefined, undefined, undefined,
-        undefined, undefined, undefined, undefined, undefined,
-      ) as null | ((a:number,b:number)=>unknown);
-      if(!fn) throw new Error("cacheReadCost was not defined");
-      const cases:[[number,number,number],[number,number,number],[number,number,number]]=[[20_000,3,.006],[100_000,5,.05],[1_000_000,10,1]];
-      let ok=true; const lines:string[]=[];
-      cases.forEach(([tok,rate,expected],i)=>{const got=fn(tok,rate);const pass=typeof got==="number"&&Number.isFinite(got)&&Math.abs(got-expected)<1e-9;ok&&=pass;lines.push(pass?`✓ test ${i+1} passed`:`✗ test ${i+1}: expected ${expected}, got ${String(got)}`);});
-      testOutput=lines; challengePassed=ok;
-    } catch(e) { testOutput=[`✗ Build failed: ${e instanceof Error?e.message:String(e)}`];challengePassed=false; }
-  }
-  function revive() {
-    spend=Math.min(spend,budget+allowance*.5);phase="playing";running=true;challengePassed=false;
-    status="Rehired! ☕ Claude's awake again. Half your overdraft was restored.";
+      const fn = factory(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined) as null | ((a:number,b:number)=>unknown);
+      if (!fn) throw new Error("cacheReadCost was not defined");
+      const cases: [number, number, number][] = [[20_000,3,.006],[100_000,5,.05],[1_000_000,10,1]];
+      let ok = true;
+      testOutput = cases.map(([tok, rate, expected], index) => {
+        const got = fn(tok, rate);
+        const pass = typeof got === "number" && Number.isFinite(got) && Math.abs(got - expected) < 1e-9;
+        ok &&= pass;
+        return pass ? `✓ test ${index + 1} passed` : `✗ test ${index + 1}: expected ${expected}, got ${String(got)}`;
+      });
+      challengePassed = ok;
+    } catch (error) {
+      testOutput = [`✗ Build failed: ${error instanceof Error ? error.message : String(error)}`]; challengePassed = false;
+    }
   }
 
-  function draw() {
-    if(!ctx) return;
-    ctx.clearRect(0,0,W,H);ctx.fillStyle="#f8f4df";ctx.fillRect(0,0,W,H);
-    ctx.strokeStyle="rgba(49,83,47,.10)";ctx.lineWidth=1;
-    for(let x=20;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
-    for(let y=20;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
-    ctx.strokeStyle="#d8c597";ctx.lineWidth=48;ctx.lineCap="round";ctx.lineJoin="round";ctx.beginPath();ctx.moveTo(path[0].x,path[0].y);path.slice(1).forEach(p=>ctx!.lineTo(p.x,p.y));ctx.stroke();
-    ctx.strokeStyle="#7b6b4b";ctx.lineWidth=2;ctx.setLineDash([7,8]);ctx.stroke();ctx.setLineDash([]);
-    ctx.font="bold 16px system-ui";ctx.fillStyle="#27251f";ctx.fillText("Prompt",10,35);ctx.fillText("Wallet 💸",700,404);
-    ctx.font="13px system-ui";ctx.fillStyle="#8b6734";ctx.fillText("⏳ TTL gate",505,285);
-    for(const t of towers){
-      if(t.id===selectedTowerId||selected===t.kind){ctx.beginPath();ctx.arc(t.x,t.y,t.range,0,Math.PI*2);ctx.fillStyle="rgba(54,133,85,.07)";ctx.fill();ctx.strokeStyle="rgba(54,133,85,.28)";ctx.lineWidth=1;ctx.stroke();}
-      ctx.beginPath();ctx.arc(t.x,t.y,22,0,Math.PI*2);ctx.fillStyle=t.kind==="prefix"?"#6e8fbe":t.kind==="warm"?"#d69d55":"#8c70b4";ctx.fill();ctx.strokeStyle="#282621";ctx.lineWidth=2;ctx.stroke();ctx.font="23px system-ui";ctx.textAlign="center";ctx.fillText(shop[t.kind].icon,t.x,t.y+8);ctx.textAlign="left";
-      if(t.upgraded){ctx.fillStyle="#282621";ctx.font="bold 10px system-ui";ctx.fillText("1h",t.x+14,t.y-17);}
-    }
-    for(const b of balloons){
-      const p=pointAt(b.progress), ratio=Math.max(0,Math.min(1,b.currentCost/b.fullCost));
-      const radius=10+Math.sqrt(b.currentCost/.006)*4;
-      const red=Math.round(52+205*ratio), green=Math.round(174-95*ratio);
-      ctx.beginPath();ctx.ellipse(p.x,p.y,radius*.86,radius,0,0,Math.PI*2);ctx.fillStyle=`rgb(${red},${green},75)`;ctx.fill();ctx.strokeStyle="#342d25";ctx.lineWidth=1.5;ctx.stroke();
-      ctx.beginPath();ctx.moveTo(p.x,p.y+radius);ctx.lineTo(p.x-3,p.y+radius+8);ctx.stroke();
-      ctx.fillStyle="#1f201d";ctx.font=`bold ${radius>17?10:8}px ui-monospace`;ctx.textAlign="center";ctx.fillText(money(b.currentCost),p.x,p.y+3);ctx.textAlign="left";
-    }
-    for(const f of floats){ctx.globalAlpha=Math.min(1,f.life*2);ctx.fillStyle=f.text.includes("saved")?"#167a48":"#a04431";ctx.font="bold 13px system-ui";ctx.fillText(f.text,f.x-28,f.y-(1.2-f.life)*18);ctx.globalAlpha=1;}
+  function revive() {
+    spend = Math.min(spend, budget + allowance * .5); phase = "playing"; running = true; challengePassed = false;
+    status = "Rehired! ☕ Claude is awake. Route the remaining tasks before AUTO does.";
   }
-  onMount(()=>{
+
+  onMount(() => {
     if (!canvas) return;
-    ctx=canvas.getContext("2d");
-    const frame=(now:number)=>{const dt=lastFrame?(now-lastFrame)/1000:0;lastFrame=now;tick(dt);draw();raf=requestAnimationFrame(frame);};
-    raf=requestAnimationFrame(frame);return()=>cancelAnimationFrame(raf);
+    ctx = canvas.getContext("2d");
+    const frame = (now: number) => {
+      const dt = lastFrame ? (now - lastFrame) / 1000 : 0; lastFrame = now;
+      tick(dt); draw(); raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
   });
 </script>
 
 <section class="td-shell">
-  <header class="topline"><button class="back" onclick={onback}>← Back to map</button><div><h1>🎈 Tokenloons TD</h1><p>{sandboxMode ? "No-lose cost laboratory." : "Defend your budget."}</p></div><button class="restart" onclick={restart}>↻ Restart</button></header>
+  <header class="topline">
+    <button class="sketch" onclick={onback}>← Map</button>
+    <div><h1>🎈 Tokenloons TD</h1><p>live Claude Code dispatch</p></div>
+    <button class="sketch" onclick={restart}>↻ Restart</button>
+  </header>
 
   {#if phase === "title"}
     <div class="title-card">
-      <div class="hero-balloons"><i></i><i></i><i></i></div>
-      <h2>Tokenloons TD</h2><p class="tag">Defend your budget.</p>
-      <p>Requests are drifting toward your Wallet. Cache towers shrink expensive red writes into tiny green reads. The dollars you save become your building credits.</p>
-      <label class="mode-pick"><input type="checkbox" bind:checked={sandboxMode}/><span><b>Sandbox Mode</b><small>Unlimited towers · no overdraft · no death</small></span></label>
+      <div class="balloons" aria-hidden="true"><i></i><i></i><i></i></div>
+      <h2>Your default monkey is expensive.</h2>
+      <p>Tasks stream toward <b>Opus-high</b>. It gets the work right, but using it for docs, browser checks, and tiny reviews quietly eats your budget. Route each task to the cheapest worker that can do it well.</p>
+      <div class="lesson"><span>too weak → bugs → production fires</span><span>good fit → clean savings</span><span>too strong → wasted spend</span></div>
+      <label class="mode"><input type="checkbox" bind:checked={sandboxMode}><span><b>Sandbox mode</b><small>No budget, no death. Same tasks and economics.</small></span></label>
       {#if !sandboxMode}
-        <label class="budget-pick">Daily budget: <strong>{money(dailyBudget)}</strong><input type="range" min="1" max="3" step=".25" bind:value={dailyBudget}/></label>
-        <div class="difficulty"><span>🔥 $1.00 lean</span><span>☁️ $3.00 roomy</span></div>
-        <p class="overdraft-note">Overdraft allowance: <b>{money(dailyBudget*.35)}</b> beyond budget. At zero, Claude clocks out.</p>
-      {:else}
-        <p class="overdraft-note">All five waves use the exact same scenarios and ledger as the Conversation Sandbox.</p>
+        <label class="budget">Budget <b>{money(dailyBudget)}</b><input type="range" min="2" max="15" step=".5" bind:value={dailyBudget}></label>
+        <small class="overdraft-note">plus {money(dailyBudget * .35)} overdraft; revive in the mock IDE if it runs dry</small>
       {/if}
-      <button class="primary big" onclick={startGame}>{sandboxMode ? "Enter the cost lab" : "Start the workday"} →</button>
+      <button class="primary big" onclick={startGame}>Clock in →</button>
     </div>
   {:else}
-    <div class="hud-grid">
-      {#if sandboxMode}
-        <div class="metric"><small>SPENT SO FAR</small><b>{money(spend)}</b></div>
-        <div class="metric"><small>SAVED SO FAR</small><b class="green">{money(totalSaved)}</b></div>
-        <div class="metric"><small>BUILD LIMIT</small><b>∞ FREE</b></div>
-      {:else}
-        <div class="meter-card"><div class="metric"><small>SPEND / BUDGET</small><b>{money(spend)} <em>/ {money(budget)}</em></b></div><div class="bar"><i style={`width:${spentPct}%`}></i></div></div>
-        <div class="metric"><small>OVERDRAFT</small><b class:danger={overdraft<allowance*.25}>🫀 {money(overdraft)}</b></div>
-        <div class="metric"><small>BUILD CREDITS</small><b class="green">✦ {money(credits)}</b></div>
-      {/if}
-      <div class="metric"><small>WAVE</small><b>{Math.min(waveIndex+1,5)} / 5</b></div>
+    <div class="hud">
+      <div class="metric budget-meter"><small>{sandboxMode ? "SCORE · SPEND INCL. REWORK" : "SCORE · SPEND / BUDGET"}</small><b>{money(spend)} {#if !sandboxMode}<em>/ {money(budget)}</em>{/if}</b>{#if !sandboxMode}<div class="bar"><i style={`width:${spentPct}%`}></i></div>{/if}</div>
+      <div class="metric"><small>DEFAULT WOULD COST</small><b>{money(baseline)}</b><span class:loss={delta < 0}>{delta >= 0 ? `${money(delta)} saved` : `${money(-delta)} worse`}</span></div>
+      <div class="metric"><small>QUALITY</small><b><span class="green">{clean}✓</span> · <span class="red">{bad} bad</span></b><span>{reworkSpend ? `${money(reworkSpend)} rework` : "no rework yet"}</span></div>
+      <div class="metric"><small>OVERKILL</small><b>{overkill} tasks</b><span>{money(wasted)} avoidable</span></div>
+      {#if !sandboxMode}<div class="metric"><small>OVERDRAFT LEFT</small><b class:red={overdraft < allowance * .25}>{money(overdraft)}</b><span>after budget</span></div>{/if}
     </div>
-    <div class="incoming"><b>Incoming: {activeWave?.name ?? "Day complete"}</b><span>{activeWave?.lesson}</span></div>
+
+    <div class="wave-note"><b>{waveIndex + 1}/{waves.length} · {activeWave?.name}</b><span>{activeWave?.lesson}</span></div>
+
+    <div class="config-rail" aria-label="Free global configuration">
+      <strong>FREE CONFIG →</strong>
+      <label><input type="checkbox" bind:checked={toggles.keepWarm}> ☕ keep-warm <small>pings across idle gaps</small></label>
+      <div class="seg"><button class:active={toggles.ttl === "5m"} onclick={() => toggles.ttl = "5m"}>TTL 5m</button><button class:active={toggles.ttl === "1h"} onclick={() => toggles.ttl = "1h"}>TTL 1h</button></div>
+      <div class="seg"><button class:active={toggles.approval === "auto"} onclick={() => toggles.approval = "auto"}>auto-approve</button><button class:active={toggles.approval === "manual"} onclick={() => toggles.approval = "manual"}>manual</button></div>
+      <label title="Lazy-loaded only for docs; reduces the docs context token bucket."><input type="checkbox" bind:checked={toggles.docsSkill}> 📚 lazy docs skill</label>
+      <label class="mcp" title="An honest anti-pattern: its 12k context tokens are priced on every task."><input type="checkbox" bind:checked={toggles.alwaysLoadedMcp}> 🔌 always-loaded MCP</label>
+    </div>
+
     <div class="game-grid">
-      <aside class="shop-panel">
-        <h3>Tower shop</h3>
-        {#each Object.entries(shop) as [key,item]}
-          <button class:selected={selected===key} class="shop-item" onclick={()=>{selected=key as TowerKind;selectedTowerId=null;}} disabled={phase!=="playing"}>
-            <span class="tower-icon">{item.icon}</span><span><b>{item.name}</b><small>{item.blurb}</small></span><strong>{sandboxMode ? "FREE" : money(item.price)}</strong>
+      <aside class="roster">
+        <h3>Monkey roster</h3>
+        <p class="selection">{#if selectedTask}<b>{typeMeta[selectedTask.type].icon} {selectedTask.type}</b><small>Ideal: {FIT_TABLE[selectedTask.type].label}</small>{:else}<b>Click a moving task</b><small>Otherwise AUTO uses Opus-high.</small>{/if}</p>
+        {#each ROSTER as monkey}
+          <button class:default={monkey.model === "opus" && monkey.effort === "high"} onclick={() => selectedTask && dispatch(selectedTask.id, monkey)} disabled={!selectedTask || phase !== "playing"}>
+            <span><b>{monkeyName(monkey)}</b><small>${MODEL_IN[monkey.model]}/M input · {monkey.effort} thinking</small></span>
+            <strong>{selectedTask ? money(quote(monkey)) : "—"}</strong>
           </button>
         {/each}
-        <div class="upgrade-box">
-          <b>📌 Prefix upgrade</b><small>1h TTL: memory survives the idle wave.</small>
-          <button onclick={upgradeSelected} disabled={!selectedTowerId || towers.find(t=>t.id===selectedTowerId)?.kind!=="prefix" || towers.find(t=>t.id===selectedTowerId)?.upgraded}>Upgrade selected · {sandboxMode ? "FREE" : "$0.08"}</button>
-        </div>
-        <p class="tip">Tip: tap a placed tower to select it. Savings are real build income.</p>
+        <p class="fineprint">Quotes use the shared token ledger with your current config. “Fable” is powerful, fictional, and comically pricey.</p>
       </aside>
+
       <main class="board-wrap">
-        <canvas bind:this={canvas} width={W} height={H} onclick={boardClick} aria-label="Tokenloons tower defense field"></canvas>
+        <canvas bind:this={canvas} width={W} height={H} onclick={boardClick} aria-label="Live task dispatch lane; click a task to select it"></canvas>
         <div class="status">✎ {status}</div>
         <div class="controls">
-          <button class="primary" onclick={startWave} disabled={running||balloons.length>0||spawnQueue.length>0||phase!=="playing"}>▶ Start wave {Math.min(waveIndex+1,5)}</button>
-          <button onclick={()=>running=!running} disabled={phase!=="playing"||(!running&&!balloons.length&&!spawnQueue.length)}>{running?"Ⅱ Pause":"▶ Resume"}</button>
-          <button onclick={()=>speed=speed===1?2:1}>{speed}× speed</button>
-          <span>{sandboxMode ? "Spent / saved" : "Saved today"}: <b>{sandboxMode ? `${money(spend)} / ${money(totalSaved)}` : money(totalSaved)}</b></span>
+          <button class="primary" onclick={startWave} disabled={running || live.length > 0 || queue.length > 0 || phase !== "playing"}>▶ Start {activeWave?.name}</button>
+          <button class="sketch" onclick={() => running = !running} disabled={phase !== "playing" || (!running && !live.length && !queue.length)}>{running ? "Ⅱ Pause" : "▶ Resume"}</button>
+          <button class="sketch" onclick={() => speed = speed === 1 ? 1.7 : 1}>{speed}×</button>
+          <span>{live.length} active · {queue.length} incoming</span>
         </div>
       </main>
     </div>
@@ -288,24 +338,25 @@
 </section>
 
 {#if phase === "dead" && !sandboxMode}
-  <div class="death-scrim">
+  <div class="scrim">
     <div class="ide">
       <div class="ide-top"><span class="dots">● ● ●</span><b>cache-rescue.ts — 1 problem</b><span>BUILD FAILED</span></div>
-      <div class="death-copy"><h2>💸 Out of tokens.</h2><p><b>Your boss is NOT happy.</b> Claude's asleep — write the function yourself to earn your job back. Or start over.</p></div>
+      <div class="death-copy"><h2>💸 Out of tokens.</h2><p><b>Your boss is NOT happy.</b> Claude is asleep — write the function yourself to get the dispatch desk back.</p></div>
       <div class="editor"><div class="lines">1<br>2<br>3<br>4</div><textarea bind:value={challengeCode} spellcheck="false" aria-label="Cache cost coding challenge"></textarea></div>
       <p class="spec">Return the warm cache-read cost: <code>tokens × 0.1 × dollarPerMTok ÷ 1,000,000</code></p>
-      {#if testOutput.length}<pre class:passing={challengePassed}>{testOutput.join("\n")}{challengePassed?"\n\n✓ 3 passed. Rehire paperwork suspiciously fast.":"\n\nTests failed. The red balloon remains employed."}</pre>{/if}
-      {#if challengePassed}<div class="rehired">Rehired! ☕ Claude's awake again.</div>{/if}
-      <div class="ide-actions"><button class="run" onclick={runChallenge}>▷ Run tests</button>{#if challengePassed}<button class="revive" onclick={revive}>Resume workday →</button>{/if}<button onclick={restart}>Give up & start over</button></div>
+      {#if testOutput.length}<pre class:passing={challengePassed}>{testOutput.join("\n")}{challengePassed ? "\n\n✓ 3 passed. Rehire paperwork suspiciously fast." : "\n\nTests failed. The production fire remains employed."}</pre>{/if}
+      {#if challengePassed}<div class="rehired">Rehired! ☕ Claude is awake again.</div>{/if}
+      <div class="ide-actions"><button class="run" onclick={runChallenge}>▷ Run tests</button>{#if challengePassed}<button class="revive" onclick={revive}>Resume dispatch →</button>{/if}<button onclick={restart}>Start over</button></div>
     </div>
   </div>
 {/if}
 
 {#if phase === "won"}
-  <div class="death-scrim"><div class="win-card"><div class="confetti">🎈 ✨ 🎈</div><h2>{sandboxMode ? "Scenario lab complete!" : "Budget defended!"}</h2><p>{sandboxMode ? `The shared scenarios spent ${money(spend)} with your tower setup.` : `You survived the workday with ${money(spend)} spent against a ${money(budget)} budget.`}</p><div class="saved-total">You saved {money(totalSaved)} by caching</div><p>{sandboxMode ? "No limits, no losing — just a clean view of the economics." : "The Wallet would like to formally recognize your aggressive reuse of prefixes."}</p><button class="primary" onclick={restart}>Play another day</button><button onclick={onback}>Back to map</button></div></div>
+  <div class="scrim"><div class="win-card"><div class="confetti">🎈 ✦ 🎈</div><h2>Workday routed.</h2><p>You spent <b>{money(spend)}</b>. Sending the original workload to Opus-high would have cost <b>{money(baseline)}</b>.</p><div class:negative={delta < 0} class="saved-total">{delta >= 0 ? `You saved ${money(delta)}` : `You overspent by ${money(-delta)}`}</div><p>{bad ? `${bad} bad outputs created ${money(reworkSpend)} of rework. Cheap is only cheap when it still works.` : "No bad-output cascades. Nice judgment."}</p><button class="primary" onclick={restart}>Route another day</button><button class="sketch" onclick={onback}>Back to map</button></div></div>
 {/if}
 
 <style>
-  .td-shell{font-family:ui-rounded,"Comic Sans MS",system-ui,sans-serif;color:#292722}.topline{display:flex;align-items:center;gap:14px;margin-bottom:12px}.topline div{flex:1;text-align:center}.topline h1{font-size:27px;font-weight:900}.topline p{margin:0;color:#6f685c}.back,.restart,.controls button,.win-card button{border:2px solid #34312a;background:white;border-radius:10px;padding:8px 12px;font-weight:750;cursor:pointer;box-shadow:2px 2px 0 #34312a}.title-card{max-width:620px;margin:34px auto;background:#fffdf4;border:3px solid #302d27;border-radius:22px 17px 25px 18px;padding:32px;text-align:center;box-shadow:9px 10px 0 #f0c84c}.title-card h2{font-size:38px;margin:4px 0 0}.tag{font-size:20px;margin:0 0 20px;color:#6b655b}.title-card>p:not(.tag){max-width:480px;margin:12px auto}.hero-balloons{height:56px}.hero-balloons i{display:inline-block;width:40px;height:51px;margin:0 5px;border:2px solid #302d27;border-radius:50% 50% 45% 45%;background:#df5948;transform:rotate(-7deg)}.hero-balloons i:nth-child(2){width:28px;height:38px;background:#eab947;transform:translateY(10px)}.hero-balloons i:nth-child(3){width:19px;height:27px;background:#55ad70;transform:translateY(16px) rotate(8deg)}.mode-pick{display:flex;align-items:center;gap:12px;max-width:390px;margin:18px auto 8px;padding:10px 14px;border:2px solid #302d27;border-radius:12px;background:#ecf8e9;text-align:left;cursor:pointer}.mode-pick input{width:20px;height:20px;accent-color:#258454}.mode-pick span,.mode-pick small{display:block}.mode-pick small{color:#675f54}.budget-pick{display:flex;gap:14px;align-items:center;justify-content:center;font-size:17px;margin-top:16px}.budget-pick input{width:240px;accent-color:#df5948}.difficulty{display:flex;justify-content:space-between;max-width:375px;margin:2px auto;color:#786f62;font-size:11px}.overdraft-note{font-size:13px;color:#765b32}.primary{border:2px solid #292722!important;background:#f2c94c!important;color:#292722!important;box-shadow:3px 3px 0 #292722!important}.primary.big{font-size:17px;padding:12px 22px;border-radius:12px;font-weight:850;cursor:pointer}.hud-grid{display:grid;grid-template-columns:2fr 1fr 1fr .65fr;gap:8px;margin-bottom:9px}.hud-grid>div,.metric{background:#fff;border:2px solid #34312a;border-radius:11px;padding:8px 11px;box-shadow:2px 2px 0 #d9d0ba}.metric small{display:block;font-size:9px;font-weight:850;letter-spacing:.08em;color:#787064}.metric b{font:800 17px ui-monospace,monospace}.metric em{font-size:11px;color:#6f685c}.metric .green,.green{color:#258454}.danger{color:#c63e39}.meter-card .metric{border:0;box-shadow:none;padding:0}.bar{height:7px;background:#eee6d5;border-radius:9px;overflow:hidden}.bar i{display:block;height:100%;background:linear-gradient(90deg,#4fa86b 0 68%,#e2ad3e 78%,#dc5445);transition:width .25s}.incoming{display:flex;gap:10px;align-items:center;padding:8px 13px;margin-bottom:9px;border:2px dashed #a76a31;background:#fff7df;border-radius:10px}.incoming b{white-space:nowrap}.incoming span{font-size:12px;color:#6c6256}.game-grid{display:grid;grid-template-columns:235px 1fr;gap:10px}.shop-panel{background:#fff;border:2px solid #34312a;border-radius:13px;padding:10px;box-shadow:4px 4px 0 #9bc9a2}.shop-panel h3{margin:0 0 8px}.shop-item{width:100%;display:grid;grid-template-columns:34px 1fr auto;align-items:center;gap:5px;text-align:left;border:2px solid #d9d1be;background:#fffdf5;border-radius:9px;padding:8px 6px;margin-bottom:7px;cursor:pointer;color:#292722}.shop-item.selected{border-color:#317b52;background:#e8f6ea;transform:translateX(3px)}.shop-item:disabled{opacity:.6}.tower-icon{font-size:23px}.shop-item b,.shop-item small{display:block}.shop-item b{font-size:12px}.shop-item small{font-size:9px;line-height:1.3;color:#6e675d}.shop-item>strong{font-size:11px}.upgrade-box{border-top:2px dashed #d9d1be;padding-top:9px;margin-top:11px}.upgrade-box b,.upgrade-box small{display:block}.upgrade-box small{font-size:10px;color:#6e675d}.upgrade-box button{width:100%;font-size:10px;margin-top:6px;padding:6px;background:#ece5ff;border:1px solid #776597;border-radius:7px;font-weight:700;cursor:pointer}.tip{font-size:9px;color:#787064;margin:10px 2px 0}.board-wrap{min-width:0}canvas{width:100%;border:3px solid #34312a;border-radius:14px;background:#f8f4df;box-shadow:4px 4px 0 #d8c597;touch-action:manipulation;cursor:crosshair}.status{font:12px/1.4 ui-monospace,monospace;min-height:26px;padding:7px 9px;margin-top:8px;background:#fff;border-left:4px solid #e1b944}.controls{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.controls button{font-size:11px;padding:6px 9px}.controls button:disabled{opacity:.42}.controls span{margin-left:auto;font-size:12px}.death-scrim{position:fixed;z-index:80;inset:0;background:rgba(23,20,17,.8);display:flex;align-items:center;justify-content:center;padding:14px}.ide{width:min(720px,100%);max-height:95vh;overflow:auto;background:#17191e;color:#e4e5e7;border:2px solid #08090b;border-radius:10px;box-shadow:12px 14px 0 rgba(0,0,0,.35);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.ide-top{display:flex;justify-content:space-between;background:#292c33;padding:9px 12px;font-size:11px;color:#adb0b7}.dots{color:#dc5a55;letter-spacing:3px}.death-copy{padding:16px 22px 6px}.death-copy h2{font-size:27px;margin:0;color:#ff7168}.death-copy p{font-family:system-ui;margin:5px 0}.editor{display:flex;margin:6px 20px;background:#111318;border:1px solid #454955}.lines{width:34px;padding:12px 8px;text-align:right;color:#626771;line-height:1.5;user-select:none}.editor textarea{flex:1;min-height:118px;resize:vertical;border:0;outline:0;padding:12px;background:#111318;color:#c9f7cc;font:13px/1.5 ui-monospace,monospace}.spec{margin:10px 22px;font-size:11px}.spec code{color:#ffc66d}.ide pre{margin:10px 22px;padding:10px;background:#211416;border-left:3px solid #ed5b56;color:#ff938e}.ide pre.passing{background:#102018;border-color:#55c67c;color:#8be9a7}.rehired{margin:10px 22px;color:#7fda9d;font:bold 18px system-ui}.ide-actions{display:flex;gap:8px;padding:12px 22px 20px}.ide-actions button{border:1px solid #666b76;background:#292d35;color:#eee;border-radius:5px;padding:8px 12px;font-weight:700;cursor:pointer}.ide-actions .run{background:#287f4d}.ide-actions .revive{background:#e6b944;color:#181818}.win-card{width:min(520px,100%);text-align:center;background:#fffdf4;border:3px solid #292722;border-radius:22px;padding:30px;box-shadow:9px 9px 0 #55a971}.win-card h2{font-size:35px;margin:4px}.confetti{font-size:35px}.saved-total{font-size:23px;font-weight:900;color:#23804f;margin:20px}.win-card button{margin:5px}
-  @media(max-width:760px){.game-grid{grid-template-columns:1fr}.shop-panel{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}.shop-panel h3,.upgrade-box,.tip{grid-column:1/-1}.shop-item{grid-template-columns:1fr;text-align:center}.shop-item small{display:none}.hud-grid{grid-template-columns:1fr 1fr}.incoming{align-items:flex-start;flex-direction:column;gap:1px}.topline h1{font-size:20px}.back,.restart{font-size:10px;padding:6px}.title-card{margin-top:10px;padding:22px 15px}.budget-pick{flex-direction:column}.controls span{margin-left:0}.ide-actions{flex-wrap:wrap}}
+  .td-shell{font-family:ui-rounded,"Comic Sans MS",system-ui,sans-serif;color:#292722}.topline{display:flex;align-items:center;gap:14px;margin-bottom:11px}.topline div{flex:1;text-align:center}.topline h1{margin:0;font-size:27px}.topline p{margin:1px;color:#756e63;font-size:12px}.sketch,.controls button,.win-card button{border:2px solid #34312a;background:#fff;border-radius:9px;padding:7px 11px;font-weight:800;cursor:pointer;box-shadow:2px 2px 0 #34312a}.sketch:disabled,.controls button:disabled{opacity:.4;cursor:not-allowed}.title-card{max-width:720px;margin:32px auto;padding:30px;text-align:center;background:#fffef9;border:3px solid #302d27;border-radius:24px 17px 27px 19px;box-shadow:9px 10px 0 #80cea0}.title-card h2{font-size:34px;margin:8px 0}.title-card>p{max-width:580px;margin:10px auto;line-height:1.55}.balloons{height:48px}.balloons i{display:inline-block;width:34px;height:44px;margin:0 4px;border:2px solid #302d27;border-radius:52% 48% 46% 45%;background:#e36a57;transform:rotate(-6deg)}.balloons i:nth-child(2){width:26px;height:34px;background:#f1c958;transform:translateY(8px)}.balloons i:nth-child(3){width:20px;height:27px;background:#76c98f;transform:translateY(12px) rotate(7deg)}.lesson{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:19px 0}.lesson span{padding:9px;border:1.5px dashed #716b60;border-radius:9px;background:#fff}.mode{display:flex;gap:10px;align-items:center;text-align:left;max-width:370px;margin:15px auto;padding:10px 13px;border:2px solid #302d27;border-radius:11px;background:#ecf8e9}.mode input,.config-rail input{accent-color:#258454}.mode span,.mode small{display:block}.mode small{color:#6c665c}.budget{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:14px}.budget input{width:250px;accent-color:#d6584c}.overdraft-note{display:block;color:#756a58}.primary{border:2px solid #292722!important;background:#f2c94c!important;color:#292722!important;box-shadow:3px 3px 0 #292722!important;font-weight:900}.primary.big{margin-top:18px;padding:11px 20px;border-radius:11px;font-size:16px;cursor:pointer}.hud{display:grid;grid-template-columns:1.25fr repeat(4,1fr);gap:7px;margin-bottom:8px}.metric{min-width:0;padding:8px 10px;background:#fff;border:2px solid #34312a;border-radius:10px;box-shadow:2px 2px 0 #ded5c2}.metric small{display:block;font:850 8px ui-monospace;letter-spacing:.05em;color:#777065}.metric b{display:block;font:850 16px ui-monospace;white-space:nowrap}.metric em{font-size:10px;color:#716a60}.metric>span{display:block;margin-top:2px;font-size:9px;color:#24784a}.metric>span.loss,.red{color:#bd3c36}.green{color:#1e7b4b}.bar{height:5px;margin-top:4px;background:#e8e2d6;border-radius:9px;overflow:hidden}.bar i{display:block;height:100%;background:linear-gradient(90deg,#55ad70,#edbd4e 70%,#db5148);transition:width .2s}.wave-note{display:flex;gap:10px;align-items:center;padding:7px 11px;background:#fff7de;border:2px dashed #aa713b;border-radius:9px;margin-bottom:8px}.wave-note b{white-space:nowrap}.wave-note span{font-size:10px;color:#6d645a}.config-rail{display:flex;gap:7px;align-items:center;flex-wrap:wrap;padding:7px 9px;margin-bottom:8px;border:2px solid #34312a;border-radius:10px;background:#f2f7ff;font-size:10px}.config-rail>strong{font:900 10px ui-monospace}.config-rail label{display:flex;align-items:center;gap:3px;padding:5px 7px;background:#fff;border:1px solid #a8a295;border-radius:7px;cursor:pointer}.config-rail label small{color:#7d7569}.config-rail .mcp{background:#fff0ee}.seg{display:flex}.seg button{padding:5px 7px;border:1px solid #817a70;background:#fff;font-size:10px;font-weight:750;cursor:pointer}.seg button:first-child{border-radius:7px 0 0 7px}.seg button:last-child{border-radius:0 7px 7px 0;border-left:0}.seg button.active{background:#2f7750;color:#fff}.game-grid{display:grid;grid-template-columns:230px 1fr;gap:9px}.roster{padding:10px;background:#fff;border:2px solid #34312a;border-radius:12px;box-shadow:4px 4px 0 #9bc9a2}.roster h3{margin:0 0 7px}.selection{min-height:37px;margin:0 0 8px;padding:7px;background:#fff8d7;border-left:4px solid #e5b93e}.selection b,.selection small{display:block}.selection small{font-size:9px;color:#6c655a}.roster>button{width:100%;display:flex;justify-content:space-between;align-items:center;gap:5px;padding:6px 7px;margin-bottom:5px;text-align:left;border:1.5px solid #bdb6a9;border-radius:8px;background:#fffdf7;cursor:pointer;color:#292722}.roster>button:hover:not(:disabled){transform:translateX(3px);background:#eff9f0}.roster>button.default{border-color:#a46d5c;background:#fff0eb}.roster>button:disabled{opacity:.5;cursor:not-allowed}.roster button b,.roster button small{display:block}.roster button b{font-size:11px}.roster button small{font-size:8px;color:#776f64}.roster button>strong{font:800 10px ui-monospace}.fineprint{margin:7px 2px 0;color:#776f64;font-size:8px;line-height:1.4}.board-wrap{min-width:0}canvas{display:block;width:100%;border:3px solid #34312a;border-radius:13px;background:#fffdf7;box-shadow:4px 4px 0 #d9cfb7;cursor:pointer;touch-action:manipulation}.status{min-height:20px;margin-top:7px;padding:6px 8px;background:#fff;border-left:4px solid #e1b944;font:10px/1.35 ui-monospace}.controls{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:5px}.controls button{font-size:10px;padding:6px 8px}.controls span{margin-left:auto;font-size:9px;color:#736c62}.scrim{position:fixed;z-index:80;inset:0;display:flex;align-items:center;justify-content:center;padding:14px;background:rgba(23,20,17,.82)}.ide{width:min(720px,100%);max-height:95vh;overflow:auto;background:#17191e;color:#e4e5e7;border:2px solid #08090b;border-radius:10px;box-shadow:12px 14px 0 rgba(0,0,0,.35);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.ide-top{display:flex;justify-content:space-between;background:#292c33;padding:9px 12px;font-size:11px;color:#adb0b7}.dots{color:#dc5a55;letter-spacing:3px}.death-copy{padding:16px 22px 6px}.death-copy h2{font-size:27px;margin:0;color:#ff7168}.death-copy p{font-family:system-ui}.editor{display:flex;margin:6px 20px;background:#111318;border:1px solid #454955}.lines{width:34px;padding:12px 8px;text-align:right;color:#626771;line-height:1.5}.editor textarea{flex:1;min-height:118px;resize:vertical;border:0;outline:0;padding:12px;background:#111318;color:#c9f7cc;font:13px/1.5 ui-monospace}.spec{margin:10px 22px;font-size:11px}.spec code{color:#ffc66d}.ide pre{margin:10px 22px;padding:10px;background:#211416;border-left:3px solid #ed5b56;color:#ff938e}.ide pre.passing{background:#102018;border-color:#55c67c;color:#8be9a7}.rehired{margin:10px 22px;color:#7fda9d;font:bold 18px system-ui}.ide-actions{display:flex;gap:8px;padding:12px 22px 20px}.ide-actions button{border:1px solid #666b76;background:#292d35;color:#eee;border-radius:5px;padding:8px 12px;font-weight:700;cursor:pointer}.ide-actions .run{background:#287f4d}.ide-actions .revive{background:#e6b944;color:#181818}.win-card{width:min(540px,100%);padding:30px;text-align:center;background:#fffdf4;border:3px solid #292722;border-radius:22px;box-shadow:9px 9px 0 #55a971}.win-card h2{font-size:34px;margin:5px}.confetti{font-size:34px}.saved-total{margin:18px;font-size:24px;font-weight:900;color:#23804f}.saved-total.negative{color:#bd3c36}.win-card button{margin:5px}
+  @media(max-width:850px){.hud{grid-template-columns:repeat(2,1fr)}.game-grid{grid-template-columns:1fr}.roster{display:grid;grid-template-columns:repeat(2,1fr);gap:4px}.roster h3,.selection,.fineprint{grid-column:1/-1}.roster>button{margin:0}.wave-note{align-items:flex-start;flex-direction:column;gap:2px}.config-rail label small{display:none}}
+  @media(max-width:560px){.topline h1{font-size:20px}.topline .sketch{font-size:9px;padding:6px}.title-card{padding:22px 14px;margin-top:12px}.lesson{grid-template-columns:1fr}.hud{grid-template-columns:1fr 1fr}.metric b{font-size:13px}.config-rail{align-items:stretch}.config-rail>strong{width:100%}.config-rail label{flex:1}.roster{grid-template-columns:1fr 1fr}.roster button small{display:none}.budget{flex-direction:column}.controls span{margin-left:0}.ide-actions{flex-wrap:wrap}}
 </style>

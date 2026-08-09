@@ -11,9 +11,10 @@ export const RATE = { input: 1, read: 0.1, w5m: 1.25, w1h: 2, out: 5 } as const;
 
 // Model base input price per 1,000,000 tokens (C2-C4).
 //   NOTE (drift trap, TC-D): Opus input is $5/M, NOT $15/M.
-export const MODEL_IN: Record<Model, number> = { sonnet: 3, opus: 5, fable: 10 };
+export const MODEL_IN: Record<Model, number> = { haiku: 1, sonnet: 3, opus: 5, fable: 10 };
 
 // Per-1M price table for a model, across all five tiers (for display + assertions).
+// haiku  -> in $1 / read $0.10 / w5m $1.25 / w1h $2 / out $5 (cheap routing tier)
 // sonnet -> in $3 / read $0.30 / w5m $3.75 / w1h $6 / out $15   (C3)
 // opus   -> in $5 / read $0.50 / w5m $6.25 / w1h $10 / out $25  (C2)
 // fable  -> in $10 / read $1 / w5m $12.50 / w1h $20 / out $50   (C4)
