@@ -57,7 +57,7 @@ That is the model for **L13 — The Fleet Audit**. L13 should not feel like thir
 - Color is categorical rather than decorative.
 - Motion is short and tied to the exchange of coins or the transition between states.
 - The voice is friendly, direct, and lightly mischievous.
-- Sound, where present, is subordinate to the visible consequence; the design does not require spectacle to make a choice feel consequential.
+- A full soundtrack and prominent coin and slider effects reinforce actions and transitions, while the visible consequences keep causality readable.
 
 The restraint is doing real work. There is rarely ambiguity about what changed or why.
 
@@ -75,8 +75,8 @@ The sandbox is earned. It arrives after the variables mean something. Offering a
 
 Implementation target:
 
-- Use `PATTERN_PREDICT_BEFORE_REVEAL` in every level.
-- Use `PATTERN_EXPLAIN_THEN_TRANSFER` before completion.
+- Use `predict-before-reveal` in every level.
+- Use the explain-then-transfer composition recipe from OBJECT_MODEL §7.6 before completion; it is a recipe, not an `InteractionPatternId`.
 - Make L13’s five reports behave like named strategies: each developer visibly embodies one prior lesson.
 - Reveal fleet totals only after `SUBMIT_AUDIT_RANKING`.
 - Let the post-attempt counterfactual act as the tournament table.
@@ -143,7 +143,7 @@ The ticket capability badges should be a live validator:
 - `repo-navigation` ✓
 - `team-conventions` ✓
 - `crm-schema` missing
-- prefix size: `11,504 tok`
+- prefix size: `11,504 tok` `[FICTION]`
 - cold workspaces affected: `3`
 
 `SET_SKILL_LOADOUT`, `SET_MEMORY_LOADOUT`, and `SET_MCP_LOADOUT` should update those rows immediately without revealing the optimal loadout. A newly added MCP can satisfy a capability while visibly increasing every cold prefix. The pleasure comes from making all requirements green with the smallest possible stack—not from selecting an answer shown elsewhere.
@@ -207,7 +207,7 @@ Our adaptation must be restrained because the game teaches economics, not overlo
 - L2 adds the audible clock.
 - L3 adds prefix-block tactility.
 - L4 introduces a shared subagent rhythm.
-- L9 adds output coloration.
+- L9 names and explains the already-present output coloration.
 - L13 combines the learned motifs into a quiet fleet “orchestra.”
 
 No layer may exist solely to demand attention. Every sound and motion must identify a reducer consequence.
@@ -271,7 +271,7 @@ The fleet view should make the player feel: “That tiny red rewrite I learned i
 
 ---
 
-### Spend — neal.fun
+### Spend Bill Gates’ Money — neal.fun
 
 #### Core loop
 
@@ -347,11 +347,11 @@ The global percentage is not an answer key. It is a mirror shown after the playe
 
 `UI_COUNTERFACTUAL_OVERLAY` should feel like the post-choice percentage reveal:
 
-- “You kept the ping: `$0.004`.”
-- “The rebuild would have cost `$0.098`.”
-- “Your choice saved `$0.094`.”
+- “You kept the ping: `$0.004` `[FICTION]`.”
+- “The rebuild would have cost `$0.098` `[FICTION]`.”
+- “Your choice saved `$0.094` `[FICTION]`.”
 
-Use this in L6, L7, L8, L10, and L13. The comparison earns attention because the player cannot revise their prediction after seeing it.
+Use this in L2, L6, L7, L8, L10, L11, L12, and L13. The comparison earns attention because the player cannot revise their prediction after seeing it.
 
 ---
 
@@ -413,48 +413,42 @@ The camera should zoom out while preserving the selected row as a visible thread
 | **Visual accretion** | Let acquired systems remain visible as later systems arrive. | Progress changes the world, not just a badge. | Campaign-wide: `UI_TAPE_RENDERER`, then `UI_TTL_DRAIN_BAR`, `UI_PREFIX_STACK_VISUALIZER`, subagent lanes, workload colors, and finally the fleet rollup. |
 | **Layered audio accretion** | Give each learned system a restrained sonic identity, then recombine them. | Recognition makes later complexity feel mastered. | Read/write cues begin in L1; TTL in L2; prefix boundary in L3; wave rhythm in L4; output cue in L9; combined fleet mix in L13. |
 | **Sandbox-then-consequence** | Let the player manipulate a small system, then run it deterministically. | Encourages hypothesis formation while preserving the drama of commitment. | L3 block assembly, L4 width grouping, L6 tier selection, L7 ping placement, L11 loadout, L12 reorder, L13 remediation. |
-| **Counterfactual payoff** | Compare the actual run to one alternate after the attempt. | Resolves “what if?” without giving away the decision. | `PATTERN_COUNTERFACTUAL_AFTER_ATTEMPT` in L2, L6, L7, L8, L10, L11, L12, and L13. |
-| **Phase-change reveal** | Reframe familiar primitives at a larger scale. | Makes prior mastery feel consequential and renews curiosity. | L9 introduces output as a new cost dimension; L13 turns `LedgerRow[]` into fleet economics. |
+| **Counterfactual payoff** | Compare the actual run to one alternate after the attempt. | Resolves “what if?” without giving away the decision. | `counterfactual-after-attempt` in L2, L6, L7, L8, L10, L11, L12, and L13. |
+| **Phase-change reveal** | Reframe familiar primitives at a larger scale. | Makes prior mastery feel consequential and renews curiosity. | L9 explains output as a cost dimension already encoded in every tape row; L13 turns `LedgerRow[]` into fleet economics. |
 | **Tournament payoff** | Put learned strategies into one shared environment. | The player sees interactions that individual lessons could not expose. | L13’s five developer archetypes and ordering `idle > delegate > 5m-band > MCP` (`C17`). |
-| **Local causal rewind** | Freeze on the decisive frame and return to the last meaningful choice. | Failure becomes information rather than lost time. | `PATTERN_FAIL_FREEZE_REWIND` in L2, L3, L4, L5, L6, L7, L10, L11, L12, and L13. |
+| **Local causal rewind** | Freeze on the decisive frame and return to the last meaningful choice. | Failure becomes information rather than lost time. | `fail-freeze-rewind` in L2, L3, L4, L5, L6, L7, L10, L11, L12, and L13. |
 | **Inspect-to-master** | Keep deeper equations available on hover or focus without forcing them into the main path. | Curious players gain confidence while others retain flow. | `UI_HOVER_PRICE_CALCULATOR` on every `LedgerRow`; report drill-down in L13. |
 | **One-more-reveal** | End each result with a visible but unopened next question. | Curiosity carries the player across level boundaries. | L1 result previews a clock; L2 previews loose prefix blocks; L5 previews two write tiers; L12 previews five sealed reports. Do not preview the answer. |
 
 ### Campaign cadence
 
-The 13 levels should form four rising arcs rather than thirteen equal beats:
+The campaign has three pacing arcs aligned with the canonical `LevelDef.tier` structure:
 
-1. **L1–L3: learn the language**
-   - Red/blue.
-   - Expiry.
-   - Prefix boundary.
-
-2. **L4–L7: race the clock**
-   - Subagent waves.
+1. **Tier 1, L1–L6: read the mechanism**
+   - Red/blue request economics.
+   - Expiry and prefix boundaries.
+   - Shared subagent timing.
    - Prompt identity.
    - Write-tier choice.
-   - Keep-warm policy.
 
-3. **L8–L12: shape the system**
+2. **Tier 2, L7–L10: shape execution**
+   - Keep-warm policy.
    - Routing.
    - Workload/model choice.
    - Planning consequences.
+
+3. **Tier 3, L11–L13: shape the system**
    - Context loadout.
    - Prefix position.
+   - Fleet diagnosis, ranking, and remediation.
 
-4. **L13: see the ecology**
-   - Diagnose.
-   - Rank.
-   - Intervene.
-   - Watch the next month change.
-
-Each arc should end with a transfer challenge that combines its earlier mechanics, but only L13 should combine the entire system.
+This is a pacing lens, not a second progression model. It does not change any level’s `tier` or add a transfer challenge beyond the gates and transfer requirements already declared by its `LevelDef`.
 
 ---
 
 ## 3. Sound design playbook
 
-The game currently has no sound. Add it as a state-derived feedback layer, never as an economic authority. Audio listens to committed reducer transitions and appended ledger evidence; it never determines state, timing, prices, gates, or replay.
+Add sound as a state-derived feedback layer, never as an economic authority. Audio listens to committed reducer transitions and appended ledger evidence; it never determines state, timing, prices, gates, or replay.
 
 ### Audio character
 
@@ -481,7 +475,7 @@ Avoid sci-fi laser sounds. The subject is hidden infrastructure becoming tactile
 | `ADVANCE` changes a previously live `CacheEntry` to expired | **TTL expiry** | Quiet winding-down texture ending in one dry crack/pop. | Fire once on the liveness transition, never on every drained frame. |
 | `ADVANCE` crosses the `dangerThresholdRatio` | **TTL danger** | One subdued clock tick or brushed click. | No repeating alarm. The visual bar carries urgency. |
 | A read refreshes `lastTouchMin` | **TTL refresh** | Very soft upward “settle” paired with the read cue. | Omit if the read cue already makes the refresh obvious in L1. Introduce in L2. |
-| A priced action changes `Wallet.remainingUsd` | **Wallet deduction** | Up to three muted coin ticks, pitch stepping downward with relative wallet impact. | Cap at three ticks regardless of cents; do not sonify every decimal. |
+| A priced action changes reducer `wallet` (adapted to `Wallet.remainingUsd` by the view model) | **Wallet deduction** | Up to three muted coin ticks, pitch stepping downward with relative wallet impact. | Cap at three ticks regardless of cents; do not sonify every decimal. |
 | `DISCARD_CONTEXT` | **Cache clear** | Short suction followed by a hollow click. | Silence the cache’s warm tonal layer immediately. |
 | `SELECT_PREDICTION` | **Selection** | Barely audible card tap. | No correctness color or pitch before commitment. |
 | `COMMIT_PREDICTION` | **Commit** | Firmer latch sound. | Disable repeated playback while locked. |
@@ -540,7 +534,7 @@ For a single-file offline build:
 - Create cues procedurally with the Web Audio API using oscillators, envelopes, filtered noise, and one generated impulse buffer.
 - Initialize `AudioContext` only after the first user gesture.
 - Keep audio state outside `ReducerState`; derive cues from reducer action/result deltas.
-- Use request IDs and action indices to deduplicate cues during Svelte rerenders.
+- Use request IDs and action indices to deduplicate cues during rerenders.
 - Do not fetch audio, fonts, samples, or manifests at runtime.
 - Keep one master gain, semantic buses for `request`, `ui`, `clock`, and `result`, and a hard limiter or conservative master gain.
 - Suspend the context while muted or when the page is hidden.
@@ -559,6 +553,8 @@ For a single-file offline build:
 ---
 
 ## 4. Visualization and juice playbook
+
+Where this playbook and OBJECT_MODEL.md disagree, OBJECT_MODEL.md wins.
 
 ### Global motion grammar
 
@@ -600,10 +596,10 @@ Motion should clarify phase order: choice, execution, consequence, explanation.
 
 - Use `requestAnimationFrame` and Canvas2D.
 - Reveal duration follows the existing contract: `min(1600ms, 500ms + rows×260ms)`.
-- Width uses token count, while price appears as text; do not imply width equals dollars.
+- Row length is proportional to `row.usd` and each segment occupies its bucket’s USD share, per the canonical `tapeWeight` formula in OBJECT_MODEL §6.1. Dollars additionally appear as text.
 - A read emits at most `4–6` small blue motes that travel toward the cache panel.
 - A write emits at most `3–5` heavier red squares that settle into the cache panel.
-- Output, once introduced in L9, trails as a violet cap rather than competing with the input-side causal grammar.
+- Output geometry is present as a violet cap from the first rendered request; L9 gates only its label and pricing explanation behind the bucket prediction.
 - Seed incidental particle positions from `requestId` so screenshots and replay remain stable.
 - Draw the complete final frame when animation completes, without requiring pointer interaction.
 
@@ -613,7 +609,7 @@ Motion should clarify phase order: choice, execution, consequence, explanation.
 - **L3:** tape split and `PREFIX_STACK.firstMismatchBlockId` illuminate simultaneously.
 - **L4:** freeze row 4 at `6:00` beside the expired `5:00` entry.
 - **L5:** pin `11,602` blue and `14,623` red while the changed word is highlighted.
-- **L9:** expose the violet output contribution only after the bucket prediction.
+- **L9:** reveal the label and pricing explanation for the already-present violet output contribution only after the bucket prediction.
 - **L13:** zoom from the selected fleet loss bucket into representative rows.
 
 ### `UI_MAIN_CACHE_PANEL`
@@ -715,7 +711,7 @@ For L13:
 3. Collapse representative rows into a monthly loss strip.
 4. Arrange the five strips into the fleet total.
 5. After remediation, animate affected red rows thinning or disappearing.
-6. Preserve unaffected costs, especially Eli’s legitimate output volume.
+6. Preserve unaffected costs, especially the output-heavy archetype’s legitimate output volume.
 7. End on the before/after total with two representative request pairs still inspectable.
 
 This is the *Size of Space* steal: continuous scale, never a disconnected dashboard swap.
@@ -853,7 +849,7 @@ Never use internal identifiers such as `C28`, `WORK_OUT`, or `PB_CURRENT` in pla
 
 **Why it breaks discovery:** The player remembers lost time rather than the mechanism.
 
-**Guardrail:** Use `PATTERN_FAIL_FREEZE_REWIND`. Freeze on the decisive request, name the cause, and restore the nearest `Checkpoint`.
+**Guardrail:** Use `fail-freeze-rewind`. Freeze on the decisive request, name the cause, and restore the nearest `Checkpoint`.
 
 ### Fake urgency
 
@@ -873,11 +869,11 @@ Never use internal identifiers such as `C28`, `WORK_OUT`, or `PB_CURRENT` in pla
 
 ### Decorative data
 
-**Failure:** Tape width, particles, or chart area imply dollar magnitude when they actually encode tokens.
+**Failure:** Tape geometry, particles, or chart area use visual magnitude that is disconnected from the priced request data.
 
 **Why it undermines trust:** The visual system contradicts `PRICE_REQUEST`.
 
-**Guardrail:** Label encodings. Tape width represents input-side tokens; dollars remain explicit text. Output uses its own segment after L9.
+**Guardrail:** Tape geometry encodes USD (all buckets, including output, from the first request); labels are the only thing deferred. See OBJECT_MODEL invariant 15.
 
 ### Fiction presented as measurement
 
@@ -939,7 +935,7 @@ Never use internal identifiers such as `C28`, `WORK_OUT`, or `PB_CURRENT` in pla
 
 - Drive the sequence through `OPEN_PREDICTION`, `SELECT_PREDICTION`, `COMMIT_PREDICTION`, `SEND_REQUEST`, and `REVEAL_PREDICTION`.
 - Disable only the gated reveal, not inspection.
-- In Svelte 5, render `UI_PREDICTION_PROMPT` directly from `ReducerState.prediction`.
+- Render `UI_PREDICTION_PROMPT` directly from `ReducerState.prediction`.
 - Keep correctness styling absent until `revealed === true`.
 - Canvas renders the final tape state from the appended ledger row; the DOM prompt supplies accessible controls.
 
@@ -965,7 +961,7 @@ Never use internal identifiers such as `C28`, `WORK_OUT`, or `PB_CURRENT` in pla
 
 **Implementation:**
 
-- Treat Ari, Bea, Cy, Dev, and Eli as five behavioral archetypes.
+- Treat the five reports as the five behavioral archetypes defined by `C18`; do not assign names unless the L13 thin specification supplies them.
 - Each folder recalls a known motif: TTL, prompt mismatch, five-minute waves, MCP load, legitimate output.
 - Lock ranking with `SUBMIT_AUDIT_RANKING`.
 - Reveal `C17` only afterward.
@@ -1026,7 +1022,7 @@ Never use internal identifiers such as `C28`, `WORK_OUT`, or `PB_CURRENT` in pla
 - Add no new pricing rule in L13.
 - The phase change is representational: request economics become organizational policy.
 
-### 8. Spend’s concrete scale anchors
+### 8. *Spend Bill Gates’ Money* concrete scale anchors
 
 **Target:** L5 — One Word and L13 — The Fleet Audit.
 
@@ -1041,7 +1037,7 @@ Never use internal identifiers such as `C28`, `WORK_OUT`, or `PB_CURRENT` in pla
 
 ### 9. Absurd Trolley Problems’ post-commit comparison
 
-**Target:** L6 — Buy More Time?, L7 — Keep It Alive, and L10 — Plan Once, Pay Later.
+**Target:** L2, L6, L7, L8, L10, L11, L12, and L13.
 
 **Why ninth:** Counterfactuals become compelling when the player has already owned a choice.
 
