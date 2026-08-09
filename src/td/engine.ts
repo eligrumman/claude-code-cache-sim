@@ -188,7 +188,7 @@ export function priceRoutedTask(
     current,
   ];
   const ledger = simulateMessageLedger(script, options);
-  return { usd: ledger.messages.at(-1)?.usd ?? 0, options };
+  return { usd: ledger.messages[ledger.messages.length - 1]?.usd ?? 0, options };
 }
 
 export function makeReworkTasks(task: DispatchTask): DispatchTask[] {
