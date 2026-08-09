@@ -14,7 +14,7 @@
 - `concept.postRevealRule`: **“The first mismatch sets the reuse boundary. Put changing payload after stable cached context.”**
 - `concept.solutionVocabulary`: `["stable", "front", "order", "boundary"]`
 - Introduced control: reorderable `UI_PREFIX_STACK_VISUALIZER`.
-- Vocabulary introduced at `l12-start-2-reveal`: **volatile** — “content whose exact bytes may change between starts.”
+- Vocabulary introduced at `l12-start-2-prediction-revealed`: **volatile** — “content whose exact bytes may change between starts.”
 
 The live tradeoff is reducer-visible:
 
@@ -157,15 +157,19 @@ The four reusable blocks total `24,300` tokens (`C23`). The changing `PB_CURRENT
      - `outTok=0`;
      - cost `$0.14580`.
 
-8. **Start 2 changes status and reveals the estimate**
-   - Event ID: `l12-start-2-reveal`.
+8. **Update Start 2 content**
+   - Event ID: `l12-start-2-content-updated`.
    - Event: clock reaches minute `5`; enabled status becomes **“STATUS · 09:05 · changes detected.”**
    - Actions for enabled status:
      1. `ADVANCE { min: 5 }`
      2. `SET_PREFIX_BLOCK_CONTENT { contextId: "l12-main", blockId: "l12-status", identityHash: "l12-status-02", tokenCount: 20 }`
-     3. `SEND_REQUEST { request: l12-start-2 }`
-     4. `REVEAL_PREDICTION { promptId: "l12-start2-cost", correctOptionId: resolvedStart2Band }`
-   - Actions for disabled status omit `SET_PREFIX_BLOCK_CONTENT` but still advance, send the authored request, and reveal the resolved band.
+   - The disabled route dispatches only `ADVANCE { min: 5 }`.
+   - Mutates: `clockMin` and, when enabled, the status block identity and mismatch boundary.
+   - This event sends no request, reveals no price, and cannot dispatch `FREEZE_FAILURE`.
+
+9. **Resolve the Start 2 request**
+   - Event ID: `l12-start-2-request-resolved`.
+   - Action: `SEND_REQUEST { request: l12-start-2 }`.
    - Dynamic status after the reusable breakpoint:
      - `readTok=24,300`;
      - `inputTok=20`;
@@ -187,23 +191,37 @@ The four reusable blocks total `24,300` tokens (`C23`). The changing `PB_CURRENT
      - `writeTok=0`;
      - `outTok=0`;
      - cost `$0.00729`.
-   - After the Start 2 row and prediction reveal render, the attached `l12-freeze-early-dynamic` rule evaluates.
-   - When `lastRequests.0.writeTok === 24300`, it immediately dispatches:
-     `FREEZE_FAILURE { failure: { failureId: "l12-early-volatile", causeCode: "VOLATILE_BEFORE_STABLE", message: "The 20-token status changed before the boundary, so 24,300 later tokens had to be rewritten.", checkpointId: "before-l12-run" } }`.
+   - The Start 2 row and its uncharged local quote render before the attached `l12-freeze-early-dynamic` rule evaluates.
    - The local quote visible on this decisive frame is:
      - actual Start 2: `$0.14586`;
      - same request after the reusable context: `$0.00735`;
      - request-local difference: `$0.13851`.
-   - No counterfactual action is needed to establish this comparison; it is an uncharged quote derived from the same Start 2 buckets and `PRICE_REQUEST`.
+   - When `lastRequests.0.writeTok === 24300`, the request event immediately dispatches:
+     `FREEZE_FAILURE { failure: { failureId: "l12-early-volatile", causeCode: "VOLATILE_BEFORE_STABLE", message: "The 20-token status changed before the boundary, so 24,300 later tokens had to be rewritten.", checkpointId: "before-l12-run" } }`.
+   - This dispatch occurs after the row and local quote render but before any `REVEAL_PREDICTION`.
+   - No counterfactual action is needed to establish the quote; it derives from the same Start 2 buckets and `PRICE_REQUEST`.
 
-9. **Stop the frozen branch**
-   - Preconditions: `frozenFailure.failureId === "l12-early-volatile"`.
-   - `clockFrozen` becomes `true`.
-   - Starts 3–7 are not dispatched.
-   - The actual harmful ledger therefore contains exactly two request rows and totals `$0.29172`.
-   - Any seven-start harmful total remains unavailable until the player explicitly opens the post-freeze informational projection.
+10. **Reveal the Start 2 prediction on non-frozen branches**
+    - Event ID: `l12-start-2-prediction-revealed`.
+    - Preconditions:
+      - `l12-start-2-request-resolved` completed;
+      - `frozenFailure === null`;
+      - `clockFrozen === false`.
+    - Action:
+      `REVEAL_PREDICTION { promptId: "l12-start2-cost", correctOptionId: resolvedStart2Band }`.
+    - Mutates: prediction revelation state only.
+    - The actual Start 2 row supplies `resolvedStart2Band`.
+    - This event reveals the vocabulary term **volatile**.
+    - The frozen harmful branch never dispatches this event.
 
-10. **Starts 3–7 continue only on non-frozen branches**
+11. **Stop the frozen branch**
+    - Preconditions: `frozenFailure.failureId === "l12-early-volatile"`.
+    - `clockFrozen` becomes `true`.
+    - Starts 3–7 are not dispatched.
+    - The actual harmful ledger therefore contains exactly two request rows and totals `$0.29172`.
+    - Any seven-start harmful total remains unavailable until the player explicitly opens the post-freeze informational projection.
+
+12. **Starts 3–7 continue only on non-frozen branches**
     - Event IDs: `l12-start-3-resolved` through `l12-start-7-resolved`.
     - Preconditions for every event:
       - `frozenFailure === null`;
@@ -228,7 +246,7 @@ The four reusable blocks total `24,300` tokens (`C23`). The changing `PB_CURRENT
       - cost `$0.00729`.
     - After Start 7, a valid dynamic route has `evidence.l12.fullStableReadCount === 6`.
 
-11. **Complete the cheaper capability-losing branch**
+13. **Complete the cheaper capability-losing branch**
     - Event ID: `l12-status-capability-failed`.
     - Preconditions:
       - `l12-start-7-resolved` completed;
@@ -241,7 +259,7 @@ The four reusable blocks total `24,300` tokens (`C23`). The changing `PB_CURRENT
     - Action: `COMPLETE_ATTEMPT`.
     - Produces `attemptResult.outcome === "local-failed"` and `attemptResult.spentUsd === 0.18954`.
 
-12. **Open the post-evidence transfer**
+14. **Open the post-evidence transfer**
     - Event ID: `l12-transfer-open`.
     - Preconditions:
       - `l12-start-7-resolved` completed;
@@ -255,7 +273,7 @@ The four reusable blocks total `24,300` tokens (`C23`). The changing `PB_CURRENT
     - Copy: **“A 2,000-token report changes every start. Place it in this new packet.”**
     - The transfer sends no `Request` and changes no ledger or wallet field.
 
-13. **Demonstrate the rule**
+15. **Demonstrate the rule**
     - Event ID: `l12-transfer-placed`.
     - Action:
       `REORDER_PREFIX_BLOCK { contextId: "l12-transfer", blockId: "l12-report", toIndex: 4 }`.
@@ -265,7 +283,7 @@ The four reusable blocks total `24,300` tokens (`C23`). The changing `PB_CURRENT
       - appends `"l12-transfer-placed"` to `completedEventIds`.
     - This authored action, rather than prediction correctness or inferred action history, supplies the post-evidence marker used by `pass(st)`.
 
-14. **Acknowledge and complete**
+16. **Acknowledge and complete**
     - Event ID: `l12-complete-attempt`.
     - Player selects: **“The first changed bytes cut off reuse for everything after them.”**
     - Actions:
@@ -277,22 +295,30 @@ The four reusable blocks total `24,300` tokens (`C23`). The changing `PB_CURRENT
       - evaluates pass and stars.
     - Passing spend is `$0.18996`.
 
-15. **Reveal the informational projection**
-    - Event ID: `l12-reveal-comparison`.
-    - The control remains hidden until either:
-      - `attemptResult !== null`; or
-      - `frozenFailure.failureId === "l12-early-volatile"`.
-    - Actions:
-      1. `REQUEST_COUNTERFACTUAL { comparisonId: "l12-front-vs-tail" }`
-      2. `REVEAL_COUNTERFACTUAL { comparisonId: "l12-front-vs-tail" }`
-    - Mutates: comparison visibility only.
+17. **Reveal an outcome-specific informational projection**
+    - Success event ID: `l12-reveal-comparison-success`.
+      - Uses comparison definition `l12-front-vs-tail-success`.
+      - The control remains hidden until `l12-complete-attempt` completes.
+      - Actions:
+        1. `REQUEST_COUNTERFACTUAL { comparisonId: "l12-front-vs-tail-success" }`
+        2. `REVEAL_COUNTERFACTUAL { comparisonId: "l12-front-vs-tail-success" }`
+    - Frozen event ID: `l12-reveal-comparison-frozen`.
+      - Uses comparison definition `l12-front-vs-tail-frozen`.
+      - Preconditions:
+        - `l12-start-2-request-resolved` completed;
+        - `frozenFailure.failureId === "l12-early-volatile"`;
+        - the request event has already dispatched `FREEZE_FAILURE`.
+      - Actions:
+        1. `REQUEST_COUNTERFACTUAL { comparisonId: "l12-front-vs-tail-frozen" }`
+        2. `REVEAL_COUNTERFACTUAL { comparisonId: "l12-front-vs-tail-frozen" }`
+    - Both definitions mutate comparison visibility only.
     - For a frozen harmful branch, Starts 3–7 are rendered as explicitly labelled projection rows, not `LedgerRow` or actual tape rows.
     - The projection shows:
       - seven-start harmful projection: `$1.02102`;
       - valid dynamic route: `$0.18996`;
       - projected difference: `$0.83106`;
       - projected reduction: `81.4%`.
-    - This event cannot dispatch `FREEZE_FAILURE`, mutate actual wallet or ledger state, or retroactively become the economic basis of the Start 2 freeze.
+    - Neither comparison event can dispatch `FREEZE_FAILURE`, mutate actual wallet or ledger state, or retroactively become the economic basis of the Start 2 freeze.
 
 ## 5. Level data
 
@@ -650,7 +676,7 @@ const level12: LevelDef = {
         { id: "band-ten-to-twenty-cents", label: "$0.10–$0.20" },
         { id: "band-fifty-cents-to-one-dollar", label: "$0.50–$1.00" },
       ],
-      revealId: "l12-start-2-reveal",
+      revealId: "l12-start-2-prediction-revealed",
       explanationId: "l12-position-rule",
     },
   ],
@@ -676,9 +702,9 @@ const level12: LevelDef = {
         kind: "all",
         predicates: [
           {
-            id: "l12-start2-evidence-visible",
+            id: "l12-start2-request-visible",
             kind: "event-completed",
-            eventId: "l12-start-2-reveal",
+            eventId: "l12-start-2-request-resolved",
           },
           {
             id: "l12-start2-rewrote-stable-suffix",
@@ -689,7 +715,7 @@ const level12: LevelDef = {
           },
         ],
       },
-      decisiveEventId: "l12-start-2-reveal",
+      decisiveEventId: "l12-start-2-request-resolved",
       causeCode: "VOLATILE_BEFORE_STABLE",
       message:
         "The 20-token status changed before the boundary, so 24,300 later tokens had to be rewritten.",
@@ -717,7 +743,7 @@ const level12: LevelDef = {
   gate: {
     predicateId: "l12-position-understanding",
     evidenceRevealEventIds: [
-      "l12-start-2-reveal",
+      "l12-start-2-prediction-revealed",
       "l12-start-7-resolved",
     ],
     postEvidenceActionRequirements: [
@@ -796,12 +822,12 @@ const level12: LevelDef = {
         : "Preserve current status, inspect the completed run, and place the changing report from the evidence.",
       evidence: applied
         ? [
-            "l12-start-2-reveal",
+            "l12-start-2-prediction-revealed",
             "l12-start-7-resolved",
             "l12-transfer-placed",
             "l12-position-rule",
           ]
-        : ["l12-start-2-reveal"],
+        : ["l12-start-2-prediction-revealed"],
     };
   },
 
@@ -870,8 +896,32 @@ const level12: LevelDef = {
   },
   counterfactuals: [
     {
-      id: "l12-front-vs-tail",
-      unlockAfterEventId: "l12-start-2-reveal",
+      id: "l12-front-vs-tail-success",
+      unlockAfterEventId: "l12-complete-attempt",
+      kind: "anti-pattern",
+      cfg: {
+        orchestratorModel: "sonnet",
+        who: "inline",
+        hook: "dynamic",
+        oneHourFlag: true,
+      },
+      scenarioPatch: {
+        prefixStacks: [
+          {
+            id: "l12-session-start",
+            contextId: "l12-main",
+            blocks: l12OpeningBlocks,
+          },
+        ],
+      },
+      comparisonQuestion:
+        "What would seven starts cost if the same Start 2 pattern continued?",
+      revealCopy:
+        "Projection only: six repeated rewrites would make seven starts cost $1.02102, versus $0.18996 when the changing status follows the reusable context.",
+    },
+    {
+      id: "l12-front-vs-tail-frozen",
+      unlockAfterEventId: "l12-start-2-request-resolved",
       kind: "anti-pattern",
       cfg: {
         orchestratorModel: "sonnet",
@@ -935,7 +985,10 @@ const level12: LevelDef = {
       "Current status remained enabled.",
       "The transfer report followed its reusable context.",
     ],
-    comparisonIds: ["l12-front-vs-tail"],
+    comparisonIds: [
+      "l12-front-vs-tail-success",
+      "l12-front-vs-tail-frozen",
+    ],
     continueLabel: "Open fleet audit",
     retryLabel: "Rewind to arrangement",
   },
@@ -943,7 +996,7 @@ const level12: LevelDef = {
     {
       term: "volatile",
       definition: "Content whose exact bytes may change between starts.",
-      firstNeededEventId: "l12-start-2-reveal",
+      firstNeededEventId: "l12-start-2-prediction-revealed",
       toastId: "l12-toast-volatile",
     },
   ],
@@ -954,6 +1007,8 @@ const level12: LevelDef = {
 `seed`, `budgetUsd`, `clockCapMin`, every billed fictional token bucket, the start interval, transfer size, and star attempt thresholds are registered in `scenarioData.fixtures`. `scenarioData.estimates` contains presentation timing only.
 
 `referenceCfg` and `antiCfg` intentionally share configuration. Their economic difference comes from the ordered `REORDER_PREFIX_BLOCK` action: the anti-pattern leaves `l12-status` at index `1`; the reference moves it to index `4`.
+
+The frozen comparison definition’s `unlockAfterEventId` is necessary but not sufficient for visibility: the route-specific reveal event additionally requires `frozenFailure.failureId === "l12-early-volatile"`. The healthy branch therefore cannot expose the frozen comparison after Start 2.
 
 ## 6. Pricing walkthrough
 
@@ -1075,6 +1130,8 @@ No option is styled or announced as preferred.
 - disabled status `$0.00729` maps to `band-under-one-cent`;
 - harmful dynamic placement `$0.14586` maps to `band-ten-to-twenty-cents`.
 
+On the harmful branch, the request-local failure freezes immediately after the Start 2 row and quote render, before `l12-start-2-prediction-revealed`; the reveal action is therefore never dispatched on that branch.
+
 Prediction correctness is reflection-only and absent from failure rules, `gate`, `pass(st)`, stars, wallet mutations, and score.
 
 ### Required post-evidence transfer
@@ -1087,9 +1144,9 @@ Moving `l12-report` after the reusable breakpoint dispatches the post-evidence `
 
 ## 9. Fail-state
 
-The decisive event is the actual harmful request `l12-start-2-reveal`.
+The decisive event is the actual harmful request `l12-start-2-request-resolved`.
 
-After its row renders, the failure rule requires exactly:
+After its row and uncharged local quote render, the failure rule requires exactly:
 
 ```ts
 {
@@ -1097,9 +1154,9 @@ After its row renders, the failure rule requires exactly:
   kind: "all",
   predicates: [
     {
-      id: "l12-start2-evidence-visible",
+      id: "l12-start2-request-visible",
       kind: "event-completed",
-      eventId: "l12-start-2-reveal",
+      eventId: "l12-start-2-request-resolved",
     },
     {
       id: "l12-start2-rewrote-stable-suffix",
@@ -1126,7 +1183,7 @@ The visible request-local comparison is economically true:
 
 The displayed difference is `$0.13851`. The rule inspects neither prediction selection nor correctness.
 
-`FREEZE_FAILURE` occurs immediately after Start 2. It prevents every subsequent economic action on that branch; Starts 3–7 are not sent. The actual ledger contains two rows totaling `$0.29172`.
+`FREEZE_FAILURE` occurs immediately after the Start 2 request row and local quote render, before `REVEAL_PREDICTION`. It prevents every subsequent economic action on that branch; Starts 3–7 are not sent. The actual ledger contains two rows totaling `$0.29172`.
 
 `UI_REWIND_CONTROL` label: **“Rewind to arrangement”**.
 
@@ -1137,6 +1194,8 @@ It dispatches:
 Deterministic replay restores the pre-run wallet, cache, clock, ledger, `lastRequests`, `AttemptMetrics`, and prediction state while preserving the chosen arrangement for editing and retaining cross-attempt evidence. Focus returns to `l12-status`; Start 1 is not replayed until the player recommits and runs.
 
 The `$1.02102` seven-start harmful amount may appear only after the freeze as a non-punitive projection. It does not justify or trigger the freeze.
+
+The frozen comparison uses `l12-front-vs-tail-frozen`. Although its definition names `l12-start-2-request-resolved` as the unlock event, its route-specific reveal additionally requires `frozenFailure.failureId === "l12-early-volatile"`, so a healthy Start 2 cannot expose it.
 
 The disabled-status branch does not freeze. It sends seven requests, spends `$0.18954`, dispatches `STOP_LOCAL_ATTEMPT`, then `COMPLETE_ATTEMPT`, leaving `clockFrozen === false`, `frozenFailure === null`, and `ended === null`.
 
@@ -1176,12 +1235,12 @@ pass(st) {
       : "Preserve current status, inspect the completed run, and place the changing report from the evidence.",
     evidence: applied
       ? [
-          "l12-start-2-reveal",
+          "l12-start-2-prediction-revealed",
           "l12-start-7-resolved",
           "l12-transfer-placed",
           "l12-position-rule",
         ]
-      : ["l12-start-2-reveal"],
+      : ["l12-start-2-prediction-revealed"],
   };
 }
 ```
@@ -1206,7 +1265,7 @@ Every path is canonical `ReducerState` state. No predicate uses an invented fiel
 | Harmful sweep reaches suffix end | **“Everything after it missed · 24,300 rewritten.”** |
 | Harmful Start 2 freezes | **“START 2 · $0.14586 actual · $0.00735 valid placement.”** |
 | Reference Start 2 completes | **“Stable prefix matched · 24,300 reused · READ $0.00729”** |
-| `l12-start-2-reveal` | **“Volatile: its exact bytes can change between starts.”** |
+| `l12-start-2-prediction-revealed` | **“Volatile: its exact bytes can change between starts.”** |
 | Disabled attempt completes | **“Smaller, but blind: current project status is missing.”** |
 | Successful Start 7 completes | **“Seven starts. One cold write.”** |
 | Transfer opens | **“New packet. Same rule. Place the changing report.”** |
@@ -1237,15 +1296,15 @@ Real-browser click-through must assert:
 15. Successful and disabled branches contain seven actual rows; the frozen harmful branch contains exactly two.
 16. Every real request cost is positive, and no positive request or segment displays as `$0.0000`.
 17. `UI_HOVER_PRICE_CALCULATOR` values equal `PRICE_REQUEST`; segment widths include every priced bucket and retain `outTok` in the denominator.
-18. `FREEZE_FAILURE` cannot fire before the harmful `l12-start-2` row has rendered and `l12-start-2-reveal` has completed.
-19. The harmful branch dispatches `FREEZE_FAILURE` immediately from `l12-start-2-reveal`; it does not wait for Start 7 or `COMPLETE_ATTEMPT`.
+18. `l12-start-2-content-updated` completes before `l12-start-2-request-resolved`; `FREEZE_FAILURE` cannot fire before the harmful `l12-start-2` row and uncharged local quote have rendered and the request event has completed.
+19. The harmful branch dispatches `FREEZE_FAILURE` immediately from `l12-start-2-request-resolved`, before `l12-start-2-prediction-revealed`; it does not wait for Start 7 or `COMPLETE_ATTEMPT`.
 20. The failure frame displays request-local `$0.14586 > $0.00735` and the `$0.13851` difference.
 21. Starts 3–7 are never dispatched when `frozenFailure.failureId === "l12-early-volatile"`; projected rows never enter ledger, tape source, wallet, `lastRequests`, or request counts.
-22. The failure predicate uses `l12-start-2-reveal` plus `lastRequests.0.writeTok === 24300` and inspects no prediction selection or correctness.
+22. The failure predicate uses `l12-start-2-request-resolved` plus `lastRequests.0.writeTok === 24300` and inspects no prediction selection or correctness.
 23. Rewind after the Start 2 freeze restores the exact pre-run wallet, cache, clock, ledger, `lastRequests`, `AttemptMetrics`, and prediction state while retaining cross-attempt evidence.
 24. The disabled-status branch is reachable, sends all seven requests, dispatches `STOP_LOCAL_ATTEMPT` and `COMPLETE_ATTEMPT`, leaves `clockFrozen === false`, `frozenFailure === null`, and `ended === null`, and records `$0.18954`.
 25. The `$0.00042` disabled-route saving is reducer-visible through `attemptResult.spentUsd`; the enabled route’s benefit is reducer-visible through capability evidence, pass, and stars.
-26. The comparison control remains unavailable until a meaningful attempt either completes or freezes.
+26. The success comparison remains unavailable until `l12-complete-attempt`; the frozen comparison remains unavailable until `l12-start-2-request-resolved` has dispatched `FREEZE_FAILURE`, and a healthy Start 2 cannot unlock it.
 27. `REQUEST_COUNTERFACTUAL` and `REVEAL_COUNTERFACTUAL` mutate comparison visibility only and cannot dispatch `FREEZE_FAILURE`.
 28. Projection rows are announced as **PROJECTED · NOT SENT** and cannot masquerade as actual `LedgerRow` evidence.
 29. The transfer cannot open before all seven valid dynamic rows are visible.
@@ -1257,7 +1316,7 @@ Real-browser click-through must assert:
 35. Static final tape bars render without hover; interactive bars expose exact bucket values.
 36. Reduced motion replaces the harmful Start 2 sweep with an instantaneous mismatch marker and suffix highlight before the same freeze; projection evidence remains striped and informational.
 37. Keyboard and pointer reorder paths produce equivalent actions and evidence mutations.
-38. Screen-reader output announces block order, committed estimate, actual band, first mismatch, invalidated token count, immediate Start 2 freeze, local alternative quote, projected-versus-actual status, transfer state, local-failure state, and rewind focus.
+38. Screen-reader output announces block order, committed estimate, actual band on non-frozen branches, first mismatch, invalidated token count, immediate Start 2 request freeze, local alternative quote, projected-versus-actual status, transfer state, local-failure state, and rewind focus.
 39. Every gameplay `[FICTION]` value is registered in `scenarioData.fixtures` with `id`, `semanticRole`, and `unit`; `scenarioData.estimates` contains presentation timing only.
 40. Every gate, star, failure, and `pass(st)` reference uses a canonical `ReducerState` path and legal predicate operation.
 41. The player can win without an undocumented control.
@@ -1276,11 +1335,11 @@ The structured identity assertion is:
 
 The screen begins with a tactile object: seven closed starts and one suspiciously small status card. The player manipulates the packet, commits a neutral cost estimate, and sees the causal answer emerge from the actual Start 2 ledger row.
 
-The failure is strictly local. The first harmful repeated request visibly costs `$0.14586`, while the same request with identical current status after the reusable context costs `$0.00735`. The reducer freezes at that request and never fabricates Starts 3–7. This keeps the economic lesson causal, truthful, and immediately rewindable.
+The failure is strictly local. The first harmful repeated request visibly costs `$0.14586`, while the same request with identical current status after the reusable context costs `$0.00735`. The reducer freezes at `l12-start-2-request-resolved`, before prediction revelation, and never fabricates Starts 3–7. This keeps the economic lesson causal, truthful, and immediately rewindable.
 
 The seven-start rhythm survives where it is honest: a correct dynamic route produces all seven actual rows, while the harmful continuation appears only as an explicitly non-economic projection after a meaningful attempt. Passing still requires a novel post-evidence action on the differently sized 2,000-token report.
 
 The live counter-pressure is small but real and queryable. Dropping status saves `$0.00042` and completes a cheaper local attempt; retaining it is required for capability, passage, and stars. The player must therefore optimize reuse without deleting useful current context.
 
-Implementation tradeoff: the corrected design gives up the previous six-request punitive accumulation so that failure remains local to Start 2. The later red bars are preserved only as striped projection evidence and never enter actual reducer economics.
+Implementation tradeoff: the corrected design gives up the previous six-request punitive accumulation so that failure remains local to Start 2. The later red bars are preserved only as striped projection evidence and never enter actual reducer economics. Successful and frozen comparison definitions remain separate so neither route exposes comparison evidence prematurely.
 

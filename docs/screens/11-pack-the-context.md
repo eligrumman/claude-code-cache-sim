@@ -583,7 +583,7 @@ The scripted `checkout-transfer` seed uses canonical `ticket: 1` because it is a
 The adapter assigns the exact all-loaded canonical sorted fingerprint the stable record key `l11-all-loaded`. Each ordinary all-loaded ticket submission increments:
 
 ```text
-counts.loadoutSubmissionsByFingerprint["l11-all-loaded"]
+counts.loadoutSubmissionsByFingerprint.l11-all-loaded
 ```
 
 from `0` to `1`, `2`, then `3`. Sending `checkout-transfer` unchanged increments it to `4`.
@@ -792,7 +792,7 @@ const L11_REPEAT_BLOAT_FAILURE: FailureRuleDef = {
         id: "all-loaded-fingerprint-reached-transfer",
         kind: "compare",
         path:
-          'counts.loadoutSubmissionsByFingerprint["l11-all-loaded"]',
+          "counts.loadoutSubmissionsByFingerprint.l11-all-loaded",
         op: "gte",
         value: 4,
       },
@@ -1209,7 +1209,7 @@ Real-browser click-through must assert:
 16. Retry returns deterministically to `cp-loadout`, restores wallet and cache state for the abandoned branch, retains attempt count, and does not replay the cold-open.
 17. The gate observes `ACK_EXPLANATION` after `ev-reveal-usage`; pre-reveal prediction data is absent from `passLevel11`.
 18. The all-loaded configuration completes the initial work but fails the behavioral gate until the player removes confirmed passengers from the next-batch plan.
-19. A first all-loaded batch increments `counts.loadoutSubmissionsByFingerprint["l11-all-loaded"]` exactly three times.
+19. A first all-loaded batch increments `counts.loadoutSubmissionsByFingerprint.l11-all-loaded` exactly three times.
 20. Leaving the all-loaded setup unchanged exposes **Run unchanged again** only after `ev-reveal-usage`.
 21. `pack-repeat-checkout` is a real fourth cold request in the player’s actual branch and increments the all-loaded fingerprint count from `3` to `4`.
 22. `L11_REPEAT_BLOAT_FAILURE` fires immediately from resolution of that row, with `actualUsd=L11_ANTI_REQUEST_USD` and `validAlternativeUsd=L11_REFERENCE_REQUEST_USD`.
