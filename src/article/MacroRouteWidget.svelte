@@ -29,7 +29,7 @@
       <div class="route">
         <span>{route.task}</span>
         <b>{route.activeModel}</b>
-        <small>{routed ? route.effort : "high"} effort</small>
+        <small>{route.activeEffort} effort</small>
         <strong>{money(route.usd)}</strong>
       </div>
     {/each}

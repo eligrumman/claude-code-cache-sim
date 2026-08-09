@@ -4,6 +4,7 @@ import ArticleScreen from "./ArticleScreen.svelte";
 import MacroRouteWidget from "./MacroRouteWidget.svelte";
 import MacroTaskPicker from "./MacroTaskPicker.svelte";
 import ContextCostWidget from "./ContextCostWidget.svelte";
+import WorkdaySessionWidget from "./WorkdaySessionWidget.svelte";
 import {
   MACRO_ROUTES,
   priceContextComparison,
@@ -35,8 +36,9 @@ describe("Micro and Macro articles", () => {
     expect(screen.getByRole("heading", { name: "Which caching configs spend the fewest tokens?" })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: "Macro" }));
-    expect(screen.getByRole("heading", { name: "Which agents and efforts fit each task?" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Stop making one giant agent do everything." })).toBeInTheDocument();
     expect(screen.getByTestId("macro-route-widget")).toBeInTheDocument();
+    expect(screen.getByTestId("workday-session-widget")).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: "Micro" }));
     expect(screen.getByRole("heading", { name: "Five minutes or one hour?" })).toBeInTheDocument();
@@ -115,8 +117,10 @@ describe("Micro and Macro articles", () => {
 
     await fireEvent.change(screen.getByLabelText("Plan model"), { target: { value: "haiku" } });
     expect(screen.getAllByTestId("route-verdict")[0]).toHaveTextContent("bad · likely underpowered");
+    expect(screen.getByText(/shallow dependency map/)).toBeInTheDocument();
     await fireEvent.change(screen.getByLabelText("Docs model"), { target: { value: "fable" } });
     expect(screen.getAllByTestId("route-verdict")[6]).toHaveTextContent("expensive · more than this needs");
+    expect(screen.getByText(/cannot recover facts absent from the brief/)).toBeInTheDocument();
   });
 
   it("prices both sides of the context example", () => {
@@ -129,6 +133,19 @@ describe("Micro and Macro articles", () => {
     }
     render(ContextCostWidget);
     expect(screen.getByTestId("context-cost-widget")).toBeInTheDocument();
+  });
+
+  it("compares cumulative scripted workdays through the scenario ledger", async () => {
+    render(WorkdaySessionWidget);
+    const giant = () => Number(screen.getByTestId("workday-giant-total").getAttribute("data-value"));
+    const scoped = () => Number(screen.getByTestId("workday-scoped-total").getAttribute("data-value"));
+    expect(giant()).toBeGreaterThan(scoped());
+    const shipFeatureTotal = giant();
+
+    await fireEvent.change(screen.getByLabelText("Workday scenario"), { target: { value: "debug-prod" } });
+    expect(giant()).toBeGreaterThan(scoped());
+    expect(giant()).not.toBe(shipFeatureTotal);
+    expect(screen.getByText(/70,000-token, opus backpack/)).toBeInTheDocument();
   });
 
   it("renders and interacts without console errors", async () => {
