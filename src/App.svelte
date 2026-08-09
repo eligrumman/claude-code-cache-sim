@@ -10,6 +10,7 @@
   import ResultScreen from "./components/ResultScreen.svelte";
   import SessionStream from "./components/SessionStream.svelte";
   import SandboxScreen from "./sandbox/SandboxScreen.svelte";
+  import ArticleScreen from "./article/ArticleScreen.svelte";
   import {
     toMap,
     enterLevel,
@@ -31,10 +32,12 @@
   let campaign = $state(loadCampaign());
   let showStream = $state(false);
   let sandboxOpen = $state(false);
+  let articleOpen = $state(false);
 
   function goMap() {
     showStream = false;
     sandboxOpen = false;
+    articleOpen = false;
     screen = toMap();
   }
   function goEnter(id: LevelId) {
@@ -78,10 +81,17 @@
 <div class="app">
   {#if sandboxOpen}
     <SandboxScreen onback={goMap} />
+  {:else if articleOpen}
+    <ArticleScreen onback={goMap} onsandbox={() => { articleOpen = false; sandboxOpen = true; }} />
   {:else if screen.id === "map"}
-    <button class="sandbox-entry" onclick={() => (sandboxOpen = true)}>
-      <span>🧪</span><b>Sandbox</b><small>See where the money goes →</small>
-    </button>
+    <div class="special-entries">
+      <button class="sandbox-entry" onclick={() => (sandboxOpen = true)}>
+        <span>🧪</span><b>Sandbox</b><small>All the knobs →</small>
+      </button>
+      <button class="sandbox-entry article-entry" onclick={() => (articleOpen = true)}>
+        <span>📖</span><b>The Article</b><small>Learn by playing →</small>
+      </button>
+    </div>
     <MapScreen {campaign} onenter={goEnter} onfreeplay={goFreeplay} />
   {:else if screen.id === "learn"}
     {@const level = screen.level}
@@ -154,7 +164,7 @@
     />
   {/if}
 
-  {#if !sandboxOpen}
+  {#if !sandboxOpen && !articleOpen}
     <p class="footnote">
       Economics use the canonical cost function and the real calibration table. Boot-time
       invariants run in the console. No numbers are faked.
@@ -163,8 +173,9 @@
 </div>
 
 <style>
+  .special-entries { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
   .sandbox-entry {
-    width: 100%; margin: 0 0 14px; padding: 13px 18px; display: flex; align-items: center;
+    width: 100%; margin: 0; padding: 13px 18px; display: flex; align-items: center;
     gap: 10px; border: 2px solid #24231f; border-radius: 15px 12px 16px 13px;
     background: #fffdf4; color: #24231f; cursor: pointer; text-align: left;
     box-shadow: 5px 5px 0 #f2c94c; transition: transform .18s, box-shadow .18s;
@@ -173,4 +184,7 @@
   .sandbox-entry span { font-size: 1.55rem; }
   .sandbox-entry b { font-size: 1rem; }
   .sandbox-entry small { margin-left: auto; color: #6d685c; font-weight: 700; }
+  .article-entry { background:#eef9ff; box-shadow:5px 5px 0 #79c9ed; }
+  .article-entry:hover { box-shadow:7px 7px 0 #79c9ed; }
+  @media(max-width:650px) { .special-entries { grid-template-columns:1fr; }.sandbox-entry small{font-size:.68rem} }
 </style>
