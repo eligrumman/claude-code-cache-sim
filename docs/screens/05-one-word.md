@@ -26,7 +26,6 @@
 - `Wallet`
 - `Budget`
 - `Clock`
-- `Checkpoint`
 - `AttemptMetrics`
 - `AttemptResult`
 - `StatePredicate`
@@ -39,11 +38,9 @@
 - `UI_HOVER_PRICE_CALCULATOR`
 - `UI_PREDICTION_PROMPT`
 - `UI_TOAST_SYSTEM`
-- `UI_REWIND_CONTROL`
 - `UI_RESULT_SCREEN`
 - `UI_COUNTERFACTUAL_OVERLAY`
 - `predict-before-reveal`
-- `fail-freeze-rewind`
 - `just-in-time-toast`
 - `counterfactual-after-attempt`
 
@@ -55,26 +52,30 @@
 |---:|---|
 | `0.0s` | Eight face-down job cards snap into an empty queue. Header: **“Eight tiny fixes. One agent template.”** |
 | `0.4s` | Two uncolored template cards appear. **Greeting first:** “HEY/HELLO — review the repository, follow project instructions, and complete TASK.” **Ticket last:** “Review the repository, follow project instructions, and complete TASK: …” |
-| `0.8s` | Copy: **“Pick the template the dispatcher should use.”** Neither card shows cache color, token counts, prices, or correctness. Greeting-first provides a conspicuous changing cue for human scanning; ticket-last keeps the opener visually uniform. |
+| `0.8s` | Copy: **“Pick the template the dispatcher should use.”** Greeting-first is already prepared and needs no normalization work; its direct dispatch setup takes `1` simulated minute. Ticket-last requires normalizing the shared template and takes `4` simulated minutes. Neither card reveals cache color, token counts, request prices, or correctness. |
 | `1.5s` | Both template cards become selectable. The job queue remains disabled until the player explicitly chooses one. |
 
-The visible wording is puzzle input; its cache consequence, reusable boundary, and cheaper run remain hidden until the chosen requests resolve. The later post-evidence transfer changes the operational constraint before completion: a first-line-only human triage pass requires the ticket cue first. Both contextual applications are reducer-visible gate evidence, so neither placement is presented as universally correct.
+The designer-visible economy is a live setup-time versus request-cost tradeoff. Greeting-first completes setup in `1` minute but its eight requests cost `$0.50660670`; pointer-tail spends `4` minutes normalizing the shared template but its eight requests cost `$0.15348645`. The setup durations are committed through `ADVANCE`, and the request totals come only from eight actual `SEND_REQUEST` actions on the selected route.
+
+The request-cost consequence, reusable boundary, and cheaper repeated run remain hidden until the chosen requests resolve. The later post-evidence transfer changes the operational constraint before completion: a first-line-only human triage pass requires the ticket cue first. That transfer is reducer-visible gate evidence, so the level teaches a contextual choice rather than presenting either placement as universally dominant.
 
 ## 4. Exact event sequence
 
 1. **Enter with no committed template**  
    Event: level mount → `ENTER_LEVEL { levelId:"05-one-word" }` → initializes `ReducerState`, scalar `wallet` and `budget`, `clockMin`, `attemptMetrics`, and eight `SUBAGENT_CONTEXT` instances sharing `sharedPrefixPoolId:"l5-pool"`. Candidate `PREFIX_STACK` objects exist, but neither card is committed or runnable.  
-   Numbers: `8` jobs `[FICTION]`; `clockMin=0`; `budget=0.55` and `wallet=0.55` `[FICTION]`; model `sonnet`; tier `5m`; width `8` `[FICTION]`. The authored dispatch keeps all eight requests within the `5m` lifetime (`C1`, `C27`).
+   Numbers: `8` jobs `[FICTION]`; `clockMin=0`; `budget=0.55` and `wallet=0.55` `[FICTION]`; model `sonnet`; tier `5m`; width `8` `[FICTION]`. The authored dispatch sends all eight requests without advancing the clock between requests, so the selected run remains within the `5m` cache lifetime (`C1`, `C27`).
 
-2. **Player chooses a template before jobs queue**  
+2. **Player chooses the setup-time route**  
    Event: player selects a template card → one of:
 
    - `NORMALIZE_PROMPTS { templateId:"l5-greeting-front", taskPointerPosition:"front" }`
    - `NORMALIZE_PROMPTS { templateId:"l5-ticket-tail", taskPointerPosition:"tail" }`
 
-   The action commits the selected `PREFIX_STACK` identities and enables prediction. Front selection sets `cfg.prompts="varied"`; tail selection sets `cfg.prompts="pointer"`. The engine treats `pointer` as a non-varied shared spawn prompt, so it follows the measured identical-prefix branch. No request, ledger row, cache mutation, or price occurs.
+   Front selection accepts the already-prepared greeting-first template without text-normalization work and sets `cfg.prompts="varied"`. The reducer then dispatches `ADVANCE { min:1 }`, completing `ev-l5-front-direct-setup` with `clockMin=1`.
 
-   When the tail action is accepted in the unattended-dispatch context, its authored event mutation appends `"ev-l5-unattended-tail-placement"` to `completedEventIds`. This reducer-owned marker records the contextual placement at the action that makes the choice. It is preserved for the gate even if the later triage action sets `cfg.prompts` back to `"varied"`.
+   Tail selection performs the normalization needed to move each changing task pointer behind the shared instructions and sets `cfg.prompts="pointer"`. The reducer dispatches `ADVANCE { min:4 }`, increments `attemptMetrics.tailNormalizationActions`, and completes `ev-l5-unattended-tail-placement` and `ev-l5-tail-normalization-setup` with `clockMin=4`.
+
+   The engine treats `pointer` as a non-varied shared spawn prompt, so it follows the measured identical-prefix branch. Setup changes no wallet, ledger, cache entry, request count, or passing subtotal. Its only gameplay cost is the route’s authored simulated duration.
 
 3. **Commit the route-specific prediction**  
    Event: the selected layout determines which unresolved prompt opens:
@@ -82,88 +83,71 @@ The visible wording is puzzle input; its cache consequence, reusable boundary, a
    - front → `OPEN_PREDICTION { promptId:"l5-front-result" }`
    - tail → `OPEN_PREDICTION { promptId:"l5-tail-result" }`
 
-   The player dispatches `SELECT_PREDICTION`, then `COMMIT_PREDICTION` for that prompt. Selection styling stays neutral; correctness changes no score, stars, wallet, failure, or gate state.
+   The player dispatches `SELECT_PREDICTION`, then `COMMIT_PREDICTION` for that prompt. Selection styling stays neutral; correctness changes no score, stars, wallet, failure, route qualification, or gate state.
 
-4. **Checkpoint the chosen, predicted layout**  
-   Event: prediction commitment → `CREATE_CHECKPOINT { checkpointId:"l5-before-run", reason:"decision" }` → records the boundary after the template choice and prediction. A failed front route can rewind here without replaying the cold-open or prediction.
+4. **Start the chosen route**  
+   Event: player clicks **Run 8**. The selected route determines the ordered `SEND_REQUEST` actions. A front choice executes steps 5–8; a tail choice executes steps 9–11. No reference or counterfactual request participates in the actual run.
 
-5. **Start the chosen route**  
-   Event: player clicks **Run 8**. The selected route determines the ordered `SEND_REQUEST` actions. A direct tail choice skips the front-only steps 6–9 and begins the passing tail branch at step 10. No reference or counterfactual request participates in the actual run.
-
-6. **Front route: send job 1**  
-   Preconditions: `cfg.prompts=="varied"`.  
+5. **Front route: send job 1**  
+   Preconditions: `cfg.prompts=="varied"` and `clockMin==1`.  
    Event: `SEND_REQUEST { request:req-front-1 }` → `RESOLVE_PREFIX` creates the shared `CacheEntry`; one `LedgerRow` is appended; scalar `wallet`, `attemptMetrics`, `lastRequests`, and the first `PREFIX_STACK` mutate.  
    Numbers: `readTok=0`, `inputTok=0`, `writeTok=26,237`, `outTok=0`; cost `$0.09838875` (`C10`, `C1`, `C3`). `wallet` becomes `$0.45161125`. Tape row 1 is red.
 
-7. **Front route: resolve the decisive harmful request and freeze locally**  
+6. **Front route: resolve job 2 and reveal the early mismatch**  
    Event ID: `ev-l5-reveal-front`.  
-   Event: the player’s queued `SEND_REQUEST { request:req-front-2 }` resolves. `RESOLVE_PREFIX` finds the first mismatching `Token` at the greeting in `PB_INSTRUCTIONS`; `readTok=11,602`, `writeTok=14,623`, `inputTok=0`, `outTok=0`; cost `$0.05831685` (`C11`, `C1`, `C3`). `wallet` becomes `$0.39329440`. `UI_PREFIX_STACK_VISUALIZER` enters `mode:"diff"` only after resolution.
+   Event: `SEND_REQUEST { request:req-front-2 }` resolves. `RESOLVE_PREFIX` finds the first mismatching `Token` at the greeting in `PB_INSTRUCTIONS`; `readTok=11,602`, `writeTok=14,623`, `inputTok=0`, `outTok=0`; cost `$0.05831685` (`C11`, `C1`, `C3`). `wallet` becomes `$0.39329440`. `UI_PREFIX_STACK_VISUALIZER` enters `mode:"diff"` only after resolution.
 
-   The same request-resolved event reveals `l5-front-result` and renders the local uncharged alternative quote `$0.00787110`, the price of a full warm read of `26,237` tokens. Once both prices are visible, the attached `l5-early-mismatch` rule immediately dispatches:
+   The request-resolved event dispatches `REVEAL_PREDICTION { promptId:"l5-front-result", correctOptionId:"partial-rewrite" }` and renders the local uncharged comparison quote `$0.00787110`, the price of a full warm read of `26,237` tokens. The selected request costs `$0.05044575` more, or `7.41×` the request-local warm-read alternative (`C1`, `C3`, `C10`, `C11`).
 
-   ```ts
-   FREEZE_FAILURE {
-     failure: {
-       failureId: "l5-early-mismatch",
-       causeCode: "early-prompt-mismatch",
-       message:
-         "'HELLO' mismatched near the front. Job 2 rewrote 14,623 tokens and cost 7.41× a full warm read.",
-       checkpointId: "l5-before-run"
-     }
-   }
-   ```
+   This evidence is non-punitive. No `FREEZE_FAILURE` is dispatched, and the remaining six actual requests continue.
 
-   The selected request costs `$0.05044575` more, or `7.41×` the valid request-local alternative (`C1`, `C3`, `C10`, `C11`). Jobs 3–8 are not dispatched, priced, or rendered. The freeze originates only from the actual harmful `req-front-2` event, never from a full-attempt total, reference run, or counterfactual reveal.
+7. **Front route: send jobs 3–8**  
+   Event: the queue dispatches six ordered `SEND_REQUEST` actions, `req-front-3` through `req-front-8`. Each resolves with `readTok=11,602`, `writeTok=14,623`, `inputTok=0`, and `outTok=0`; each costs `$0.05831685`. Each request appends one `LedgerRow`, refreshes the applicable cache entry, debits scalar `wallet`, and updates `attemptMetrics.requestCount` and `attemptMetrics.spentUsd`.
 
-8. **Rewind the failed front choice**  
-   Event: player clicks **Move the word** → `REWIND_TO_CHECKPOINT { checkpointId:"l5-before-run" }` → deterministically restores the pre-run cache, empty ledger, `clockMin`, `attemptMetrics`, and `$0.55` wallet while retaining the committed front prediction because it precedes the checkpoint. The selected layout remains editable.
+   Seven varied requests cost `$0.40821795`; the complete front run costs `$0.50660670` and leaves `$0.04339330`.
 
-9. **Apply the post-evidence remediation and predict again**  
-   Event: player moves **TASK** to the trailing slot → `NORMALIZE_PROMPTS { templateId:"l5-ticket-tail", taskPointerPosition:"tail" }` → sets `cfg.prompts="pointer"`, makes the shared `26,237`-token prefix byte-identical, increments `attemptMetrics.tailNormalizationActions`, and appends `"ev-l5-unattended-tail-placement"` to `completedEventIds`. No pricing occurs.
+8. **Complete the front run boundary**  
+   Event ID: `l5-front-run-complete`.  
+   Event: after `req-front-8` resolves, append `"l5-front-run-complete"` to `completedEventIds` and set:
 
-   Exact tail task pointers:
+   - `attemptMetrics.passingLedgerUsd=0.50660670`
+   - `attemptMetrics.passingRequestCount=8`
 
-   - **“TASK: fix login redirect”**
-   - **“TASK: fix logout redirect”**
-   - **“TASK: add reset-password route”**
-   - **“TASK: repair session refresh”**
-   - **“TASK: add auth error test”**
-   - **“TASK: fix callback state check”**
-   - **“TASK: update access guard”**
-   - **“TASK: verify sign-out cleanup.”**
+   The final tape contains one full red write followed by seven blue-read/red-rewrite rows. `clockMin` remains `1`, preserving the front route’s setup-time benefit.
 
-   Task labels and count are `[FICTION]`.
+9. **Tail route: send job 1**  
+   Preconditions: `cfg.prompts=="pointer"`, `clockMin==4`, and `completedEventIds` includes `"ev-l5-unattended-tail-placement"`.  
+   Event: player clicks **Run 8** → `SEND_REQUEST { request:req-tail-1 }` → creates the shared `CacheEntry`, appends one `LedgerRow`, debits scalar `wallet`, and updates `attemptMetrics`.  
+   Numbers: `writeTok=26,237`; other buckets `0`; cost `$0.09838875` (`C10`, `C1`, `C3`). `wallet` becomes `$0.45161125`.
 
-   Event: player clicks **Test layout** → `OPEN_PREDICTION`, `SELECT_PREDICTION`, and `COMMIT_PREDICTION { promptId:"l5-tail-result" }`, followed by `CREATE_CHECKPOINT { checkpointId:"l5-before-tail-run", reason:"prediction" }`. The tail run cannot execute before commitment.
-
-10. **Tail route: send job 1**  
-    Preconditions: `cfg.prompts=="pointer"` and `completedEventIds` includes `"ev-l5-unattended-tail-placement"`. This branch is reached either directly from the initial tail choice or after step 9 remediation.  
-    Event: player clicks **Run 8** → `SEND_REQUEST { request:req-tail-1 }` → creates the shared `CacheEntry`, appends one `LedgerRow`, debits scalar `wallet`, and updates `attemptMetrics`.  
-    Numbers: `writeTok=26,237`; other buckets `0`; cost `$0.09838875` (`C10`, `C1`, `C3`).
-
-11. **Tail route: send jobs 2–8**  
+10. **Tail route: send jobs 2–8**  
     Event: the queue dispatches seven ordered `SEND_REQUEST` actions → each `RESOLVE_PREFIX` reads the same live entry, refreshes `CacheEntry.lastTouchMin`, appends one `LedgerRow`, debits `wallet`, and updates `attemptMetrics.requestCount` and `attemptMetrics.spentUsd`.  
-    Per request: `readTok=26,237`; other buckets `0`; cost `$0.00787110` (`C10`, `C12`, `C1`, `C3`). Seven reads cost `$0.05509770`; the passing run costs `$0.15348645` and leaves `$0.39651355`.
+    Per request: `readTok=26,237`; other buckets `0`; cost `$0.00787110` (`C10`, `C12`, `C1`, `C3`). Seven reads cost `$0.05509770`; the complete tail run costs `$0.15348645` and leaves `$0.39651355`.
 
-    When request 8 resolves, the reducer sets `attemptMetrics.passingLedgerUsd=0.15348645` and `attemptMetrics.passingRequestCount=8`. A player who selected the tail layout initially reaches this authoritative run without a failure.
+11. **Complete the tail run and reveal its evidence**  
+    Event IDs: `l5-tail-run-complete`, then `ev-l5-reveal-tail`.  
+    Event: after `req-tail-8` resolves, append `"l5-tail-run-complete"` to `completedEventIds` and set:
 
-12. **Reveal the tail evidence**  
-    Event ID: `ev-l5-reveal-tail`.  
-    Event: request 8 settles → `REVEAL_PREDICTION { promptId:"l5-tail-result", correctOptionId:"seven-full-reads" }` → records `ev-l5-reveal-tail` in `completedEventIds` and reveals the complete one-red/seven-blue tape.  
+    - `attemptMetrics.passingLedgerUsd=0.15348645`
+    - `attemptMetrics.passingRequestCount=8`
+
+    Then dispatch `REVEAL_PREDICTION { promptId:"l5-tail-result", correctOptionId:"seven-full-reads" }`, append `"ev-l5-reveal-tail"` to `completedEventIds`, and reveal the complete one-red/seven-blue tape. `clockMin` remains `4`.
+
     Aha copy: **“Same work, different position. With the variation at the tail, all seven later agents reused the 26,237-token prefix.”** (`C8`, `C10`).
 
-13. **Choose the causal explanation after evidence**  
-    Event: the player selects an explanation. The correct selection dispatches `ACK_EXPLANATION { explanationId:"l5-byte-identity" }`. Incorrect selections are neutral and retryable; they cause no economic mutation or score loss.  
-    Rule revealed only now: **“The bytes before TASK stayed identical, so every later request could read the saved prefix.”**
+12. **Choose the causal explanation after route evidence**  
+    Event: after `l5-front-run-complete` or `l5-tail-run-complete`, the player selects an explanation. The correct selection dispatches `ACK_EXPLANATION { explanationId:"l5-byte-identity" }`. Incorrect selections are neutral and retryable; they cause no economic mutation or score loss.
 
-14. **Begin the required transfer before completion**  
-    Event: after `ev-l5-reveal-tail` and `ACK_EXPLANATION("l5-byte-identity")` → `BEGIN_TRANSFER { challengeId:"l5-first-line-triage" }`. `phase` becomes `"transfer"` while `attemptResult` remains `null`.
+    Rule revealed only now: **“Cache reuse followed the identical bytes before the first change: an early change rewrote the suffix, while a trailing change preserved the shared prefix.”**
+
+13. **Begin the required transfer before completion**  
+    Event: after either completed run and `ACK_EXPLANATION("l5-byte-identity")` → `BEGIN_TRANSFER { challengeId:"l5-first-line-triage" }`. `phase` becomes `"transfer"` while `attemptResult` remains `null`.
 
     Copy: **“Pager duty. The on-call lead sees only each first line and must identify the ticket before assigning it.”**
 
-    This changes the operational constraint before gate evaluation. The unattended dispatch has already demonstrated the tail benefit through lower `spentUsd`; the transfer now requires the opposing first-line scanning benefit to become reducer-visible.
+    This changes the operational constraint before gate evaluation. The actual run has demonstrated either the direct setup-time benefit or the normalized request-cost benefit; the transfer now requires the first-line scanning benefit to become reducer-visible.
 
-15. **Apply ticket-first placement to the human-triage context**  
+14. **Apply ticket-first placement to the human-triage context**  
     The same two layout controls appear without cache colors or prices. The player chooses:
 
     - `NORMALIZE_PROMPTS { templateId:"l5-triage-ticket-front", taskPointerPosition:"front" }`
@@ -175,24 +159,34 @@ The visible wording is puzzle input; its cache consequence, reusable boundary, a
     - appends `"ev-l5-triage-transfer"` to `completedEventIds`;
     - completes event `ev-l5-triage-transfer`.
 
-    The transfer sends no request, so it changes no wallet, ledger row, price, request count, passing subtotal, or cache entry. Its consequence is nevertheless real: both `"ev-l5-unattended-tail-placement"` and `"l5-triage-ticket-first"`, plus completion of `ev-l5-triage-transfer`, are required by `pass(st)`.
+    The transfer sends no request, so it changes no clock, wallet, ledger row, price, request count, passing subtotal, or cache entry.
 
-16. **Complete the attempt only after both contextual applications**  
+15. **Complete the attempt after one qualified route and the transfer**  
     Event ID: `ev-l5-complete-attempt`.  
-    Preconditions: the causal explanation is acknowledged, `ev-l5-unattended-tail-placement` and `ev-l5-triage-transfer` are completed, and `completedTransferIds` includes `"l5-triage-ticket-first"`.  
-    Event: `COMPLETE_ATTEMPT`. The canonical gate and star predicates evaluate against `attemptMetrics`, `completedEventIds`, `acknowledgedExplanationIds`, and `completedTransferIds`. Completion copies all declared aggregates into immutable `attemptResult`, including:
+    Preconditions: one authored eight-request route qualifies, its causal explanation is acknowledged, `ev-l5-triage-transfer` is completed, and `completedTransferIds` includes `"l5-triage-ticket-first"`.  
+    Event: `COMPLETE_ATTEMPT`. The canonical gate and star predicates evaluate against `clockMin`, `attemptMetrics`, `completedEventIds`, `acknowledgedExplanationIds`, and `completedTransferIds`. Completion copies all declared aggregates into immutable `attemptResult`.
+
+    Front snapshot:
+
+    - `attemptResult.spentUsd=0.50660670`
+    - `attemptResult.requestCount=8`
+    - `attemptResult.passingLedgerUsd=0.50660670`
+    - `attemptResult.passingRequestCount=8`
+    - `attemptResult.tailNormalizationActions=0`
+
+    Tail snapshot:
 
     - `attemptResult.spentUsd=0.15348645`
     - `attemptResult.requestCount=8`
     - `attemptResult.passingLedgerUsd=0.15348645`
     - `attemptResult.passingRequestCount=8`
-    - the branch’s `attemptResult.tailNormalizationActions`
+    - `attemptResult.tailNormalizationActions=1`
 
-    `UI_RESULT_SCREEN` reads the completed snapshot.
+    `UI_RESULT_SCREEN` reads the completed branch snapshot.
 
-17. **Unlock the informational comparison after completion**  
-    Event: after `ev-l5-complete-attempt` → `REQUEST_COUNTERFACTUAL { comparisonId:"l5-front-v-tail" }`, then `REVEAL_COUNTERFACTUAL { comparisonId:"l5-front-v-tail" }`. The same-seed eight-job anti-pattern is projected off-screen only after the meaningful attempt.  
-    Numbers: projected front-varied total `$0.50660670`; pointer-tail total `$0.15348645`; savings `$0.35312025` (`C1`, `C3`, `C10`, `C11`). This comparison is informational: it cannot dispatch `FREEZE_FAILURE` or mutate actual-attempt wallet, ledger, failure state, completed markers, or `attemptResult`.
+16. **Unlock the informational comparison after completion**  
+    Event: after `ev-l5-complete-attempt` → `REQUEST_COUNTERFACTUAL { comparisonId:"l5-front-v-tail" }`, then `REVEAL_COUNTERFACTUAL { comparisonId:"l5-front-v-tail" }`. The same-seed pair is projected off-screen only after the meaningful attempt.  
+    Numbers: front total `$0.50660670` with `1` setup minute; tail total `$0.15348645` with `4` setup minutes; request-cost difference `$0.35312025`; setup-time difference `3` minutes (`C1`, `C3`, `C10`, `C11`; setup durations `[FICTION]`). This comparison is informational: it cannot dispatch `FREEZE_FAILURE` or mutate actual-attempt clock, wallet, ledger, completed markers, route subtotal, or `attemptResult`.
 
 ## 5. Level data
 
@@ -315,6 +309,22 @@ const level05: LevelDef = {
         value: 5,
         unit: "min",
         tag: "[FICTION]"
+      },
+      {
+        id: "l5-front-direct-setup-min",
+        label: "front direct setup duration",
+        semanticRole: "elapsed simulated setup time for the direct greeting-first route",
+        value: 1,
+        unit: "min",
+        tag: "[FICTION]"
+      },
+      {
+        id: "l5-tail-normalization-setup-min",
+        label: "tail normalization setup duration",
+        semanticRole: "elapsed simulated normalization setup time for the pointer-tail route",
+        value: 4,
+        unit: "min",
+        tag: "[FICTION]"
       }
     ],
     estimates: [
@@ -338,110 +348,143 @@ const level05: LevelDef = {
 
   failLesson: {
     bucket: "none",
-    cite: "C9",
+    cite: "C8,C9",
     line:
-      "A mismatch near the start preserves the earlier read but forces the cacheable suffix to be rewritten."
+      "Both routes finish; their different setup times and request ledgers expose the consequence of the first changed byte."
   },
-  failureRules: [
-    {
-      id: "l5-early-mismatch",
-      predicate: {
-        id: "l5-front-second-request",
-        kind: "all",
-        predicates: [
-          {
-            id: "l5-front-mode-active",
-            kind: "compare",
-            path: "cfg.prompts",
-            op: "eq",
-            value: "varied"
-          },
-          {
-            id: "l5-two-front-requests-priced",
-            kind: "compare",
-            path: "attemptMetrics.requestCount",
-            op: "eq",
-            value: 2
-          }
-        ]
-      },
-      decisiveEventId: "ev-l5-reveal-front",
-      causeCode: "early-prompt-mismatch",
-      message:
-        "'HELLO' mismatched near the front. Job 2 rewrote 14,623 tokens and cost 7.41× a full warm read.",
-      checkpointId: "l5-before-run",
-      highlightObjectIds: [
-        "req-front-2",
-        "l5-front-mismatch-marker",
-        "l5-front-comparison-chip"
-      ],
-      actualUsd: 0.05831685,
-      validAlternativeUsd: 0.00787110
-    }
-  ],
-  checkpoints: [
-    {
-      id: "l5-before-run",
-      createBeforeEventId: "ev-l5-reveal-front",
-      reason: "decision",
-      resumeLabel: "Move the word"
-    },
-    {
-      id: "l5-before-tail-run",
-      createBeforeEventId: "ev-l5-reveal-tail",
-      reason: "prediction",
-      resumeLabel: "Test the layout again"
-    }
-  ],
+  failureRules: [],
+  checkpoints: [],
 
   gate: {
     predicateId: "l5-demonstrated-contextual-placement",
-    evidenceRevealEventIds: ["ev-l5-reveal-tail"],
+    evidenceRevealEventIds: [
+      "ev-l5-reveal-front",
+      "ev-l5-reveal-tail"
+    ],
     postEvidenceActionRequirements: [
       {
-        id: "l5-post-evidence-explanation",
-        kind: "action-observed",
-        actionType: "ACK_EXPLANATION",
-        afterEventId: "ev-l5-reveal-tail",
-        match: { explanationId: "l5-byte-identity" }
+        id: "l5-post-route-explanation",
+        kind: "any",
+        predicates: [
+          {
+            id: "l5-post-front-explanation",
+            kind: "action-observed",
+            actionType: "ACK_EXPLANATION",
+            afterEventId: "ev-l5-reveal-front",
+            match: { explanationId: "l5-byte-identity" }
+          },
+          {
+            id: "l5-post-tail-explanation",
+            kind: "action-observed",
+            actionType: "ACK_EXPLANATION",
+            afterEventId: "ev-l5-reveal-tail",
+            match: { explanationId: "l5-byte-identity" }
+          }
+        ]
       },
       {
-        id: "l5-post-evidence-triage-placement",
-        kind: "action-observed",
-        actionType: "NORMALIZE_PROMPTS",
-        afterEventId: "ev-l5-reveal-tail",
-        match: {
-          templateId: "l5-triage-ticket-front",
-          taskPointerPosition: "front"
-        }
+        id: "l5-post-route-triage-placement",
+        kind: "any",
+        predicates: [
+          {
+            id: "l5-post-front-triage-placement",
+            kind: "action-observed",
+            actionType: "NORMALIZE_PROMPTS",
+            afterEventId: "ev-l5-reveal-front",
+            match: {
+              templateId: "l5-triage-ticket-front",
+              taskPointerPosition: "front"
+            }
+          },
+          {
+            id: "l5-post-tail-triage-placement",
+            kind: "action-observed",
+            actionType: "NORMALIZE_PROMPTS",
+            afterEventId: "ev-l5-reveal-tail",
+            match: {
+              templateId: "l5-triage-ticket-front",
+              taskPointerPosition: "front"
+            }
+          }
+        ]
       }
     ],
     behavioralRequirements: [
       {
-        id: "l5-unattended-tail-applied",
-        kind: "event-completed",
-        eventId: "ev-l5-unattended-tail-placement"
+        id: "l5-qualified-actual-route",
+        kind: "any",
+        predicates: [
+          {
+            id: "l5-qualified-tail-route",
+            kind: "all",
+            predicates: [
+              {
+                id: "l5-tail-run-finished",
+                kind: "event-completed",
+                eventId: "l5-tail-run-complete"
+              },
+              {
+                id: "l5-tail-eight-requests",
+                kind: "compare",
+                path: "attemptMetrics.passingRequestCount",
+                op: "eq",
+                value: 8,
+                observedAfterEventId: "l5-tail-run-complete"
+              },
+              {
+                id: "l5-tail-spend-bound",
+                kind: "compare",
+                path: "attemptMetrics.passingLedgerUsd",
+                op: "lte",
+                value: 0.15348645,
+                observedAfterEventId: "l5-tail-run-complete"
+              }
+            ]
+          },
+          {
+            id: "l5-qualified-front-route",
+            kind: "all",
+            predicates: [
+              {
+                id: "l5-front-run-finished",
+                kind: "event-completed",
+                eventId: "l5-front-run-complete"
+              },
+              {
+                id: "l5-front-eight-requests",
+                kind: "compare",
+                path: "attemptMetrics.passingRequestCount",
+                op: "eq",
+                value: 8,
+                observedAfterEventId: "l5-front-run-complete"
+              },
+              {
+                id: "l5-front-spend-bound",
+                kind: "compare",
+                path: "attemptMetrics.passingLedgerUsd",
+                op: "lte",
+                value: 0.50660670,
+                observedAfterEventId: "l5-front-run-complete"
+              }
+            ]
+          }
+        ]
       },
       {
-        id: "l5-eight-passing-rows",
-        kind: "compare",
-        path: "attemptMetrics.passingRequestCount",
-        op: "eq",
-        value: 8,
-        observedAfterEventId: "ev-l5-reveal-tail"
-      },
-      {
-        id: "l5-reference-passing-subtotal",
-        kind: "compare",
-        path: "attemptMetrics.passingLedgerUsd",
-        op: "lte",
-        value: 0.15348645,
-        observedAfterEventId: "ev-l5-reveal-tail"
-      },
-      {
-        id: "l5-one-write-seven-reads",
-        kind: "event-completed",
-        eventId: "ev-l5-reveal-tail"
+        id: "l5-route-evidence-revealed",
+        kind: "any",
+        predicates: [
+          {
+            id: "l5-front-evidence-visible",
+            kind: "event-completed",
+            eventId: "ev-l5-reveal-front"
+          },
+          {
+            id: "l5-tail-evidence-visible",
+            kind: "event-completed",
+            eventId: "ev-l5-reveal-tail"
+          }
+        ]
       },
       {
         id: "l5-human-triage-completed",
@@ -453,8 +496,7 @@ const level05: LevelDef = {
       id: "l5-byte-rule-acknowledged",
       kind: "includes",
       path: "acknowledgedExplanationIds",
-      value: "l5-byte-identity",
-      observedAfterEventId: "ev-l5-reveal-tail"
+      value: "l5-byte-identity"
     },
     transferRequirement: {
       id: "l5-ticket-first-transfer-recorded",
@@ -466,15 +508,27 @@ const level05: LevelDef = {
   },
 
   pass(st: ReducerState): GateResult {
-    const unattendedTailPlaced =
-      st.completedEventIds.includes("ev-l5-unattended-tail-placement");
     const passingRowsResolved =
       st.attemptMetrics.passingRequestCount === 8;
-    const passingSubtotalAtReference =
+
+    const tailRouteQualified =
+      st.completedEventIds.includes("l5-tail-run-complete") &&
+      passingRowsResolved &&
       st.attemptMetrics.passingLedgerUsd !== null &&
       st.attemptMetrics.passingLedgerUsd <= 0.15348645;
-    const tailEvidenceRevealed =
-      st.completedEventIds.includes("ev-l5-reveal-tail");
+
+    const frontRouteQualified =
+      st.completedEventIds.includes("l5-front-run-complete") &&
+      passingRowsResolved &&
+      st.attemptMetrics.passingLedgerUsd !== null &&
+      st.attemptMetrics.passingLedgerUsd <= 0.50660670;
+
+    const routeEvidenceRevealed =
+      (tailRouteQualified &&
+        st.completedEventIds.includes("ev-l5-reveal-tail")) ||
+      (frontRouteQualified &&
+        st.completedEventIds.includes("ev-l5-reveal-front"));
+
     const ruleAcknowledged =
       st.acknowledgedExplanationIds.includes("l5-byte-identity");
     const triageTransferCompleted =
@@ -483,10 +537,8 @@ const level05: LevelDef = {
       st.completedTransferIds.includes("l5-triage-ticket-first");
 
     const pass =
-      unattendedTailPlaced &&
-      passingRowsResolved &&
-      passingSubtotalAtReference &&
-      tailEvidenceRevealed &&
+      (tailRouteQualified || frontRouteQualified) &&
+      routeEvidenceRevealed &&
       ruleAcknowledged &&
       triageTransferCompleted &&
       ticketFirstApplied;
@@ -494,13 +546,15 @@ const level05: LevelDef = {
     return {
       pass,
       reason: pass
-        ? "The player used tail placement for repeated dispatch and ticket-first placement for first-line triage."
-        : "Complete the efficient repeated run, identify its cause, then apply ticket-first placement to the first-line triage transfer.",
+        ? "The player completed one eight-request route, identified the byte-boundary cause, and applied ticket-first placement to first-line triage."
+        : "Complete either eight-request route, identify its cache consequence, then apply ticket-first placement to the first-line triage transfer.",
       evidence: [
-        `unattendedTailPlaced=${String(unattendedTailPlaced)}`,
+        `frontRouteQualified=${String(frontRouteQualified)}`,
+        `tailRouteQualified=${String(tailRouteQualified)}`,
         `passingRequestCount=${String(st.attemptMetrics.passingRequestCount)}`,
         `passingLedgerUsd=${String(st.attemptMetrics.passingLedgerUsd)}`,
-        `tailEvidence=${String(tailEvidenceRevealed)}`,
+        `clockMin=${String(st.clockMin)}`,
+        `routeEvidence=${String(routeEvidenceRevealed)}`,
         `byteRuleAcknowledged=${String(ruleAcknowledged)}`,
         `triageTransfer=${String(triageTransferCompleted)}`,
         `ticketFirstApplied=${String(ticketFirstApplied)}`
@@ -509,47 +563,111 @@ const level05: LevelDef = {
   },
 
   star2: {
-    label: "Clean template",
+    label: "Own the tradeoff",
     predicate: {
-      id: "l5-single-tail-normalization",
-      kind: "compare",
-      path: "attemptMetrics.tailNormalizationActions",
-      op: "lte",
-      value: 1,
-      observedAfterEventId: "ev-l5-triage-transfer"
+      id: "l5-route-benefit",
+      kind: "any",
+      predicates: [
+        {
+          id: "l5-tail-cost-benefit",
+          kind: "all",
+          predicates: [
+            {
+              id: "l5-star2-tail-complete",
+              kind: "event-completed",
+              eventId: "l5-tail-run-complete"
+            },
+            {
+              id: "l5-star2-tail-spend",
+              kind: "compare",
+              path: "attemptMetrics.passingLedgerUsd",
+              op: "lte",
+              value: 0.15348645,
+              observedAfterEventId: "l5-tail-run-complete"
+            }
+          ]
+        },
+        {
+          id: "l5-front-time-benefit",
+          kind: "all",
+          predicates: [
+            {
+              id: "l5-star2-front-complete",
+              kind: "event-completed",
+              eventId: "l5-front-run-complete"
+            },
+            {
+              id: "l5-star2-front-fast-setup",
+              kind: "compare",
+              path: "clockMin",
+              op: "lte",
+              value: 1,
+              observedAfterEventId: "l5-front-run-complete"
+            }
+          ]
+        }
+      ]
     },
     reason:
-      "Reached the reusable unattended layout with at most one accepted tail-normalization action."
+      "Kept the tail route at its $0.15348645 spend bound or completed the front route after only one simulated setup minute."
   },
+
   star3: {
-    label: "Byte perfect",
+    label: "Context perfect",
     predicate: {
-      id: "l5-byte-perfect",
+      id: "l5-context-perfect",
       kind: "all",
       predicates: [
         {
-          id: "l5-star3-clean-template",
-          kind: "compare",
-          path: "attemptMetrics.tailNormalizationActions",
-          op: "lte",
-          value: 1,
-          observedAfterEventId: "ev-l5-triage-transfer"
+          id: "l5-star3-route-benefit",
+          kind: "any",
+          predicates: [
+            {
+              id: "l5-star3-tail-benefit",
+              kind: "all",
+              predicates: [
+                {
+                  id: "l5-star3-tail-complete",
+                  kind: "event-completed",
+                  eventId: "l5-tail-run-complete"
+                },
+                {
+                  id: "l5-star3-tail-spend",
+                  kind: "compare",
+                  path: "attemptMetrics.passingLedgerUsd",
+                  op: "lte",
+                  value: 0.15348645,
+                  observedAfterEventId: "l5-tail-run-complete"
+                }
+              ]
+            },
+            {
+              id: "l5-star3-front-benefit",
+              kind: "all",
+              predicates: [
+                {
+                  id: "l5-star3-front-complete",
+                  kind: "event-completed",
+                  eventId: "l5-front-run-complete"
+                },
+                {
+                  id: "l5-star3-front-fast-setup",
+                  kind: "compare",
+                  path: "clockMin",
+                  op: "lte",
+                  value: 1,
+                  observedAfterEventId: "l5-front-run-complete"
+                }
+              ]
+            }
+          ]
         },
         {
-          id: "l5-cost-at-reference",
-          kind: "compare",
-          path: "attemptMetrics.passingLedgerUsd",
-          op: "lte",
-          value: 0.15348645,
-          observedAfterEventId: "ev-l5-reveal-tail"
-        },
-        {
-          id: "l5-no-extra-request",
+          id: "l5-star3-exact-request-count",
           kind: "compare",
           path: "attemptMetrics.passingRequestCount",
           op: "eq",
-          value: 8,
-          observedAfterEventId: "ev-l5-reveal-tail"
+          value: 8
         },
         {
           id: "l5-star3-triage-complete",
@@ -559,7 +677,7 @@ const level05: LevelDef = {
       ]
     },
     reason:
-      "Used one write and seven full reads, spent no more than the reference subtotal, sent no extra request, and completed the triage transfer."
+      "Captured the chosen route’s real benefit, sent exactly eight requests, and completed the first-line triage transfer."
   },
 
   referenceCfg: {
@@ -580,7 +698,7 @@ const level05: LevelDef = {
     {
       id: "l5-front-v-tail",
       unlockAfterEventId: "ev-l5-complete-attempt",
-      kind: "anti-pattern",
+      kind: "alternate-choice",
       cfg: {
         devModel: "sonnet",
         who: "subagent",
@@ -589,15 +707,14 @@ const level05: LevelDef = {
         oneHourFlag: false
       },
       comparisonQuestion:
-        "What would the earlier variation make seven later agents rewrite?",
+        "What did the other setup route trade for its request total?",
       revealCopy:
-        "Projected across the same eight jobs, the early mismatch would force a 14,623-token rewrite on each later request."
+        "Greeting-first used three fewer setup minutes but cost $0.35312025 more across the same eight requests."
     }
   ],
 
   interactionPatterns: [
     "predict-before-reveal",
-    "fail-freeze-rewind",
     "just-in-time-toast",
     "counterfactual-after-attempt"
   ],
@@ -610,9 +727,12 @@ const level05: LevelDef = {
 
 The authored event mutations are authoritative:
 
-- An accepted unattended-context tail `NORMALIZE_PROMPTS` action appends `"ev-l5-unattended-tail-placement"` to `completedEventIds`.
+- An accepted direct greeting-first action dispatches `ADVANCE { min:1 }` and completes `ev-l5-front-direct-setup`.
+- An accepted unattended pointer-tail action dispatches `ADVANCE { min:4 }`, increments `attemptMetrics.tailNormalizationActions`, and completes `ev-l5-unattended-tail-placement` and `ev-l5-tail-normalization-setup`.
+- Resolution of `req-front-8` appends `"l5-front-run-complete"` and snapshots `passingRequestCount=8` and `passingLedgerUsd=0.50660670`.
+- Resolution of `req-tail-8` appends `"l5-tail-run-complete"` and snapshots `passingRequestCount=8` and `passingLedgerUsd=0.15348645`.
 - An accepted transfer-context `NORMALIZE_PROMPTS` action with `templateId:"l5-triage-ticket-front"` appends `"l5-triage-ticket-first"` to `completedTransferIds` and `"ev-l5-triage-transfer"` to `completedEventIds`.
-- The similarly shaped cold-open front action occurs before `ev-l5-reveal-tail` and cannot satisfy the transfer requirement.
+- The similarly shaped cold-open front action occurs before route evidence and uses a different `templateId`, so it cannot satisfy the transfer requirement.
 
 ## 6. Pricing walkthrough
 
@@ -625,15 +745,15 @@ There is one authoritative pricing table:
 | First request, either layout | `req-*-1` | `0` | `26,237` | `26,237 × 1.25 × $3/M` | `$0.09838875` |
 | Tail layout, each warm request | `req-tail-2…8` | `26,237` | `0` | `26,237 × 0.1 × $3/M` | `$0.00787110` |
 | Tail layout, seven-read subtotal | `7` requests | `183,659` | `0` | `7 × $0.00787110` | `$0.05509770` |
-| **Tail-layout reference total** | `8` requests | `183,659` | `26,237` | first write + seven reads | **`$0.15348645`** |
+| **Tail-layout total** | `8` requests | `183,659` | `26,237` | first write + seven reads | **`$0.15348645`** |
 | Front layout, each varied request | `req-front-2…8` | `11,602` | `14,623` | `(11,602 × 0.1 × $3/M) + (14,623 × 1.25 × $3/M)` | `$0.05831685` |
-| Front layout, seven-varied projection | `7` projected requests | `81,214` | `102,361` | `7 × $0.05831685` | `$0.40821795` |
-| **Front-layout anti-pattern projection** | `8` projected requests | `81,214` | `128,598` | first write + seven varied requests | **`$0.50660670`** |
-| **Reference savings** | same seed and jobs | — | — | `$0.50660670 − $0.15348645` | **`$0.35312025`** |
+| Front layout, seven-varied subtotal | `7` requests | `81,214` | `102,361` | `7 × $0.05831685` | `$0.40821795` |
+| **Front-layout total** | `8` requests | `81,214` | `128,598` | first write + seven varied requests | **`$0.50660670`** |
+| **Request-cost difference** | same seed and jobs | — | — | `$0.50660670 − $0.15348645` | **`$0.35312025`** |
 
-The identical-prefix count comes from `C10`; the varied read/rewrite split comes from `C11`; identity and invalidation behavior come from `C8` and `C9`. The reference saves `69.70%` of the projected anti-pattern total.
+The identical-prefix count comes from `C10`; the varied read/rewrite split comes from `C11`; identity and invalidation behavior come from `C8` and `C9`. Tail placement saves `69.70%` of the front route’s request cost. Front placement instead saves `3` simulated setup minutes: `1` minute rather than `4`.
 
-On the actual harmful front branch, only `req-front-1` and `req-front-2` are dispatched. The request-local `$0.00787110` alternative is an uncharged quote rendered beside `req-front-2`; it is not a ledger row. The seven-request front subtotal and eight-request front total exist only in the post-completion informational projection. The pre-completion triage transfer sends no request and adds no pricing branch or competing total.
+Both tables describe actual player routes. The front route dispatches all eight requests and records `$0.50660670`; the tail route dispatches all eight requests and records `$0.15348645`. The request-2 `$0.00787110` warm-read comparison on the front route is an uncharged local quote, not a ledger row. The pre-completion triage transfer sends no request and adds no pricing branch or competing total.
 
 ## 7. Tape sequence
 
@@ -641,18 +761,23 @@ On the actual harmful front branch, only `req-front-1` and `req-front-2` are dis
 
 `UI_TAPE_RENDERER` uses the canonical `tapeWeight` model, including `outTok × 5` and every other priced bucket. This level’s authoritative requests have `outTok=0`, so no violet segment appears, but output remains part of the renderer contract.
 
-### Player-chosen front failure group
+### Player-chosen front group
 
 1. `req-front-1`: red `write`, `26,237` tokens.
-2. `req-front-2`: blue `read`, `11,602` tokens; mismatch notch; red `write`, `14,623` tokens.
-3. Freeze immediately; jobs 3–8 are neither priced nor rendered.
+2. `req-front-2`: blue `read`, `11,602` tokens; mismatch notch; red `write`, `14,623` tokens. This is the front route’s aha request.
+3. `req-front-3`: blue `read`, `11,602`; red `write`, `14,623`.
+4. `req-front-4`: blue `read`, `11,602`; red `write`, `14,623`.
+5. `req-front-5`: blue `read`, `11,602`; red `write`, `14,623`.
+6. `req-front-6`: blue `read`, `11,602`; red `write`, `14,623`.
+7. `req-front-7`: blue `read`, `11,602`; red `write`, `14,623`.
+8. `req-front-8`: blue `read`, `11,602`; red `write`, `14,623`.
 
-The decisive request frame synchronizes row 2 with `UI_PREFIX_STACK_VISUALIZER` in diff mode: a caret under the first mismatching greeting token, a red sweep labeled **“14,623 tokens invalidated,”** and the economically true request-local comparison `$0.05831685` versus `$0.00787110`.
+The request-2 frame synchronizes with `UI_PREFIX_STACK_VISUALIZER` in diff mode: a caret under the first mismatching greeting token, a red sweep labeled **“14,623 tokens invalidated,”** and the request-local comparison `$0.05831685` versus `$0.00787110`. The queue then completes rows 3–8 without freezing.
 
-### Passing tail group
+### Player-chosen tail group
 
 1. `req-tail-1`: red `write`, `26,237`.
-2. `req-tail-2`: blue `read`, `26,237`; this is `ahaRequestId`.
+2. `req-tail-2`: blue `read`, `26,237`; this is the tail route’s aha request.
 3. `req-tail-3`: blue `read`, `26,237`.
 4. `req-tail-4`: blue `read`, `26,237`.
 5. `req-tail-5`: blue `read`, `26,237`.
@@ -678,6 +803,8 @@ Correctness remains visually neutral until `req-front-2` resolves. Correct optio
 
 Post-reveal explanation: **“The first mismatch preserved 11,602 earlier tokens but invalidated the 14,623-token suffix.”** (`C11`)
 
+Jobs 3–8 then resolve with the same split. The full front tape and `$0.50660670` subtotal are visible before the explanation control unlocks.
+
 ### `l5-tail-result`
 
 **Question:** “The changing job words are at the tail. After the first red write, what will jobs 2–8 show?”
@@ -694,11 +821,11 @@ Neither prediction option, prediction correctness, nor `COMMIT_PREDICTION` is ga
 
 ### Post-evidence explanation choice
 
-Shown only after `ev-l5-reveal-tail`.
+Shown only after the selected route’s eight requests have resolved.
 
-**Question:** “What made the seven blue reads possible?”
+**Question:** “Why did the two layouts produce different request tapes?”
 
-- `l5-byte-identity` — “The bytes before TASK stayed identical.”
+- `l5-byte-identity` — “Reuse stopped at the first changed bytes; moving the change later preserved more shared context.”
 - `l5-tier-ignores-words` — “The five-minute tier ignores wording changes.”
 - `l5-agents-share-everything` — “Subagents automatically share all context.”
 
@@ -717,76 +844,59 @@ No correctness styling appears before selection. Both choices render their eight
 
 ## 9. Fail-state
 
-- **Reachability:** only the player’s explicit greeting-first choice, represented by `cfg.prompts=="varied"`, can reach this failure.
-- **Failure rule ID:** `l5-early-mismatch`
-- **Decisive event:** resolution of `req-front-2` in the player’s actual attempt at `ev-l5-reveal-front`.
-- **Legal failure predicate:**
+This level has no punitive failure branch.
 
-  ```ts
-  {
-    id: "l5-front-second-request",
-    kind: "all",
-    predicates: [
-      {
-        id: "l5-front-mode-active",
-        kind: "compare",
-        path: "cfg.prompts",
-        op: "eq",
-        value: "varied"
-      },
-      {
-        id: "l5-two-front-requests-priced",
-        kind: "compare",
-        path: "attemptMetrics.requestCount",
-        op: "eq",
-        value: 2
-      }
-    ]
-  }
-  ```
+- `failureRules` is empty.
+- Neither route dispatches `FREEZE_FAILURE`.
+- Greeting-first resolves all eight actual requests and records `$0.50660670`.
+- Pointer-tail resolves all eight actual requests and records `$0.15348645`.
+- The front mismatch remains visible causal evidence, but it does not stop the queue.
+- No `REWIND_TO_CHECKPOINT` action is required to complete either route.
+- An incorrect post-evidence explanation or ticket-tail triage choice is neutral and immediately retryable without changing clock, wallet, ledger, cache, request count, or passing subtotal.
+- The completion control remains disabled until one eight-request route qualifies, the explanation is acknowledged, and ticket-first triage is recorded.
+- `REQUEST_COUNTERFACTUAL` and `REVEAL_COUNTERFACTUAL` remain informational and cannot dispatch `FREEZE_FAILURE`.
 
-- **Deterministic resolved evidence:** `req-front-2` has `readTok=11,602`, `writeTok=14,623`, and `PrefixResolution.invalidatedSuffixTok=14,623` under `C11`.
-- **Actual decisive-request cost:** `$0.05831685`.
-- **Valid request-local tail-layout alternative:** `$0.00787110`.
-- **Visible margin:** `$0.05044575`; the punished request is `7.41×` the valid alternative (`C1`, `C3`, `C10`, `C11`).
-- **Freeze target:** request 2’s mismatch marker, red suffix, comparison chip, scalar `wallet`, and `clockMin`.
-- **One-line causal message:** **“‘HELLO’ mismatched near the front. Job 2 rewrote 14,623 tokens and cost 7.41× a full warm read.”**
-- **Rewind control label:** **“Move the word”**
-- **Rewind behavior:** `REWIND_TO_CHECKPOINT { checkpointId:"l5-before-run" }`; remove the two failed-run ledger rows and cache mutation, restore `$0.55`, restore attempt aggregates, preserve the completed prediction, and focus the selected template editor. The cold-open and template choice do not replay.
-- **Locality:** `FREEZE_FAILURE` is dispatched during processing of the actual `req-front-2` request event. Requests 3–8 are not dispatched on the frozen branch.
-- **Counterfactual exclusion:** `l5-early-mismatch` cannot attach to `REQUEST_COUNTERFACTUAL`, `REVEAL_COUNTERFACTUAL`, `l5-front-v-tail`, `ev-l5-triage-transfer`, or `ev-l5-complete-attempt`.
+The live counter-pressure replaces local punishment: greeting-first preserves three simulated setup minutes but spends `$0.35312025` more on requests; pointer-tail spends three additional setup minutes to obtain the lower request total.
 
 ## 10. Gate & stars
 
-`pass(st)` uses only canonical `ReducerState` paths and requires both contextual placements:
+`pass(st)` uses only canonical `ReducerState` paths and accepts either complete actual route:
 
-- `completedEventIds` includes `ev-l5-unattended-tail-placement`.
-- `attemptMetrics.passingRequestCount==8`.
-- `attemptMetrics.passingLedgerUsd<=0.15348645`.
-- `completedEventIds` includes `ev-l5-reveal-tail`.
+- Tail arm:
+  - `completedEventIds` includes `l5-tail-run-complete`.
+  - `attemptMetrics.passingRequestCount==8`.
+  - `attemptMetrics.passingLedgerUsd<=0.15348645`.
+- Front arm:
+  - `completedEventIds` includes `l5-front-run-complete`.
+  - `attemptMetrics.passingRequestCount==8`.
+  - `attemptMetrics.passingLedgerUsd<=0.50660670`.
+- The selected route’s prediction evidence is revealed.
 - `acknowledgedExplanationIds` includes `l5-byte-identity`.
 - `completedEventIds` includes `ev-l5-triage-transfer`.
 - `completedTransferIds` includes `l5-triage-ticket-first`.
-- The triage `NORMALIZE_PROMPTS` action is observed after `ev-l5-reveal-tail`.
+- The qualifying explanation and triage `NORMALIZE_PROMPTS` action are observed after the selected route’s evidence reveal.
 - No requirement inspects either prediction’s selected option or correctness.
 - No requirement depends on budget alone.
-- Final `cfg.prompts` is deliberately not gate evidence because the pre-completion triage action legitimately changes it after the passing unattended run.
+- Final `cfg.prompts` is deliberately not gate evidence because the pre-completion triage action legitimately changes placement after the priced run.
 
-`ev-l5-unattended-tail-placement` is appended by the accepted tail-placement action in the unattended dispatcher. `ev-l5-reveal-tail` is emitted only after the authored request shape resolves: row 1 writes `26,237`; rows 2–8 each read `26,237` and write `0`. `ev-l5-triage-transfer` and `l5-triage-ticket-first` are appended only by the accepted ticket-first action in the subsequent first-line-only transfer.
+`l5-front-run-complete` is emitted only after row 1 writes `26,237` and rows 2–8 each read `11,602` and rewrite `14,623`. `l5-tail-run-complete` is emitted only after row 1 writes `26,237` and rows 2–8 each read `26,237` and write `0`. `ev-l5-triage-transfer` and `l5-triage-ticket-first` are appended only by the accepted ticket-first action in the subsequent first-line-only transfer.
 
 Stars:
 
-- **1 star:** the behavioral gate passes, including both contextual applications.
-- **2 stars — Clean template:** pass with `attemptMetrics.tailNormalizationActions<=1`.
-- **3 stars — Byte perfect:** 2-star normalization discipline, `attemptMetrics.passingLedgerUsd<=$0.15348645`, `attemptMetrics.passingRequestCount==8`, and completed triage transfer.
+- **1 star:** the behavioral gate passes through either qualified route.
+- **2 stars — Own the tradeoff:** tail qualifies through `attemptMetrics.passingLedgerUsd<=0.15348645`; front qualifies through `clockMin<=1`.
+- **3 stars — Context perfect:** the same route-specific benefit, `attemptMetrics.passingRequestCount==8`, and completed triage transfer.
 
-After `COMPLETE_ATTEMPT`, `UI_RESULT_SCREEN` reads the corresponding immutable `attemptResult` fields. The triage transfer occurs before that snapshot and affects passage through reducer-owned completion markers, while remaining economically unpriced.
+Both routes can earn three stars. The front route earns its benefit through the one-minute setup bound even though it spends `$0.50660670`; the tail route earns its benefit through the `$0.15348645` spend bound even though setup advances the clock to minute `4`.
+
+After `COMPLETE_ATTEMPT`, `UI_RESULT_SCREEN` reads the corresponding immutable `attemptResult` fields. The triage transfer occurs before that snapshot and affects passage through reducer-owned completion markers while remaining economically unpriced.
 
 Result copy:
 
-- Pass headline: **“Eight jobs. Two contexts handled.”**
-- Fail headline: **“Apply the layout to both operating constraints.”**
-- Evidence: **“1 write · 7 reads · $0.15348645 · triage complete”**
+- Pass headline: **“Eight jobs. Two constraints handled.”**
+- Fail headline: **“Finish the run, explain the tape, and fit the triage view.”**
+- Front evidence: **“8 requests · 1 setup minute · $0.50660670 · triage complete”**
+- Tail evidence: **“8 requests · 4 setup minutes · $0.15348645 · triage complete”**
 - Continue: **“Next level”**
 - Retry: **“Try another layout”**
 
@@ -794,15 +904,18 @@ Result copy:
 
 | id | Trigger | Exact copy |
 |---|---|---|
-| `l5-template-chosen` | Player dispatches the initial `NORMALIZE_PROMPTS` | **“Template locked. Now predict what job 2 will reuse.”** |
+| `l5-template-chosen` | Player dispatches the initial `NORMALIZE_PROMPTS` | **“Template locked. Now predict what the request tape will show.”** |
+| `l5-front-setup` | `ADVANCE { min:1 }` completes | **“Direct setup complete · 1 minute.”** |
+| `l5-tail-setup` | `ADVANCE { min:4 }` completes | **“Shared template normalized · 4 minutes.”** |
 | `l5-first-write` | `req-front-1` or `req-tail-1` creates the shared entry | **“First agent saved 26,237 tokens. WRITE · $0.0984.”** |
-| `l5-first-mismatch` | Actual `req-front-2` resolves with `PrefixResolution.invalidatedSuffixTok=14,623` | **“First mismatch: job 2 cost 7.41× a full warm read.”** |
+| `l5-first-mismatch` | Actual `req-front-2` resolves with `PrefixResolution.invalidatedSuffixTok=14,623` | **“First mismatch: this request cost 7.41× a full warm read.”** |
+| `l5-front-complete` | `l5-front-run-complete` | **“Eight requests complete · 1 setup minute · $0.50660670.”** |
 | `l5-byte-identical` | First tail-layout full read resolves | **“Byte-identical: every saved byte before TASK matched.”** |
-| `l5-seven-reads` | Passing request 8 settles | **“Seven warm agents reused the full 26,237-token prefix.”** |
+| `l5-seven-reads` | `l5-tail-run-complete` | **“Eight requests complete · 4 setup minutes · $0.15348645.”** |
 | `l5-triage-fit` | `ev-l5-triage-transfer` completes before `COMPLETE_ATTEMPT` | **“Eight distinct first lines. This layout fits a human triage pass.”** |
-| `l5-savings` | Post-completion counterfactual reveal opens | **“Moving the variation saved $0.35312025 across eight jobs.”** |
+| `l5-savings` | Post-completion counterfactual reveal opens | **“Tail normalization saved $0.35312025 in requests but used 3 more setup minutes.”** |
 
-`l5-first-mismatch` is assertive and persistent during freeze. All other toasts use polite announcements and dedupe per attempt. The transfer toast is gate-consequential but introduces no economic claim.
+All toasts use polite announcements and dedupe per attempt. The transfer toast is gate-consequential but introduces no economic claim.
 
 ## 12. QA gate
 
@@ -811,62 +924,67 @@ Real-browser pointer and keyboard click-through must assert:
 1. No layout card is visually preselected, and the job queue cannot run until the player explicitly dispatches `NORMALIZE_PROMPTS`.
 2. Both front and tail template cards are operable through pointer and keyboard paths and dispatch equivalent action shapes.
 3. Front selection sets `cfg.prompts="varied"`; tail selection sets `cfg.prompts="pointer"`.
-4. An accepted unattended tail action appends `ev-l5-unattended-tail-placement` to `completedEventIds`; the initial front action does not.
-5. No correct layout, cache color, reusable boundary, suffix count, price comparison, or savings delta appears before the relevant committed prediction and request resolution.
-6. Choosing the front card is the action that makes `l5-early-mismatch` reachable; the failure is neither scripted nor unavoidable.
-7. Choosing the tail card initially bypasses the failure and remains winnable.
+4. Front selection dispatches `ADVANCE { min:1 }` and completes `ev-l5-front-direct-setup`; tail selection dispatches `ADVANCE { min:4 }` and completes `ev-l5-tail-normalization-setup`.
+5. The front route needs no text-normalization setup and reaches `clockMin=1`; the tail route performs one accepted normalization, increments `attemptMetrics.tailNormalizationActions`, and reaches `clockMin=4`.
+6. The setup durations come from fixtures `l5-front-direct-setup-min` and `l5-tail-normalization-setup-min`; neither is stored in `scenarioData.estimates`.
+7. No correct layout, cache color, reusable boundary, suffix count, price comparison, or savings delta appears before the relevant committed prediction and request resolution.
 8. A reveal cannot execute before its corresponding prediction is committed.
-9. A wrong prediction changes no score, stars, wallet, failure predicate, gate result, completed event, or transfer marker.
-10. The actual front path renders exactly two priced requests, two ledger rows, and two tape rows before freezing.
-11. `req-front-2` reports `readTok=11,602`, `writeTok=14,623`, and exactly `$0.05831685` (`C11`, `C1`, `C3`).
-12. The decisive request frame visibly compares `$0.05831685` with the uncharged `$0.00787110` full-read alternative; `actualUsd > validAlternativeUsd`.
-13. `FREEZE_FAILURE` dispatches from the actual `req-front-2` request event, before any request 3 and before `COMPLETE_ATTEMPT`.
-14. Failure exposes **Move the word** immediately.
-15. Rewind restores the checkpoint hash, `$0.55` scalar wallet, empty ledger, pre-run `attemptMetrics`, editable layout, and already committed prediction.
-16. The post-failure tail normalization occurs after `ev-l5-reveal-front` and appends `ev-l5-unattended-tail-placement`.
-17. Passing produces exactly eight requests, eight ledger rows, and eight tape rows in the specified order.
-18. Passing row 1 writes `26,237`; rows 2–8 each read `26,237` and write `0` (`C10`).
-19. Every request yields exactly one ledger row and one tape row.
-20. Every request cost is positive; no positive price displays as `$0.0000`.
-21. Every ledger cost matches `PRICE_REQUEST` without internal rounding.
-22. The reference run totals `$0.15348645`; the informational anti-pattern projection totals `$0.50660670`; no competing actual-attempt priced total exists.
-23. The frozen front branch never dispatches projected requests 3–8.
-24. `title` and `objective` contain none of `concept.solutionVocabulary`: `one word`, `byte-identical`, `prefix`, `normalize`, `normalization`, `front`, `tail`, `pointer`, or `same bytes`.
-25. The passing tape visibly contains one red row followed by seven blue rows without hover.
-26. `UI_TAPE_RENDERER` width and segment geometry use the canonical model containing `readTok`, `inputTok`, `writeTok`, and `outTok × 5`; this level’s zero output does not alter that contract.
-27. Hover and keyboard focus expose every non-zero bucket equation through `UI_HOVER_PRICE_CALCULATOR`.
-28. `CacheEntry.lastTouchMin` refreshes on each of the seven reads (`C12`); all eight requests remain within `5m` (`C1`, `C27`).
-29. The gate observes `ACK_EXPLANATION("l5-byte-identity")` after `ev-l5-reveal-tail`; no pre-reveal prediction field appears in `pass(st)`, a star predicate, or a failure rule.
-30. A wrong post-evidence explanation remains retryable without spending wallet or deducting score.
-31. `BEGIN_TRANSFER("l5-first-line-triage")` occurs after tail evidence and before `COMPLETE_ATTEMPT`; `attemptResult` is still `null`.
-32. Both triage controls are operable. Ticket-tail renders eight indistinguishable first-line previews and remains retryable.
-33. Ticket-first renders eight distinct first-line previews, appends `l5-triage-ticket-first` to `completedTransferIds`, and completes `ev-l5-triage-transfer`.
-34. The cold-open front action cannot satisfy the transfer marker because it occurs before `ev-l5-reveal-tail` and uses a different `templateId`.
-35. The triage transfer sends no request and changes no wallet, ledger, cache entry, price, passing subtotal, or request count.
-36. `COMPLETE_ATTEMPT` remains disabled until both `ev-l5-unattended-tail-placement` and `ev-l5-triage-transfer` are completed and `completedTransferIds` includes `l5-triage-ticket-first`.
-37. Star 3 uses `attemptMetrics.passingLedgerUsd<=0.15348645`, not floating-point equality.
-38. Before completion, the gate and stars read only declared `ReducerState`, `attemptMetrics`, `completedEventIds`, `acknowledgedExplanationIds`, and `completedTransferIds` fields; after completion, the result reads matching declared `attemptResult` snapshot fields.
-39. Every `StatePredicate` uses a legal kind and, where present, one of `eq|neq|lt|lte|gt|gte`; no predicate uses `op:"contains"` or an undeclared `scenario.*` path.
-40. `pass(st)` does not require final `cfg.prompts=="pointer"` because the gate-mandatory triage action changes the placement after the passing run; it instead checks the action-authored contextual markers.
-41. The fixed seed and reference action sequence pass only after applying both unattended tail placement and triage ticket-first placement.
-42. The anti configuration reaches the economically true request-2 front-mismatch failure and cannot pass without rewinding and demonstrating both contextual applications.
-43. Reduced-motion mode shows the same mismatch evidence, comparison prices, final tape colors, triage previews, and gate result.
-44. `UI_COUNTERFACTUAL_OVERLAY` remains absent until `ev-l5-complete-attempt`, and its request/reveal actions cannot dispatch `FREEZE_FAILURE`.
-45. Across the unattended run and first-line-only triage scenario, neither placement is globally dominant in reducer state: the tail action is required for the priced run, while ticket-first is required for transfer completion.
-46. All `[FICTION]` gameplay values—seed, job count, width, choice count, budget, and clock cap—are registered in `scenarioData.fixtures` with stable IDs, semantic roles, and units.
-47. `scenarioData.estimates` contains presentation timing only.
-48. Replay from the same seed and ordered actions yields byte-identical state, ledger, wallet, completed markers, and result.
-49. The level is winnable using only the documented template cards, prediction controls, run control, explanation choice, rewind control, and pre-completion transfer card.
+9. A wrong prediction changes no score, stars, wallet, clock, gate result, completed event, or transfer marker.
+10. The actual front path produces exactly eight priced requests, eight ledger rows, and eight tape rows.
+11. `req-front-1` reports `writeTok=26,237` and costs exactly `$0.09838875` (`C10`, `C1`, `C3`).
+12. Each of `req-front-2…8` reports `readTok=11,602`, `writeTok=14,623`, and exactly `$0.05831685` (`C11`, `C1`, `C3`).
+13. The actual front route totals exactly `$0.50660670`, leaves `$0.04339330`, sets `passingRequestCount=8`, and sets `passingLedgerUsd=0.50660670`.
+14. Resolution of `req-front-8` appends `l5-front-run-complete`.
+15. The front request-2 frame visibly compares `$0.05831685` with the uncharged `$0.00787110` full-read quote.
+16. No front request dispatches `FREEZE_FAILURE`; requests 3–8 always resolve after request 2.
+17. The actual tail path produces exactly eight priced requests, eight ledger rows, and eight tape rows.
+18. Tail row 1 writes `26,237`; rows 2–8 each read `26,237` and write `0` (`C10`).
+19. The actual tail route totals exactly `$0.15348645`, leaves `$0.39651355`, sets `passingRequestCount=8`, and sets `passingLedgerUsd=0.15348645`.
+20. Resolution of `req-tail-8` appends `l5-tail-run-complete`.
+21. Every request yields exactly one ledger row and one tape row.
+22. Every request cost is positive; no positive price displays as `$0.0000`.
+23. Every ledger cost matches `PRICE_REQUEST` without internal rounding.
+24. The live route counter-pressure is reducer-visible: front completes setup at minute `1` but spends `$0.50660670`; tail completes setup at minute `4` but spends `$0.15348645`.
+25. The exact request-cost difference is `$0.35312025`; the exact setup-time difference is `3` minutes.
+26. `title` and `objective` contain none of `concept.solutionVocabulary`: `one word`, `byte-identical`, `prefix`, `normalize`, `normalization`, `front`, `tail`, `pointer`, or `same bytes`.
+27. The final front tape visibly contains one red row followed by seven blue/red split rows without hover.
+28. The final tail tape visibly contains one red row followed by seven blue rows without hover.
+29. `UI_TAPE_RENDERER` width and segment geometry use the canonical model containing `readTok`, `inputTok`, `writeTok`, and `outTok × 5`; this level’s zero output does not alter that contract.
+30. Hover and keyboard focus expose every non-zero bucket equation through `UI_HOVER_PRICE_CALCULATOR`.
+31. `CacheEntry.lastTouchMin` refreshes on each reused request (`C12`); all eight requests remain within `5m` (`C1`, `C27`).
+32. The gate accepts the tail arm only with `l5-tail-run-complete`, eight requests, and `passingLedgerUsd<=0.15348645`.
+33. The gate accepts the front arm only with `l5-front-run-complete`, eight requests, and `passingLedgerUsd<=0.50660670`.
+34. The gate observes `ACK_EXPLANATION("l5-byte-identity")` after the selected route’s evidence; no prediction field appears in `pass(st)`, a star predicate, or a failure rule.
+35. A wrong post-evidence explanation remains retryable without changing clock, wallet, ledger, cache, request count, passing subtotal, or score.
+36. `BEGIN_TRANSFER("l5-first-line-triage")` occurs after selected-route evidence and before `COMPLETE_ATTEMPT`; `attemptResult` is still `null`.
+37. Both triage controls are operable. Ticket-tail renders eight indistinguishable first-line previews and remains retryable.
+38. Ticket-first renders eight distinct first-line previews, appends `l5-triage-ticket-first` to `completedTransferIds`, and completes `ev-l5-triage-transfer`.
+39. The cold-open front action cannot satisfy the transfer marker because it occurs before route evidence and uses a different `templateId`.
+40. The triage transfer sends no request and changes no clock, wallet, ledger, cache entry, price, passing subtotal, or request count.
+41. `COMPLETE_ATTEMPT` remains disabled until either route arm qualifies, `l5-byte-identity` is acknowledged, `ev-l5-triage-transfer` is completed, and `completedTransferIds` includes `l5-triage-ticket-first`.
+42. Star 2 and star 3 express explicit route alternatives: tail uses `attemptMetrics.passingLedgerUsd<=0.15348645`; front uses `clockMin<=1`.
+43. Both the fixed-seed front action sequence and the fixed-seed tail action sequence can pass and earn three stars after the explanation and triage transfer.
+44. Before completion, the gate and stars read only declared `ReducerState`, `clockMin`, `attemptMetrics`, `completedEventIds`, `acknowledgedExplanationIds`, and `completedTransferIds` fields; after completion, the result reads matching declared `attemptResult` snapshot fields.
+45. Every `StatePredicate` uses a legal kind and, where present, one of `eq|neq|lt|lte|gt|gte`; no predicate uses `op:"contains"` or an undeclared `scenario.*` path.
+46. `pass(st)` does not require final `cfg.prompts=="pointer"` because the gate-mandatory triage action legitimately changes placement after the priced run.
+47. The non-qualifying anti action sequence—regardless of initial route—fails the behavioral gate if it omits the causal explanation or never records ticket-first triage; the front route itself is not a punitive failure.
+48. Reduced-motion mode shows the same mismatch evidence, comparison prices, eight-row final tape, triage previews, route clock, and gate result.
+49. `UI_COUNTERFACTUAL_OVERLAY` remains absent until `ev-l5-complete-attempt`, and its request/reveal actions cannot dispatch `FREEZE_FAILURE`.
+50. Across unattended dispatch and first-line-only triage, neither placement is globally dominant: pointer-tail lowers request spend, greeting-first lowers setup time, and ticket-first satisfies the human scanning constraint.
+51. All `[FICTION]` gameplay values—seed, job count, width, choice count, budget, clock cap, and both setup durations—are registered in `scenarioData.fixtures` with stable IDs, semantic roles, and units.
+52. `scenarioData.estimates` contains presentation timing only.
+53. Replay from the same seed and ordered actions yields byte-identical clock, state, ledger, wallet, completed markers, and result.
+54. The level is winnable on either route using only the documented template cards, prediction controls, run control, explanation choice, and pre-completion transfer card.
 
 ## 13. Reference-bar justification
 
-The screen puts a plausible dispatch choice under the cursor within `1.5s` and makes the player own the layout before any jobs queue. The greeting-first route exposes its consequence only when the player’s actual second request resolves. Prediction locks curiosity in place; the chosen request exposes the mismatch at the exact red suffix and freezes immediately when the ledger proves that request costs `7.41×` the valid warm alternative.
+The screen puts a plausible dispatch choice under the cursor within `1.5s` and makes the player own a real tradeoff before any jobs queue. Greeting-first is operationally ready and commits only one simulated setup minute. Pointer-tail asks for four minutes of normalization. Neither card exposes its request-cost consequence before play.
 
-Rewind returns directly to the chosen template, and one tactile remediation moves the changing material without replaying mastered setup. A player who chooses the tail initially reaches the same evidence without an artificial failure. Completion still requires a post-evidence causal explanation, so prediction correctness is never punitive and the gate measures demonstrated understanding.
+Prediction locks curiosity in place, then all eight actual requests resolve on either route. Greeting-first produces one full write and seven partial rewrites for `$0.50660670`; pointer-tail produces one full write and seven full reads for `$0.15348645`. Nothing freezes or forces a rewind. The player sees the complete economic consequence of the route they deliberately chose while the clock preserves the opposing setup-time benefit.
 
-Before completion, the first-line triage transfer changes the operational constraint and requires the opposing placement through real reducer evidence. The unattended tail action, the ticket-first triage action, and `ev-l5-triage-transfer` all participate in `pass(st)`. The player therefore demonstrates a conditional rule—placement follows the active operational constraint—rather than receiving a prose-only caveat after the result.
+Completion still requires a post-evidence causal explanation, so prediction correctness is never punitive and the gate measures demonstrated understanding. Before completion, the first-line triage transfer changes the operational constraint and requires ticket-first placement through real reducer evidence. The player therefore demonstrates that placement follows the active constraint rather than receiving a prose-only caveat after the result.
 
-Only after `COMPLETE_ATTEMPT` does the informational `$0.35312025` projection quantify the repeated-run difference. It cannot cause failure or change the completed attempt.
+Both routes are valid and three-star completable: tail qualifies through its `$0.15348645` spend bound, while front qualifies through `clockMin<=1`. Only after `COMPLETE_ATTEMPT` does the informational comparison place the `$0.35312025` request-cost difference beside the three-minute setup difference. It cannot cause failure or change the completed attempt.
 
-Assumptions and tradeoffs: the deterministic seed, eight-job queue, dispatch width, two template controls, `$0.55` wallet, and `5m` attempt cap are distinct level fixtures marked `[FICTION]`; the cold-open timings are presentation-only `[ESTIMATE]` values. Token counts, pricing, identity, invalidation, TTL behavior, and all computed costs remain traced to `C1`, `C3`, and `C8–C12`.
+Assumptions and tradeoffs: the deterministic seed, eight-job queue, dispatch width, two template controls, `$0.55` wallet, `5m` attempt cap, one-minute direct setup, and four-minute normalization setup are distinct level fixtures marked `[FICTION]`; the cold-open timings are presentation-only `[ESTIMATE]` values. Token counts, pricing, identity, invalidation, TTL behavior, and all computed costs remain traced to `C1`, `C3`, and `C8–C12`.
 

@@ -69,14 +69,14 @@ Neither `title` nor `objective` contains registered solution vocabulary. Mechani
 | `+1.2s` `[ESTIMATE]` | Bob replaces the task text with: “Add the matching logout route.” |
 | Second click | `l1-r2` settles as a blue-dominant row; wallet becomes **$0.0774726**. |
 | After settle | Toast: “Same saved context. **READ · $0.0122634**.” |
-| `+0.8s` `[ESTIMATE]` | A related third task appears: “Add a test for both routes.” Bob asks whether its review trail should stay with the implementation or remain isolated. |
+| `+0.8s` `[ESTIMATE]` | A related third task appears: “Add a test for both routes.” Bob asks whether its review trail should stay with the implementation or run in parallel. |
 
-The third-task decision has two completable routes and two reducer-visible benefits:
+The third-task decision has two completable routes with explicit reducer-visible counter-pressure:
 
-- **Keep working here** — the third request uses `l1-main`; its live prefix lowers `attemptMetrics.spentUsd`.
-- **Open an isolated test thread** — the third request uses the separate `l1-clean` cache namespace. Completing that branch appends `l1-isolated-test-completed` to `completedEventIds`, which is an alternative route to `L1_STAR2`.
+- **Keep working here** — finishes the third task in `12` simulated minutes and uses `l1-main`; its live prefix lowers `attemptMetrics.spentUsd`.
+- **Open an isolated parallel test thread** — finishes the third task in `4` simulated minutes, eight minutes earlier, while using the separate `l1-clean` namespace and paying the cold-write cost.
 
-Both routes produce the requested test, permit the causal explanation, satisfy `l1Pass(st)`, and can earn three stars. Same-chat receives the economic benefit; isolated-thread receives the star-bearing separation benefit. Neither route dispatches `FREEZE_FAILURE`.
+Both routes produce the requested test, permit the causal explanation, satisfy `l1Pass(st)`, and can earn three stars. Same-chat saves `$0.1980066` on the third request; the isolated parallel route finishes eight simulated minutes earlier. Neither route dispatches `FREEZE_FAILURE`.
 
 Vocabulary timing:
 
@@ -130,13 +130,13 @@ The economical route keeps `l1-main`. Its cacheable prefix is `MAIN_PREFIX_HEY =
 
 4. **Choose the third task’s thread**
    - Availability: only after `l1-r2` evidence is visible.
-   - Same-chat event: player clicks **Keep working here**.
+   - Same-chat option: **Keep working here — 12 min, lower request cost**.
    - Same-chat action: `BEGIN_TRANSFER { challengeId: "l1-third-same-chat" }`.
    - Same-chat event completion appends `"l1-route-same-chat-chosen"` to `completedEventIds`.
-   - Isolated event: player clicks **Open an isolated test thread**.
+   - Isolated option: **Open an isolated parallel test thread — 4 min, cold-write cost**.
    - Isolated action: `BEGIN_TRANSFER { challengeId: "l1-third-isolated" }`.
    - Isolated event completion appends `"l1-route-isolated-chosen"` to `completedEventIds`.
-   - Each accepted choice records exactly one route marker. Neither action creates a `LedgerRow`, changes `wallet`, changes `attemptMetrics.spentUsd`, or invalidates the other context’s cache.
+   - Each accepted choice records exactly one route marker. Neither action creates a `LedgerRow`, changes `wallet`, changes `attemptMetrics.spentUsd`, advances `clockMin`, or invalidates the other context’s cache.
 
 5. **Open the route-specific prediction**
    - Event: after either route marker is recorded, player clicks **Predict, then send**.
@@ -150,15 +150,17 @@ The economical route keeps `l1-main`. Its cacheable prefix is `MAIN_PREFIX_HEY =
      - `SELECT_PREDICTION { promptId: "l1-third-color-cost", optionId }`
      - `COMMIT_PREDICTION { promptId: "l1-third-color-cost" }`
    - Mutates: `prediction.optionId`, then `prediction.committed=true`.
-   - No request, cache touch, ledger row, wallet mutation, score, gate, star, or route-benefit change occurs.
+   - No request, cache touch, ledger row, wallet mutation, clock advance, score, gate, star, or route-benefit change occurs.
    - The third `SEND_REQUEST` remains disabled until commitment.
 
 7. **Same-chat third send**
    - Preconditions: `completedEventIds` includes `"l1-route-same-chat-chosen"` and the prediction is committed.
    - Event: player clicks **Send and find out**.
-   - Action: `SEND_REQUEST { request: l1-r3 }`.
+   - Actions, in order:
+     - `SEND_REQUEST { request: l1-r3 }`
+     - `ADVANCE { min: 12 }`
    - Request context: `l1-main`.
-   - Mutates: the live `CacheEntry`, `ledger`, `lastRequests`, `wallet`, `attemptMetrics`, and tape.
+   - Mutates: the live `CacheEntry`, `ledger`, `lastRequests`, `wallet`, `attemptMetrics`, tape, and then `clockMin`.
    - Resolution: `readTok=34,738`, `inputTok=13`, `writeTok=0`, `outTok=120`, `cold=false`.
    - Price:
      - read: `$0.0104214`
@@ -167,12 +169,13 @@ The economical route keeps `l1-main`. Its cacheable prefix is `MAIN_PREFIX_HEY =
      - total: `$0.0122604`
    - Wallet: `$0.0774726 → $0.0652122`.
    - Attempt metrics: `spentUsd=$0.2347878`; `requestCount=3`.
-   - Citations: `C1`, `C3`, `C12`, `C34`; fresh input and output use fixtures `l1-r3-fresh-input` and `l1-output-per-request`.
-   - Event completion appends `"l1-third-same-chat-settled"` to `completedEventIds`.
-   - Consequential benefit: the route retains the lower reducer-owned spend.
+   - Clock: `clockMin=0 → 12` from fixture `l1-same-chat-duration-min`.
+   - Citations: `C1`, `C3`, `C12`, `C34`; fresh input, output, and duration use fixtures `l1-r3-fresh-input`, `l1-output-per-request`, and `l1-same-chat-duration-min`.
+   - After both actions settle, event completion appends `"l1-third-same-chat-settled"` to `completedEventIds` as route identity.
+   - Consequential benefit: this route saves `$0.1980066` on the third request.
 
 8. **Reveal the same-chat prediction**
-   - Event: `l1-r3` is fully priced and rendered.
+   - Event: `l1-r3` is fully priced and rendered and its `12` simulated minutes are committed.
    - Action: `REVEAL_PREDICTION { promptId: "l1-third-color-cost", correctOptionId: "blue-pennies" }`.
    - Mutates: prediction evidence, `phase="reveal"`, and `completedEventIds`.
    - Event ID: `"l1-reveal-third-same-chat"`.
@@ -181,9 +184,11 @@ The economical route keeps `l1-main`. Its cacheable prefix is `MAIN_PREFIX_HEY =
 9. **Isolated-thread third send**
    - Preconditions: `completedEventIds` includes `"l1-route-isolated-chosen"` and the prediction is committed.
    - Event: player clicks **Send and find out**.
-   - Action: `SEND_REQUEST { request: l1-r3-clean }`.
+   - Actions, in order:
+     - `SEND_REQUEST { request: l1-r3-clean }`
+     - `ADVANCE { min: 4 }`
    - Request context: `l1-clean`.
-   - Mutates: a new `CacheEntry` in `l1-clean`, `ledger`, `lastRequests`, `wallet`, `attemptMetrics`, and tape. The live `l1-main` entry remains intact.
+   - Mutates: a new `CacheEntry` in `l1-clean`, `ledger`, `lastRequests`, `wallet`, `attemptMetrics`, tape, and then `clockMin`. The live `l1-main` entry remains intact.
    - Resolution: `readTok=0`, `inputTok=13`, `writeTok=34,738`, `outTok=120`, `cold=true`.
    - Price:
      - write: `$0.208428`
@@ -192,17 +197,18 @@ The economical route keeps `l1-main`. Its cacheable prefix is `MAIN_PREFIX_HEY =
      - total: `$0.210267`
    - Wallet: `$0.0774726 → -$0.1327944`.
    - Attempt metrics: `spentUsd=$0.4327944`; `requestCount=3`.
-   - Citations: `C1`, `C3`, `C34`; fresh input and output use fixtures `l1-r3-fresh-input` and `l1-output-per-request`.
-   - Event completion atomically appends both `"l1-third-isolated-settled"` and `"l1-isolated-test-completed"` to `completedEventIds`.
-   - Consequential benefit: `"l1-isolated-test-completed"` is the reducer-visible alternative route in `L1_STAR2`.
+   - Clock: `clockMin=0 → 4` from fixture `l1-isolated-duration-min`.
+   - Citations: `C1`, `C3`, `C34`; fresh input, output, and duration use fixtures `l1-r3-fresh-input`, `l1-output-per-request`, and `l1-isolated-duration-min`.
+   - After both actions settle, event completion appends only `"l1-third-isolated-settled"` to `completedEventIds` as route identity.
+   - Consequential benefit: the parallel route finishes eight simulated minutes earlier while paying the cold-write cost.
    - No failure freezes. A negative scalar wallet is permitted by `Wallet` and is not the behavioral gate.
 
 10. **Reveal the isolated-thread prediction**
-    - Event: `l1-r3-clean` is fully priced and rendered.
+    - Event: `l1-r3-clean` is fully priced and rendered and its `4` simulated minutes are committed.
     - Action: `REVEAL_PREDICTION { promptId: "l1-third-color-cost", correctOptionId: "red-much-more" }`.
     - Mutates prediction evidence, `phase="reveal"`, and `completedEventIds`.
     - Event ID: `"l1-reveal-third-isolated"`.
-    - Copy: “The isolated thread got its own work trail—and had to save its own **34,738-token context**.”
+    - Copy: “The isolated parallel thread finished sooner—and had to save its own **34,738-token context**.”
     - Prediction correctness has no effect on route completion or rewards.
 
 11. **Post-evidence explanation choice**
@@ -216,11 +222,11 @@ The economical route keeps `l1-main`. Its cacheable prefix is `MAIN_PREFIX_HEY =
 
 12. **Complete either attempt**
     - Event ID: `"l1-complete-attempt"`.
-    - Preconditions: three requests completed, one route marker and its matching reveal are complete, and `"l1-context-not-sentence"` was acknowledged after that reveal.
+    - Preconditions: three requests completed, one route marker and its matching reveal are complete, the matching route-settled event is complete, and `"l1-context-not-sentence"` was acknowledged after that reveal.
     - Action: `COMPLETE_ATTEMPT`.
     - Mutates: gate result, stars, `attemptResult`, `phase="result"`, and `UI_RESULT_SCREEN`.
-    - Same-chat result: `attemptResult.spentUsd=$0.2347878`; `wallet=$0.0652122`.
-    - Isolated result: `attemptResult.spentUsd=$0.4327944`; `wallet=-$0.1327944`.
+    - Same-chat result: `attemptResult.spentUsd=$0.2347878`; `wallet=$0.0652122`; `clockMin=12`.
+    - Isolated result: `attemptResult.spentUsd=$0.4327944`; `wallet=-$0.1327944`; `clockMin=4`.
     - Both results pass and are three-star eligible.
 
 13. **Optional post-attempt comparison**
@@ -229,7 +235,7 @@ The economical route keeps `l1-main`. Its cacheable prefix is `MAIN_PREFIX_HEY =
       - `REQUEST_COUNTERFACTUAL { comparisonId: "l1-thread-choice-comparison" }`
       - `REVEAL_COUNTERFACTUAL { comparisonId: "l1-thread-choice-comparison" }`
     - `UI_COUNTERFACTUAL_OVERLAY` pairs `l1-r3` with `l1-r3-clean`.
-    - It shows `$0.0122604` versus `$0.210267` and the `$0.1980066` delta, alongside the isolated route’s `"l1-isolated-test-completed"` reward.
+    - It shows `$0.0122604` versus `$0.210267` and the `$0.1980066` delta, alongside `12` versus `4` simulated minutes and the isolated route’s eight-minute lead.
     - Neither action mutates the completed attempt or dispatches `FREEZE_FAILURE`.
 
 ## 5. Level data
@@ -505,9 +511,25 @@ const LEVEL_01_RED_OR_BLUE: LevelDef = {
       },
       {
         id: "l1-scripted-unit-duration",
-        label: "Explicit-send unit duration",
-        semanticRole: "UnitSeed hours value because simulation time does not advance during explicit sends",
+        label: "Scripted UnitSeed duration",
+        semanticRole: "UnitSeed hours value because route time advances only through the explicit third-task ADVANCE action",
         value: 0,
+        unit: "min",
+        tag: "[FICTION]"
+      },
+      {
+        id: "l1-same-chat-duration-min",
+        label: "In-thread third-task duration",
+        semanticRole: "elapsed simulated time for the in-thread third task",
+        value: 12,
+        unit: "min",
+        tag: "[FICTION]"
+      },
+      {
+        id: "l1-isolated-duration-min",
+        label: "Isolated parallel third-task duration",
+        semanticRole: "elapsed simulated time for the isolated parallel third task",
+        value: 4,
         unit: "min",
         tag: "[FICTION]"
       },
@@ -608,7 +630,7 @@ const LEVEL_01_RED_OR_BLUE: LevelDef = {
     bucket: "none",
     cite: "C34",
     line:
-      "Both thread choices complete; the saved-context route spends less while the isolated route earns a reducer-recorded separation benefit."
+      "Both thread choices complete; the in-thread route saves $0.1980066 while the isolated parallel route finishes eight simulated minutes earlier."
   },
 
   failureRules: [],
@@ -644,7 +666,7 @@ const LEVEL_01_RED_OR_BLUE: LevelDef = {
       comparisonQuestion:
         "What did each thread choice gain?",
       revealCopy:
-        "Keeping the task here preserved the lower bill; isolating it earned the separate-test-thread benefit but wrote its own 34,738-token prefix."
+        "Keeping the task here saved $0.1980066 on the third request; isolating it finished in 4 instead of 12 simulated minutes but wrote its own 34,738-token prefix."
     }
   ],
 
@@ -657,7 +679,7 @@ const LEVEL_01_RED_OR_BLUE: LevelDef = {
 
 The two prefix stacks use measured components: system `2,750` (`C6`), tools `16,295` (`C24`), and saved messages/history `15,693` (`C6`), totaling `34,738` (`C34`). The two stacks deliberately share byte identities but remain isolated by their distinct `cacheNamespace` values.
 
-All gameplay fiction is declared in `scenarioData.fixtures`. `scenarioData.estimates` contains presentation timing only.
+All gameplay fiction, including both durations that advance `clockMin`, is declared in `scenarioData.fixtures`. `scenarioData.estimates` contains presentation timing only.
 
 ## 6. Pricing walkthrough
 
@@ -670,7 +692,7 @@ This is the sole authoritative request-price table for the level:
 | `l1-r1` | First request | `0 read + 12 input + 34,738 write + 120 output` | `0 + 12×$3/M + 34,738×$6/M + 120×$15/M` | `$0.210264` |
 | `l1-r2` | Same implementation thread | `34,738 read + 14 input + 0 write + 120 output` | `34,738×$0.30/M + 14×$3/M + 120×$15/M` | `$0.0122634` |
 | `l1-r3` | Keep working here | `34,738 read + 13 input + 0 write + 120 output` | `34,738×$0.30/M + 13×$3/M + 120×$15/M` | `$0.0122604` |
-| `l1-r3-clean` | Isolated test thread | `0 read + 13 input + 34,738 write + 120 output` | `0 + 13×$3/M + 34,738×$6/M + 120×$15/M` | `$0.210267` |
+| `l1-r3-clean` | Isolated parallel test thread | `0 read + 13 input + 34,738 write + 120 output` | `0 + 13×$3/M + 34,738×$6/M + 120×$15/M` | `$0.210267` |
 
 Same-chat three-star-eligible result:
 
@@ -704,7 +726,7 @@ third-request difference
 = $0.1980066
 ```
 
-The isolated third request is about `17.15×` the same-chat third request. This is informational evidence, not a failure trigger: the isolated route also records `"l1-isolated-test-completed"` and remains completable.
+The isolated third request is about `17.15×` the same-chat third request and completes in `4` rather than `12` simulated minutes. This is a live time/spend tradeoff, not a failure trigger.
 
 The `20×` one-hour-write-to-read input-side rate ratio (`C5`) may appear only after an attempt. It is not shown before the player produces the evidence.
 
@@ -732,18 +754,18 @@ The `20×` one-hour-write-to-read input-side rate ratio (`C5`) may appear only a
    - request: `l1-r3-clean`
    - `gatedByPredictionId: "l1-third-color-cost"`
    - ordered segments: `write(34,738)`, `input(13)`, `output(120)`
-   - label: `Test both · isolated thread`
+   - label: `Test both · isolated parallel thread`
 
 `ahaRequestIds: ["l1-r3", "l1-r3-clean"]`, selected by the executed route.
 
-Same-chat aha frame: the three settled rows remain visible together. Row one is red-dominant; rows two and three are blue-dominant despite their different current sentences.
+Same-chat aha frame: the three settled rows remain visible together. Row one is red-dominant; rows two and three are blue-dominant despite their different current sentences. The clock settles at `12 min`.
 
-Isolated aha frame: the original red/blue pair stays visible beside the isolated red-dominant third row. A separate-namespace badge is backed by `"l1-isolated-test-completed"` rather than view-local state.
+Isolated aha frame: the original red/blue pair stays visible beside the isolated red-dominant third row. The clock settles at `4 min`, making the eight-minute time benefit visible alongside the cold-write cost.
 
 Only after `REVEAL_PREDICTION` does the route-specific caption appear:
 
-- Same-chat: “Three different requests. One saved context.”
-- Isolated: “One separate work trail. One separate context write.”
+- Same-chat: “Three different requests. One saved context. Third task: 12 min.”
+- Isolated: “One parallel work trail. One separate context write. Third task: 4 min.”
 
 The tape uses canonical output-aware geometry:
 
@@ -762,7 +784,7 @@ Static final bars render before hover.
 
 Route-specific question:
 
-> “You chose **{Keep working here | Open an isolated test thread}**. Before you send: which color will dominate, and will the cost stay small or jump?”
+> “You chose **{Keep working here | Open an isolated parallel test thread}**. Before you send: which color will dominate, and will the cost stay small or jump?”
 
 Options:
 
@@ -770,7 +792,7 @@ Options:
 - `red-much-more`: “Red — much more”
 - `violet-mostly-output`: “Violet — mostly output”
 
-The prompt does not expose the isolated branch’s `$0.210267` magnitude before play.
+The prompt does not expose the isolated branch’s `$0.210267` magnitude before play. The route cards already expose the non-economic duration tradeoff: `12 min` in-thread versus `4 min` in parallel.
 
 Controls:
 
@@ -815,10 +837,10 @@ const L1_FAILURE_RULES: FailureRuleDef[] = [];
 
 Both third-task routes are intentional, completable decisions:
 
-- **Keep working here** confers the lower `attemptMetrics.spentUsd`.
-- **Open an isolated test thread** confers `"l1-isolated-test-completed"`, which affects `L1_STAR2`.
+- **Keep working here** saves `$0.1980066` on the third request and finishes it in `12` simulated minutes.
+- **Open an isolated parallel test thread** finishes the third task in `4` simulated minutes while paying the cold-write cost.
 
-The isolated request is more expensive, but cost alone does not make an otherwise valid, rewarded route a failure. Therefore:
+The isolated request is more expensive, but its eight-minute time benefit makes the route a valid tradeoff rather than a failure. Therefore:
 
 - no `FREEZE_FAILURE` follows `l1-r3` or `l1-r3-clean`;
 - no rewind checkpoint is created;
@@ -826,7 +848,7 @@ The isolated request is more expensive, but cost alone does not make an otherwis
 - prediction correctness never creates failure;
 - counterfactual events are informational and cannot freeze.
 
-An invalid premature send is rejected before request creation. It produces no `LedgerRow`, spend, freeze, or completed route marker.
+An invalid premature send is rejected before request creation. It produces no `LedgerRow`, spend, clock advance, freeze, or completed route marker.
 
 ## 10. Gate & stars
 
@@ -947,7 +969,6 @@ function l1Pass(st: ReducerState): GateResult {
   const isolatedRoute =
     st.completedEventIds.includes("l1-route-isolated-chosen") &&
     st.completedEventIds.includes("l1-third-isolated-settled") &&
-    st.completedEventIds.includes("l1-isolated-test-completed") &&
     st.completedEventIds.includes("l1-reveal-third-isolated") &&
     st.lastRequests.length === 1 &&
     st.lastRequests[0].requestId === "l1-r3-clean";
@@ -969,7 +990,9 @@ function l1Pass(st: ReducerState): GateResult {
           sameChatRoute
             ? "Same thread: 34,738 read · 0 written."
             : "Isolated thread: 0 read · 34,738 written.",
-          "The route choice was recorded before the third request.",
+          sameChatRoute
+            ? "The in-thread task finished in 12 simulated minutes."
+            : "The isolated parallel task finished in 4 simulated minutes.",
           "Three requests produced three ledger rows."
         ]
       : []
@@ -985,7 +1008,7 @@ The authoritative star predicates are:
 const L1_STAR2: StarDef = {
   label: "Made the tradeoff count",
   reason:
-    "Either preserved the lower bill in one thread or completed the reducer-recorded isolated-test benefit.",
+    "Either preserved the lower bill in one thread or completed the isolated parallel task within four simulated minutes.",
   predicate: {
     id: "l1-star2",
     kind: "any",
@@ -1017,34 +1040,20 @@ const L1_STAR2: StarDef = {
         ]
       },
       {
-        id: "l1-star2-isolation-route",
+        id: "l1-isolated-time-benefit",
         kind: "all",
         predicates: [
           {
-            id: "l1-star2-isolated-chosen",
-            kind: "includes",
-            path: "completedEventIds",
-            value: "l1-route-isolated-chosen"
+            id: "l1-isolated-route-complete",
+            kind: "event-completed",
+            eventId: "l1-third-isolated-settled"
           },
           {
-            id: "l1-star2-isolated-benefit",
-            kind: "includes",
-            path: "completedEventIds",
-            value: "l1-isolated-test-completed"
-          },
-          {
-            id: "l1-star2-isolated-request",
+            id: "l1-isolated-finished-fast",
             kind: "compare",
-            path: "lastRequests.0.requestId",
-            op: "eq",
-            value: "l1-r3-clean"
-          },
-          {
-            id: "l1-star2-isolated-cold",
-            kind: "compare",
-            path: "lastRequests.0.cold",
-            op: "eq",
-            value: true
+            path: "clockMin",
+            op: "lte",
+            value: 4
           }
         ]
       }
@@ -1120,15 +1129,15 @@ No gate or star predicate reads `prediction.optionId`, `prediction.correctOption
 Stars:
 
 - **1 star — Read the evidence:** `l1Pass(st).pass` succeeds after the executed route’s post-evidence explanation.
-- **2 stars — Made the tradeoff count:** `L1_STAR2.predicate` recognizes the lower-spend same-chat benefit or the reducer-recorded isolated-test benefit.
+- **2 stars — Made the tradeoff count:** `L1_STAR2.predicate` recognizes either `attemptMetrics.spentUsd <= 0.2347878` on the same-chat route or `clockMin <= 4` after `"l1-third-isolated-settled"`.
 - **3 stars — Explained it first try:** `L1_STAR3.predicate` succeeds on either route without a restart.
 
 Result copy:
 
 - Pass headline: **“You found what changed.”**
 - Pass rule: **“The expensive part was the saved context, not the new sentence.”**
-- Same-chat benefit: **“Lower bill: the existing thread read its saved context.”**
-- Isolated benefit: **“Separate trail: the test completed in its own recorded thread.”**
+- Same-chat benefit: **“Lower bill: the existing thread saved $0.1980066 on the third request.”**
+- Isolated benefit: **“Faster finish: the parallel test completed eight simulated minutes earlier.”**
 - Continue: **Next level**
 - Retry explanation: **Read the third row again**
 
@@ -1139,8 +1148,8 @@ Result copy:
 | `l1-first-write` | `l1-r1` settles | “First request: Claude saved **34,738 tokens** of context. **WRITE · $0.210264**.” |
 | `l1-first-read` | `l1-r2` settles | “Same saved context. **READ · $0.0122634**.” |
 | `l1-third-reveal` | Either route’s `REVEAL_PREDICTION` | “The new sentence was tiny. The available saved context decided the bill.” |
-| `l1-isolated-thread` | `l1-route-isolated-chosen` completes | “Isolated test thread ready. Its work trail will be recorded separately.” |
-| `l1-route-benefit` | `"l1-complete-attempt"` | Same-chat: “Lower spend preserved.” Isolated: “Separate test trail recorded.” |
+| `l1-isolated-thread` | `l1-route-isolated-chosen` completes | “Isolated parallel test ready: 4 minutes, with its own cold context write.” |
+| `l1-route-benefit` | `"l1-complete-attempt"` | Same-chat: “$0.1980066 saved on the third request.” Isolated: “Finished eight simulated minutes earlier.” |
 
 Vocabulary:
 
@@ -1175,7 +1184,7 @@ Real-browser click-through assertions:
 10. `scenarioData.prefixStacks` contains two actual `PrefixStackSeed` objects.
 11. Each prefix stack contains ordered `system`, `tools`, `history`, and final `current` blocks.
 12. Each cacheable base totals `2,750 + 16,295 + 15,693 = 34,738` tokens from `C6`, `C24`, and `C34`.
-13. Every gameplay `[FICTION]` scalar is represented by a semantically matching `ScenarioFixtureDef`.
+13. Every gameplay `[FICTION]` scalar, including both route durations, is represented by a semantically matching `ScenarioFixtureDef`.
 14. `scenarioData.estimates` contains presentation timing only.
 15. First **Send** dispatches one `SEND_REQUEST`, creates one `LedgerRow`, one tape row, and one live `l1-main` `CacheEntry`.
 16. `l1-r1` prices exactly to `$0.210264` from `C1`, `C3`, and `C34`.
@@ -1186,23 +1195,23 @@ Real-browser click-through assertions:
 21. Same-chat choice records `"l1-route-same-chat-chosen"` through its accepted `BEGIN_TRANSFER`.
 22. Isolated choice records `"l1-route-isolated-chosen"` through its accepted `BEGIN_TRANSFER`.
 23. Exactly one route-choice marker exists before the third request.
-24. Neither choice action creates a ledger row or changes scalar `wallet`.
+24. Neither choice action creates a ledger row, changes scalar `wallet`, or advances `clockMin`.
 25. The same-chat request uses `l1-main`; the isolated request uses `l1-clean`.
 26. Choosing the isolated thread neither deletes nor invalidates the live `l1-main` entry.
 27. After either route choice, the third `SEND_REQUEST` cannot dispatch before `COMMIT_PREDICTION`.
 28. Prediction selection alone does not unlock sending.
 29. No correctness treatment appears before the selected route’s third request is priced and rendered.
 30. The prediction options expose no exact `$0.210267` or `21¢` magnitude.
-31. `l1-r3` prices to `$0.0122604`, reads `34,738`, writes `0`, and refreshes `l1-main`.
-32. `l1-r3-clean` prices to `$0.210267`, reads `0`, writes `34,738`, and creates a live entry in `l1-clean`.
-33. Same-chat completion leaves `attemptMetrics.spentUsd=$0.2347878`.
-34. Isolated completion leaves `attemptMetrics.spentUsd=$0.4327944` and appends `"l1-isolated-test-completed"`.
-35. The same-chat benefit affects reducer-owned spend.
-36. The isolated-thread benefit affects `L1_STAR2`.
+31. `l1-r3` prices to `$0.0122604`, reads `34,738`, writes `0`, refreshes `l1-main`, and is followed by `ADVANCE { min: 12 }`.
+32. `l1-r3-clean` prices to `$0.210267`, reads `0`, writes `34,738`, creates a live entry in `l1-clean`, and is followed by `ADVANCE { min: 4 }`.
+33. Same-chat completion leaves `attemptMetrics.spentUsd=$0.2347878`, `clockMin=12`, and appends only the matching `"l1-third-same-chat-settled"` route-settled ID.
+34. Isolated completion leaves `attemptMetrics.spentUsd=$0.4327944`, `clockMin=4`, and appends only the matching `"l1-third-isolated-settled"` route-settled ID.
+35. The same-chat route saves `$0.1980066` on the third request.
+36. The isolated parallel route completes eight simulated minutes earlier, and `L1_STAR2` observes that reducer-visible time benefit through `"l1-third-isolated-settled"` plus `clockMin <= 4`.
 37. Both branches reach `COMPLETE_ATTEMPT` and can earn three stars.
 38. Neither third request dispatches `FREEZE_FAILURE`.
 39. A negative wallet on the isolated branch does not replace or fail the behavioral gate.
-40. A wrong prediction changes no score, star, wallet, failure state, gate result, or request resolution.
+40. A wrong prediction changes no score, star, wallet, failure state, gate result, request resolution, or clock duration.
 41. The one-star gate does not inspect prediction option identity or correctness.
 42. The gate observes `ACK_EXPLANATION { explanationId: "l1-context-not-sentence" }` after the executed reveal.
 43. An explanation action before the executed reveal is rejected and cannot satisfy the gate.
@@ -1210,7 +1219,7 @@ Real-browser click-through assertions:
 45. `l1Pass(st)` is pure and reads only `ledger`, `lastRequests`, `completedEventIds`, and `acknowledgedExplanationIds`.
 46. Every gate and star predicate uses only canonical state paths, legal predicate kinds, and legal comparison ops.
 47. Array state uses indexed paths such as `lastRequests.0.requestId`; no object-style unit-ID path appears.
-48. Each priced request maps to exactly one `LedgerRow` and one tape row.
+48. Each priced request maps to exactly one `LedgerRow` and one tape row; neither `ADVANCE` creates a row.
 49. Every real request cost is positive and equals `PRICE_REQUEST`.
 50. No positive price displays as `$0.0000`.
 51. Static final tape bars render without hover and preserve ledger order.
@@ -1218,22 +1227,21 @@ Real-browser click-through assertions:
 53. `outTok` contributes to every row’s canonical segment width and total visual weight.
 54. The `$0.001800` output contribution remains available in `UI_HOVER_PRICE_CALCULATOR`.
 55. `UI_COUNTERFACTUAL_OVERLAY` remains unavailable before `"l1-complete-attempt"`.
-56. The comparison uses the same seed and authoritative `$0.0122604`, `$0.210267`, and `$0.1980066` values.
-57. Counterfactual rendering does not mutate `wallet`, `ledger`, `attemptResult`, `clockFrozen`, or `frozenFailure`.
+56. The comparison uses the same seed and authoritative `$0.0122604`, `$0.210267`, `$0.1980066`, `12 min`, `4 min`, and eight-minute-delta values.
+57. Counterfactual rendering does not mutate `wallet`, `ledger`, `attemptResult`, `clockMin`, `clockFrozen`, or `frozenFailure`.
 58. No `FREEZE_FAILURE` dispatch occurs during either actual route, `REQUEST_COUNTERFACTUAL`, or `REVEAL_COUNTERFACTUAL`.
 59. Pointer and keyboard paths produce equivalent `Action[]`.
-60. Reduced-motion mode produces identical final state, pricing, reveal order, tape geometry, route benefit, and gate evidence.
-61. Refresh/replay from seed `1001` and saved `Action[]` reproduces byte-identical `ReducerState`, ledger, wallet, and result.
-62. Each authoritative request count, token count, cost, total, and threshold has only one implementable value.
+60. Reduced-motion mode produces identical final state, pricing, reveal order, tape geometry, time/spend route benefit, and gate evidence.
+61. Refresh/replay from seed `1001` and saved `Action[]` reproduces byte-identical `ReducerState`, ledger, wallet, clock, and result.
+62. Each authoritative request count, token count, cost, total, duration, and threshold has only one implementable value.
 63. `MAIN_PREFIX_HEY` is cited as `C34`; the level defines no competing main-prefix constant.
 
 ## 13. Reference-bar justification
 
 The screen opens on one inviting action and lets the first wallet hit land before naming anything. A second related request produces the surprising blue contrast through play. Only then does the player apply that evidence to a real workspace decision and commit a coarse prediction.
 
-The third-task choice obeys invariant 14 without an exception. Keeping the task in the implementation thread provides the reducer-visible spend benefit: the third request costs `$0.0122604`, and the completed route retains `attemptMetrics.spentUsd=$0.2347878`. Opening an isolated test thread provides a different reducer-visible benefit: the work uses a distinct `cacheNamespace`, completes normally, and records `"l1-isolated-test-completed"` as an alternative route through `L1_STAR2`. Neither choice dominates on every scored dimension, and both can pass and earn three stars.
+The third-task choice obeys invariant 14 without an exception. Keeping the task in the implementation thread provides the reducer-visible spend benefit: the third request costs `$0.0122604`, the completed route retains `attemptMetrics.spentUsd=$0.2347878`, and it saves `$0.1980066` against the isolated request. Opening an isolated parallel test thread provides a different reducer-visible benefit: its explicit `ADVANCE { min: 4 }` finishes the task eight simulated minutes earlier than the in-thread route’s `ADVANCE { min: 12 }`, while its separate namespace incurs the `$0.210267` cold-write request. Neither choice dominates on both time and spend, and both can pass and earn three stars.
 
-No failure is fabricated from the higher isolated-thread cost. The differing prices become causal evidence for the concept and an optional post-attempt comparison. Prediction correctness remains non-punitive, while the required post-reveal explanation demonstrates understanding.
+No failure is fabricated from the higher isolated-thread cost. The differing prices and durations become causal evidence for a live tradeoff and an optional post-attempt comparison. Prediction correctness remains non-punitive, while the required post-reveal explanation demonstrates understanding.
 
-The rhythm is act, notice, choose, predict, reveal, explain, and compare. The implementation-thread route is the economic reference; the isolated-thread route is the deliberate separation tradeoff. All request prices remain derived from `C1`, `C3`, `C12`, and `C34`, and no correct dollar figure changed.
-
+The rhythm is act, notice, choose, predict, reveal, explain, and compare. The implementation-thread route is the economic reference; the isolated parallel route is the faster, higher-spend alternative. All request prices remain derived from `C1`, `C3`, `C12`, and `C34`; the gameplay durations are registered as `[FICTION]` fixtures, and no correct dollar figure changed.

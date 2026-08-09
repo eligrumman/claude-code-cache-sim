@@ -379,6 +379,33 @@ const growingPains: LevelDef = {
         unit: "tok",
         tag: "[FICTION]"
       }
+    ],
+    estimates: [
+      {
+        label: "ticket-card arrival seconds",
+        value: 0,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "first-ticket opening seconds",
+        value: 0.6,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "route-target reveal seconds",
+        value: 1.2,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "first-interaction target seconds",
+        value: 2,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "default non-frozen toast duration milliseconds",
+        value: 3500,
+        tag: "[ESTIMATE]"
+      }
     ]
   },
 
@@ -997,7 +1024,7 @@ Real-browser click-through must establish:
 36. At `320px` CSS width, the active route target, decisive tape row, cause toast, comparison quote, and rewind control do not overlap.
 37. Screen-reader order is ticket → prediction → route controls → revealed row → causal caption; the failure announcement is assertive.
 38. `scenarioData.fixtures` contains distinct `ScenarioFixtureDef`s for seed `8292`, budget `$1.00`, clock cap `5min`, unit duration `1`, batch history, request outputs, and tiny/dependent payload buckets; every fixture has an `id`, `semanticRole`, legal `unit`, and `[FICTION]` tag.
-39. `scenarioData.estimates` contains no gameplay quantity; presentation-only timing estimates do not affect pass, stars, spend, deadlines, request spacing, or reducer state.
+39. `scenarioData.estimates` registers the ticket-card arrival, first-ticket opening, route-target reveal, first-interaction target, and default non-frozen toast duration as `[ESTIMATE]` presentation values; they do not affect pass, stars, spend, deadlines, request spacing, or reducer state.
 40. `GP_CLOCK_CAP_MIN` resolves through fixture `"gp-clock-cap-min"` and does not cite or borrow provenance from the semantically unrelated five-minute cache TTL.
 41. No stale assertion request, superseded price, stale `53.24%` value, symbolic `GP_*` predicate, illegal predicate op, unreachable price branch, uppercase pattern alias, or legacy level/concept ID appears.
 

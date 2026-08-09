@@ -77,7 +77,7 @@ First interaction timing:
 - **Never pre-play:** repair incidence, completed totals, “best” badges, downstream previews, or reference comparisons.
 - **After selection:** primary button reads **Lock plan and run**.
 
-The visible plan prices create immediate pressure against maximizing the control. The two valid completion profiles retain distinct reducer-visible benefits: working depth minimizes `attemptResult.spentUsd`, while exhaustive depth minimizes `attemptResult.requestCount` and qualifies for the clean-pipeline arm of `star2`.
+The visible plan prices create immediate pressure against maximizing the control. The two valid completion profiles retain distinct reducer-visible benefits: working depth minimizes live `attemptMetrics.spentUsd`, while exhaustive depth minimizes live `attemptMetrics.requestCount` and qualifies for the clean-pipeline arm of `star2`. `COMPLETE_ATTEMPT` later snapshots those values into `attemptResult` for result rendering.
 
 ## 4. Exact event sequence
 
@@ -164,44 +164,55 @@ All selected-depth plan outputs, repair counts, the scenario seed, budget, clock
 10. **Retry from retained evidence**  
     **Try another plan** → `REWIND_TO_CHECKPOINT { checkpointId: "cp-plan-choice" }` → deterministic replay to the decision boundary. Frozen state and attempt-local ledger/cache rows clear; attempt count and observed evidence persist. The tried card shows its observed repair count and total. Untried full-branch outcomes remain hidden.
 
-11. **Complete a valid checkout attempt**  
-    A `balanced` or `deep` branch reaches the end → `COMPLETE_ATTEMPT`. The reducer copies the checkout branch’s canonical values from `attemptMetrics` into immutable `attemptResult`, including:
+11. **Close a valid checkout branch without completing the attempt**  
+    The valid branch’s final actual request completes branch-specific evidence:
+
+    - balanced: the `review-rounding-clarification` resolution completes `l10-checkout-balanced-complete`;
+    - deep: the final `build-region-tests` resolution, once the committed branch reveal confirms there are no repairs, completes `l10-checkout-deep-complete`.
+
+    The completed ledger and live checkout aggregates remain in `attemptMetrics`. No `COMPLETE_ATTEMPT` is dispatched here, and `attemptResult` remains `null`.
+
+12. **Choose the causal explanation from actual evidence**  
+    After either branch-specific checkout-complete event, the player opens the causal trace and selects: **“Preparation should stop when the next increment costs more than the rework it can avoid.”**  
+    Correct selection → `ACK_EXPLANATION { explanationId: "plan-depth-is-ticket-dependent" }`. Incorrect explanation choices have no penalty and may be revised.
+
+13. **Apply the rule to a new ticket**  
+    `BEGIN_TRANSFER { challengeId: "prototype-no-review" }` completes event `transfer-opened` and reveals:
+
+    > **Prototype spike**  
+    > One fixed build. Review and CI are disabled, and the artifact will be discarded after the demo.
+
+    The same three plan-line costs remain visible. Selecting **Quick sketch** and accepting the transfer dispatches:
+
+    ```ts
+    ACK_EXPLANATION {
+      explanationId: "prototype-shallow-plan"
+    }
+    ```
+
+    This post-`transfer-opened` action does not dispatch `CHOOSE_PLAN_DEPTH` and therefore does not change `attemptMetrics.completedDepth`. When, and only when, that action is accepted after `transfer-opened`, the level validator atomically appends `"prototype-no-review"` once to `completedTransferIds`. A different choice causes no freeze or score deduction; the transfer remains editable until the qualifying acknowledgement is accepted.
+
+14. **Complete and evaluate the attempt**  
+    After the qualifying transfer action, the completion control becomes enabled and dispatches `COMPLETE_ATTEMPT`. That action alone evaluates the declarative `GateDef`, pure `pass(st)`, and `StarDef`s against live `attemptMetrics` and the post-evidence acknowledgement/transfer fields. It then copies all declared `AttemptMetrics` values into immutable `attemptResult`, including:
 
     - `attemptResult.completedDepth`;
     - `attemptResult.spentUsd`;
     - `attemptResult.requestCount`;
     - `attemptResult.completedUnitCount`.
 
-    The completed ledger persists. This unlocks, but does not reveal, the comparison.
+    The completed ledger persists. Event `l10-complete-attempt` unlocks, but does not reveal, the informational comparison. Prediction selection and correctness are never read by the gate or stars.
 
-12. **Predict the comparison**  
-    `OPEN_PREDICTION { promptId: "p-largest-bill" }` opens before any alternate total appears. Selection and commitment use `SELECT_PREDICTION` and `COMMIT_PREDICTION`; correctness remains non-punitive.
+15. **Predict the comparison**  
+    `OPEN_PREDICTION { promptId: "p-largest-bill" }` opens after `COMPLETE_ATTEMPT` and before any alternate total appears. Selection and commitment use `SELECT_PREDICTION` and `COMMIT_PREDICTION`; correctness remains non-punitive.
 
-13. **Reveal the same-seed counterfactuals**  
+16. **Reveal the same-seed counterfactuals**  
     Commitment enables `REQUEST_COUNTERFACTUAL { comparisonId: "plan-depth-bill" }`; the same seed and fixed build spine run off-screen. Event `counterfactual-revealed` dispatches `REVEAL_COUNTERFACTUAL { comparisonId: "plan-depth-bill" }` and displays:
 
     - Quick sketch: **$4.8246**
     - Working plan: **$2.8752**
     - Exhaustive plan: **$3.2754**
 
-    The reveal explains that working depth wins this ticket: exhaustive planning costs **$1.0800** more than working planning but avoids only one **$0.6798** repair, leaving it **$0.4002** more expensive overall. These informational actions do not mutate the actual ledger, wallet, `attemptResult`, `clockFrozen`, or failure state.
-
-14. **Choose the post-evidence explanation**  
-    Player opens the causal trace and selects: **“Preparation should stop when the next increment costs more than the rework it can avoid.”**  
-    Correct selection → `ACK_EXPLANATION { explanationId: "plan-depth-is-ticket-dependent" }`. Incorrect explanation choices have no penalty and may be revised.
-
-15. **Apply the rule to a new ticket**  
-    `BEGIN_TRANSFER { challengeId: "prototype-no-review" }` completes event `transfer-opened` and reveals:
-
-    > **Prototype spike**  
-    > One fixed build. Review and CI are disabled, and the artifact will be discarded after the demo.
-
-    The same three plan-line costs remain visible. Player dispatches `CHOOSE_PLAN_DEPTH` for the transfer. Per the canonical action contract, this writes the transfer selection to mutable `attemptMetrics.completedDepth`; it does not replace the completed checkout snapshot in `attemptResult.completedDepth`.
-
-    `shallow` is the demonstrated-understanding action because no downstream request can repay deeper planning. When, and only when, a post-`transfer-opened` `CHOOSE_PLAN_DEPTH { depth: "shallow" }` is accepted, the level validator atomically appends `"prototype-no-review"` once to `completedTransferIds`. A different choice causes no freeze or score deduction; the transfer remains editable until `shallow` is selected.
-
-16. **Evaluate pass and stars without replacing the checkout result**  
-    The qualifying transfer choice triggers evaluation of the declarative `GateDef`, pure `pass(st)`, and `StarDef`s. Checkout depth, spend, and request count are read only from immutable `attemptResult`. Transfer completion is read from `completedTransferIds.includes("prototype-no-review")`; explanation completion is read from `acknowledgedExplanationIds`. Prediction selection and correctness are never read.
+    The reveal confirms why working depth wins this ticket: exhaustive planning costs **$1.0800** more than working planning but avoids only one **$0.6798** repair, leaving it **$0.4002** more expensive overall. These post-attempt informational actions do not mutate the actual ledger, wallet, `attemptResult`, `clockFrozen`, failure state, gate outcome, or stars.
 
 ## 5. Level data
 
@@ -666,26 +677,41 @@ const L10_DEEP_REPAIR_COUNT = 0;
   gate: {
     predicateId: "apply-plan-depth-rule-after-evidence",
     evidenceRevealEventIds: [
-      "branch-revealed",
-      "counterfactual-revealed"
+      "l10-checkout-balanced-complete",
+      "l10-checkout-deep-complete"
     ],
     postEvidenceActionRequirements: [
       {
-        id: "ack-ticket-dependent-rule",
-        kind: "action-observed",
-        actionType: "ACK_EXPLANATION",
-        afterEventId: "counterfactual-revealed",
-        match: {
-          explanationId: "plan-depth-is-ticket-dependent"
-        }
+        id: "ack-ticket-dependent-rule-after-checkout",
+        kind: "any",
+        predicates: [
+          {
+            id: "ack-rule-after-balanced-checkout",
+            kind: "action-observed",
+            actionType: "ACK_EXPLANATION",
+            afterEventId: "l10-checkout-balanced-complete",
+            match: {
+              explanationId: "plan-depth-is-ticket-dependent"
+            }
+          },
+          {
+            id: "ack-rule-after-deep-checkout",
+            kind: "action-observed",
+            actionType: "ACK_EXPLANATION",
+            afterEventId: "l10-checkout-deep-complete",
+            match: {
+              explanationId: "plan-depth-is-ticket-dependent"
+            }
+          }
+        ]
       },
       {
         id: "right-size-prototype-after-evidence",
         kind: "action-observed",
-        actionType: "CHOOSE_PLAN_DEPTH",
+        actionType: "ACK_EXPLANATION",
         afterEventId: "transfer-opened",
         match: {
-          depth: "shallow"
+          explanationId: "prototype-shallow-plan"
         }
       }
     ],
@@ -697,14 +723,14 @@ const L10_DEEP_REPAIR_COUNT = 0;
           {
             id: "balanced-checkout-completed",
             kind: "compare",
-            path: "attemptResult.completedDepth",
+            path: "attemptMetrics.completedDepth",
             op: "eq",
             value: "balanced"
           },
           {
             id: "deep-checkout-completed",
             kind: "compare",
-            path: "attemptResult.completedDepth",
+            path: "attemptMetrics.completedDepth",
             op: "eq",
             value: "deep"
           }
@@ -713,7 +739,7 @@ const L10_DEEP_REPAIR_COUNT = 0;
       {
         id: "valid-checkout-spend",
         kind: "compare",
-        path: "attemptResult.spentUsd",
+        path: "attemptMetrics.spentUsd",
         op: "lte",
         value: 3.2754
       },
@@ -721,8 +747,7 @@ const L10_DEEP_REPAIR_COUNT = 0;
         id: "causal-rule-retained",
         kind: "includes",
         path: "acknowledgedExplanationIds",
-        value: "plan-depth-is-ticket-dependent",
-        observedAfterEventId: "counterfactual-revealed"
+        value: "plan-depth-is-ticket-dependent"
       },
       {
         id: "prototype-transfer-completed",
@@ -736,8 +761,7 @@ const L10_DEEP_REPAIR_COUNT = 0;
       id: "rule-acknowledged",
       kind: "includes",
       path: "acknowledgedExplanationIds",
-      value: "plan-depth-is-ticket-dependent",
-      observedAfterEventId: "counterfactual-revealed"
+      value: "plan-depth-is-ticket-dependent"
     },
     transferRequirement: {
       id: "prototype-no-review-accepted",
@@ -749,13 +773,12 @@ const L10_DEEP_REPAIR_COUNT = 0;
   },
 
   pass(st) {
-    const result = st.attemptResult;
+    const metrics = st.attemptMetrics;
     const completedAtValidDepth =
-      result?.completedDepth === "balanced" ||
-      result?.completedDepth === "deep";
+      metrics.completedDepth === "balanced" ||
+      metrics.completedDepth === "deep";
     const stayedWithinValidSpend =
-      result !== null &&
-      result.spentUsd <= 3.2754;
+      metrics.spentUsd <= 3.2754;
     const explained =
       st.acknowledgedExplanationIds.includes(
         "plan-depth-is-ticket-dependent"
@@ -776,11 +799,13 @@ const L10_DEEP_REPAIR_COUNT = 0;
         : "Complete a valid checkout, acknowledge the revealed marginal-cost rule, and apply it to the no-review prototype.",
       evidence: passed
         ? [
-            result.completedDepth,
+            metrics.completedDepth ?? "valid-checkout",
             "plan-depth-is-ticket-dependent",
             "prototype-no-review"
           ]
-        : ["counterfactual-revealed"]
+        : [
+            "l10-checkout-balanced-complete|l10-checkout-deep-complete"
+          ]
     };
   },
 
@@ -797,14 +822,14 @@ const L10_DEEP_REPAIR_COUNT = 0;
             {
               id: "balanced-checkout-depth",
               kind: "compare",
-              path: "attemptResult.completedDepth",
+              path: "attemptMetrics.completedDepth",
               op: "eq",
               value: "balanced"
             },
             {
               id: "balanced-checkout-spend",
               kind: "compare",
-              path: "attemptResult.spentUsd",
+              path: "attemptMetrics.spentUsd",
               op: "lte",
               value: 2.8752
             }
@@ -817,21 +842,21 @@ const L10_DEEP_REPAIR_COUNT = 0;
             {
               id: "deep-checkout-depth",
               kind: "compare",
-              path: "attemptResult.completedDepth",
+              path: "attemptMetrics.completedDepth",
               op: "eq",
               value: "deep"
             },
             {
               id: "deep-checkout-request-count",
               kind: "compare",
-              path: "attemptResult.requestCount",
+              path: "attemptMetrics.requestCount",
               op: "lte",
               value: 4
             },
             {
               id: "deep-checkout-spend-cap",
               kind: "compare",
-              path: "attemptResult.spentUsd",
+              path: "attemptMetrics.spentUsd",
               op: "lte",
               value: 3.2754
             }
@@ -852,14 +877,14 @@ const L10_DEEP_REPAIR_COUNT = 0;
         {
           id: "balanced-completed-depth",
           kind: "compare",
-          path: "attemptResult.completedDepth",
+          path: "attemptMetrics.completedDepth",
           op: "eq",
           value: "balanced"
         },
         {
           id: "balanced-total",
           kind: "compare",
-          path: "attemptResult.spentUsd",
+          path: "attemptMetrics.spentUsd",
           op: "lte",
           value: 2.8752
         },
@@ -907,7 +932,7 @@ const L10_DEEP_REPAIR_COUNT = 0;
 - anti-pattern: `plan-shallow`, the fixed build spine, and all four shallow repair units;
 - alternate choice: `plan-deep` and the fixed build spine, with no repair units.
 
-Planning depth is selected by `CHOOSE_PLAN_DEPTH`, never smuggled into `Config`. The actual checkout selection is snapshotted in `attemptResult.completedDepth`; a later transfer selection may change `attemptMetrics.completedDepth` but cannot overwrite that immutable checkout result.
+Planning depth is selected by the checkout’s `CHOOSE_PLAN_DEPTH`, never smuggled into `Config`. The valid checkout remains in live `attemptMetrics` through the explanation and transfer. The transfer uses `ACK_EXPLANATION { explanationId: "prototype-shallow-plan" }`, so it cannot overwrite `attemptMetrics.completedDepth`; only the later `COMPLETE_ATTEMPT` snapshots checkout values into immutable `attemptResult`.
 
 ## 6. Pricing walkthrough
 
@@ -934,7 +959,7 @@ Derived post-attempt evidence:
 - Quick saves **$0.0900** on its plan line versus working, then creates three additional repair requests costing **$2.0394**; its total is **$1.9494** higher.
 - Exhaustive spends **$1.0800** more on planning than working and avoids one **$0.6798** repair; its total is therefore **$0.4002** higher.
 - Working depth is the ticket-specific dollar minimum.
-- Exhaustive depth is a completable clean-pipeline profile with `attemptResult.requestCount === 4`, versus `5` for working depth.
+- Exhaustive depth is a completable clean-pipeline profile with `attemptResult.requestCount === 4`, versus `5` for working depth after `COMPLETE_ATTEMPT`.
 - The transfer ticket demonstrates that neither profile is a universal answer.
 
 The wallet remains positive on every branch at its terminal frame:
@@ -1008,7 +1033,7 @@ Button: **Lock prediction**.
 
 ### `p-largest-bill`
 
-Shown after a valid attempt completes and before alternate totals are requested.
+Shown after `COMPLETE_ATTEMPT` and before alternate totals are requested.
 
 > **For this same checkout ticket, which plan produced the largest total bill?**
 
@@ -1057,14 +1082,14 @@ Rewind behavior:
 
 ## 10. Gate & stars
 
-The pure `pass(st)` reads only canonical reducer state:
+Before completion, the pure `pass(st)` reads only canonical live reducer state:
 
-- `attemptResult.completedDepth` equals `balanced` or `deep`;
-- `attemptResult.spentUsd <= 3.2754`;
+- `attemptMetrics.completedDepth` equals `balanced` or `deep`;
+- `attemptMetrics.spentUsd <= 3.2754`;
 - `acknowledgedExplanationIds` includes `"plan-depth-is-ticket-dependent"`;
 - `completedTransferIds` includes `"prototype-no-review"`.
 
-The transfer marker is appended only by the qualifying post-`transfer-opened` shallow choice. Checkout evidence remains in immutable `attemptResult`, so the transfer’s write to mutable `attemptMetrics.completedDepth` cannot make a shallow transfer look like a shallow checkout.
+The transfer marker is appended only by the qualifying post-`transfer-opened` `ACK_EXPLANATION { explanationId: "prototype-shallow-plan" }`. That transfer action does not write planning depth, so live checkout evidence remains intact in `attemptMetrics` until `COMPLETE_ATTEMPT` evaluates the gate and stars.
 
 Prediction commitment is only a reveal precondition. Prediction option and correctness are forbidden gate/star evidence.
 
@@ -1072,9 +1097,9 @@ Stars:
 
 - **1 star — Ticket reader:** satisfy the behavioral gate.
 - **2 stars — Efficient checkout:** satisfy the gate with either:
-  - balanced checkout at `attemptResult.spentUsd <= 2.8752`; or
-  - deep checkout at `attemptResult.spentUsd <= 3.2754` and `attemptResult.requestCount <= 4`.
-- **3 stars — Evidence-based planner:** after an earlier `branch-revealed` event, choose `balanced`, complete checkout with `attemptResult.completedDepth === "balanced"` and `attemptResult.spentUsd <= 2.8752`, then append `"prototype-no-review"` through the accepted transfer choice.
+  - balanced checkout at `attemptMetrics.spentUsd <= 2.8752`; or
+  - deep checkout at `attemptMetrics.spentUsd <= 3.2754` and `attemptMetrics.requestCount <= 4`.
+- **3 stars — Evidence-based planner:** after an earlier `branch-revealed` event, choose `balanced`, reach `attemptMetrics.completedDepth === "balanced"` and `attemptMetrics.spentUsd <= 2.8752`, then append `"prototype-no-review"` through the accepted transfer acknowledgement.
 
 Consequences:
 
@@ -1084,6 +1109,7 @@ Consequences:
 - A shallow-only run cannot pass because it freezes on its decisive fourth repair until rewind.
 - Budget alone cannot pass the level.
 - Every predicate uses a declared `ReducerState` path, legal `StatePredicate` kind, and legal comparison op.
+- `attemptResult.*` is read only after `COMPLETE_ATTEMPT` for result rendering and post-completion QA.
 
 ## 11. Toasts
 
@@ -1128,33 +1154,34 @@ Real-browser click-through assertions:
 19. The decisive frame visibly proves `$0.6798 > $0.0900`; the cumulative `$4.8246` is supporting ledger context, not the failure-rule comparison.
 20. Shallow freezes with a positive wallet of `0.1754`, proving bankruptcy is not the cause.
 21. Rewind returns to `cp-plan-choice`, preserves prior evidence/attempt count, clears attempt-local economics, and conceals untried full-branch outcomes.
-22. Counterfactual totals remain inaccessible until a valid checkout attempt completes and `p-largest-bill` is committed.
+22. Counterfactual totals remain inaccessible until `COMPLETE_ATTEMPT` has produced a valid checkout result and `p-largest-bill` is committed.
 23. The comparison uses the same seed, context, stable prefix, build spine, and pricing function for all depths.
 24. Counterfactual/reference processing cannot dispatch `FREEZE_FAILURE`, change `clockFrozen`, replace `attemptResult`, or mutate the actual wallet or ledger.
-25. Gate passage requires a post-`counterfactual-revealed` explanation acknowledgement and `completedTransferIds.includes("prototype-no-review")`.
+25. Gate passage requires a causal explanation acknowledgement after `l10-checkout-balanced-complete` or `l10-checkout-deep-complete`, plus `completedTransferIds.includes("prototype-no-review")`.
 26. Neither `p-branch-count` nor `p-largest-bill` correctness appears in `pass(st)`, `star2`, or `star3`.
-27. A completed balanced checkout snapshots `attemptResult.completedDepth: "balanced"`, `attemptResult.spentUsd: 2.8752`, and `attemptResult.requestCount: 5`.
-28. A completed deep checkout snapshots `attemptResult.completedDepth: "deep"`, `attemptResult.spentUsd: 3.2754`, and `attemptResult.requestCount: 4`.
-29. A post-`transfer-opened` shallow `CHOOSE_PLAN_DEPTH` appends `"prototype-no-review"` once to `completedTransferIds`, changes mutable `attemptMetrics.completedDepth`, and leaves immutable checkout fields unchanged.
-30. A first-attempt exhaustive completion can earn `2` stars through the clean-pipeline arm.
-31. A first-attempt working completion can earn `2` stars through the lowest-spend arm, not `3`.
-32. A working choice made after earlier `branch-revealed` evidence, followed by the accepted transfer, earns `3` stars at `attemptResult.spentUsd <= 2.8752`.
-33. The pure `pass(st)` inspects `attemptResult.completedDepth`, `attemptResult.spentUsd`, `acknowledgedExplanationIds`, and `completedTransferIds`; it reads no action-history or view-local field.
-34. All three primary branches are reachable from the `$5.00` wallet; the economically inferior shallow branch invokes the teaching freeze.
-35. Balanced and deep are both completable: balanced has the lower `spentUsd`, while deep has the lower `requestCount`; both benefits affect `star2`.
-36. Every failure, gate, and star predicate resolves against declared `ReducerState` fields and uses only `compare`, `includes`, `event-completed`, `action-observed`, `all`, `any`, or `not`, with comparison ops limited to `eq`, `neq`, `lt`, `lte`, `gt`, or `gte`.
-37. Every gameplay fiction value is registered in `scenarioData.fixtures` with `id`, `semanticRole`, `unit`, and `[FICTION]`; `scenarioData.estimates` contains presentation timing only.
-38. The exact title **“The Checkout Ticket”** and objective **“Ship the regional-tax change without breaking refunds.”** contain none of `concept.solutionVocabulary`.
-39. `conceptScope` is exactly `{ kind: "single", reusedConceptIds: [] }`.
-40. Keyboard focus exposes the same plan prices, segment calculations, causal labels, and prediction controls as pointer hover.
-41. Reduced-motion mode reveals the same final evidence and gate result.
-42. Refresh/replay with seed `1010` produces byte-identical action order, prefix resolution, cache touches, ledger rows, totals, branch labels, transfer marker, and star result.
+27. Before completion, a balanced checkout has `attemptMetrics.completedDepth: "balanced"`, `attemptMetrics.spentUsd: 2.8752`, `attemptMetrics.requestCount: 5`, and `attemptResult === null`; `COMPLETE_ATTEMPT` snapshots those exact values into `attemptResult`.
+28. Before completion, a deep checkout has `attemptMetrics.completedDepth: "deep"`, `attemptMetrics.spentUsd: 3.2754`, `attemptMetrics.requestCount: 4`, and `attemptResult === null`; `COMPLETE_ATTEMPT` snapshots those exact values into `attemptResult`.
+29. A post-`transfer-opened` `ACK_EXPLANATION { explanationId: "prototype-shallow-plan" }` appends `"prototype-no-review"` once to `completedTransferIds`, leaves `attemptMetrics.completedDepth` unchanged, and leaves `attemptResult === null`.
+30. After the qualifying transfer action, the enabled completion control dispatches `COMPLETE_ATTEMPT`; that action alone evaluates the gate and stars and snapshots `attemptResult`.
+31. A first-attempt exhaustive completion can earn `2` stars through the clean-pipeline arm.
+32. A first-attempt working completion can earn `2` stars through the lowest-spend arm, not `3`.
+33. A working choice made after earlier `branch-revealed` evidence, followed by the accepted transfer, earns `3` stars at live `attemptMetrics.spentUsd <= 2.8752`; the later snapshot preserves that spend in `attemptResult`.
+34. The pure `pass(st)` inspects `attemptMetrics.completedDepth`, `attemptMetrics.spentUsd`, `acknowledgedExplanationIds`, and `completedTransferIds`; it reads no `attemptResult`, action-history, or view-local field before completion.
+35. All three primary branches are reachable from the `$5.00` wallet; the economically inferior shallow branch invokes the teaching freeze.
+36. Balanced and deep are both completable: balanced has the lower `spentUsd`, while deep has the lower `requestCount`; both benefits affect `star2`.
+37. Every failure, gate, and star predicate resolves against declared `ReducerState` fields and uses only `compare`, `includes`, `event-completed`, `action-observed`, `all`, `any`, or `not`, with comparison ops limited to `eq`, `neq`, `lt`, `lte`, `gt`, or `gte`.
+38. Every gameplay fiction value is registered in `scenarioData.fixtures` with `id`, `semanticRole`, `unit`, and `[FICTION]`; `scenarioData.estimates` contains presentation timing only.
+39. The exact title **“The Checkout Ticket”** and objective **“Ship the regional-tax change without breaking refunds.”** contain none of `concept.solutionVocabulary`.
+40. `conceptScope` is exactly `{ kind: "single", reusedConceptIds: [] }`.
+41. Keyboard focus exposes the same plan prices, segment calculations, causal labels, and prediction controls as pointer hover.
+42. Reduced-motion mode reveals the same final evidence and gate result.
+43. Refresh/replay with seed `1010` produces byte-identical action order, prefix resolution, cache touches, ledger rows, totals, branch labels, transfer marker, completion snapshot, counterfactual reveal, and star result.
 
 ## 13. Reference-bar justification
 
 The first screen offers a genuine tradeoff: deeper planning has an unmistakable immediate price, while its downstream payoff remains unknown. The player commits, watches the plan create reusable cache state, predicts the closed pipeline, and then sees ticket-specific repair requests grow causally from the choice. The shallow failure freezes on the actual fourth repair request and compares its **$0.6798** charge directly with the visible **$0.0900** planning alternative before rewinding to the decision.
 
-Only after a valid completed attempt does the comparison reveal the full branch totals. Working depth wins on spend, while exhaustive depth wins on request count and earns a separate reducer-visible two-star profile. This preserves a real choice instead of making working depth dominate every scored outcome. The final no-review prototype prevents either checkout profile from becoming a hidden universal answer and gates completion on a post-evidence transfer marker.
+A valid branch first leaves its actual evidence in live `attemptMetrics`. The player acknowledges the causal rule, applies it to the no-review prototype without changing checkout depth, and then explicitly completes the attempt. Only that `COMPLETE_ATTEMPT` evaluates the gate and stars and snapshots `attemptResult`; the full comparison remains informational and appears afterward. Working depth wins on spend, while exhaustive depth wins on request count and earns a separate reducer-visible two-star profile. This preserves a real choice instead of making working depth dominate every scored outcome.
 
-Authoring tradeoff: the exhaustive plan uses an intentionally large `80,000`-token output fixture so its authoritative Sonnet output charge is large enough to expose marginal-cost reasoning. The repair incidence is also explicitly ticket-specific. The completed checkout stays in `attemptResult`, while the later transfer is certified by `"prototype-no-review"` in `completedTransferIds`, preventing `CHOOSE_PLAN_DEPTH`’s mutable storage path from corrupting checkout gates or stars.
+Authoring tradeoff: the exhaustive plan uses an intentionally large `80,000`-token output fixture so its authoritative Sonnet output charge is large enough to expose marginal-cost reasoning. The repair incidence is also explicitly ticket-specific. The accepted transfer is represented by `ACK_EXPLANATION { explanationId: "prototype-shallow-plan" }` and `"prototype-no-review"` in `completedTransferIds`, preventing the transfer from corrupting the live checkout metrics that `COMPLETE_ATTEMPT` evaluates and snapshots.
 

@@ -373,6 +373,38 @@ const level04: LevelDef = {
         unit: "tok",
         tag: "[FICTION]"
       }
+    ],
+    estimates: [
+      {
+        label: "job-card arrival seconds",
+        value: 0,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "TTL-bar arrival seconds",
+        value: 0.4,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "width-control arrival seconds",
+        value: 0.8,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "secondary-copy arrival seconds",
+        value: 1.2,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "first-interaction target seconds",
+        value: 2,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "paired-outline hold seconds",
+        value: 0.7,
+        tag: "[ESTIMATE]"
+      }
     ]
   },
 
