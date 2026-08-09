@@ -23,16 +23,17 @@ describe("sandbox screen", () => {
     render(App);
     await fireEvent.click(screen.getByRole("button", { name: /Sandbox/ }));
 
-    expect(screen.getByRole("heading", { name: "Where did Claude's money go?" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Conversation playground" })).toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: "Tune the workday" })).toBeInTheDocument();
-    expect(screen.getByText("You're looking at:", { exact: false })).toHaveTextContent("Keep-warm ping");
+    expect(screen.getByRole("button", { name: "💬 Conversation" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "💸 Behind the scenes" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Where the money goes")).toHaveTextContent("Run total");
+    expect(screen.getByLabelText("Daily, weekly, and monthly totals")).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: "on" }));
-    expect(screen.getByRole("button", { name: /B ON/ })).toBeInTheDocument();
-    expect(screen.getByText(/Changing keep-warm ping to ON/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "on" })).toHaveClass("chosen");
     expect(screen.getByText("● Modified")).toBeInTheDocument();
-    expect(document.querySelectorAll(".segment.cacheWrite").length).toBeGreaterThan(0);
-    expect(document.querySelectorAll(".segment.cacheRead").length).toBeGreaterThan(0);
+    expect(screen.getByLabelText(/Keep-warm ping:/)).toBeInTheDocument();
   });
 
   it("keeps lever edits independent and resets to the current persona defaults", async () => {
@@ -42,8 +43,7 @@ describe("sandbox screen", () => {
     await fireEvent.click(screen.getByRole("button", { name: "different" }));
     await fireEvent.click(screen.getByRole("button", { name: "5 min" }));
 
-    expect(screen.getByRole("button", { name: /B 5 MIN/ })).toBeInTheDocument();
-    expect(screen.getByText(/Changing cache ttl to 5 MIN/)).toHaveTextContent("for the PM");
+    expect(screen.getByText("📋 PM")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "different" })).toHaveClass("chosen");
     expect(screen.getByRole("button", { name: "5 min" })).toHaveClass("chosen");
 
@@ -52,9 +52,19 @@ describe("sandbox screen", () => {
     expect(screen.getByRole("button", { name: "same prompt" })).toHaveClass("chosen");
     expect(screen.getByRole("button", { name: "1 hour" })).toHaveClass("chosen");
 
-    for (const label of ["Subagents prompt", "Cache TTL", "Context size", "Approval mode", "Keep-warm ping", "Model"]) {
+    for (const label of ["Subagent prompt", "Cache TTL", "Context size", "Approval mode", "Keep-warm", "Model"]) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     }
+  });
+
+  it("opens a plain-English receipt from the shared conversation", async () => {
+    render(App);
+    await fireEvent.click(screen.getByRole("button", { name: /Sandbox/ }));
+    await fireEvent.click(screen.getByRole("button", { name: /Find the flaky test/ }));
+
+    expect(screen.getByRole("button", { name: "💸 Behind the scenes" })).toHaveClass("active");
+    expect(screen.getByText("Message receipt")).toBeInTheDocument();
+    expect(screen.getByText(/first message:/)).toBeInTheDocument();
   });
 
   it("opens and closes the narrow-screen configuration drawer", async () => {
