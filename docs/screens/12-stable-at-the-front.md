@@ -858,7 +858,7 @@ const level12: LevelDef = {
         {
           id: "l12-three-star-spend",
           kind: "compare",
-          path: "attemptResult.spentUsd",
+          path: "attemptMetrics.spentUsd",
           op: "lte",
           value: 0.18996,
         },
@@ -1249,7 +1249,7 @@ Stars:
 
 - **1 star — Rule applied:** satisfy the behavioral gate and post-evidence transfer.
 - **2 stars — Fast recovery:** pass with `attempt <= 2`.
-- **3 stars — Fresh and reusable:** pass on `attempt === 1`, retain the enabled dynamic status, record six full 24,300-token reads, and finish with `attemptResult.spentUsd <= $0.18996`.
+- **3 stars — Fresh and reusable:** pass on `attempt === 1`, retain the enabled dynamic status, record six full 24,300-token reads, and have `attemptMetrics.spentUsd <= $0.18996` when `COMPLETE_ATTEMPT` evaluates stars.
 
 Every path is canonical `ReducerState` state. No predicate uses an invented field, object-key access into `units`, prediction correctness, exact floating-point equality, or an illegal comparison op.
 
@@ -1342,4 +1342,3 @@ The seven-start rhythm survives where it is honest: a correct dynamic route prod
 The live counter-pressure is small but real and queryable. Dropping status saves `$0.00042` and completes a cheaper local attempt; retaining it is required for capability, passage, and stars. The player must therefore optimize reuse without deleting useful current context.
 
 Implementation tradeoff: the corrected design gives up the previous six-request punitive accumulation so that failure remains local to Start 2. The later red bars are preserved only as striped projection evidence and never enter actual reducer economics. Successful and frozen comparison definitions remain separate so neither route exposes comparison evidence prematurely.
-

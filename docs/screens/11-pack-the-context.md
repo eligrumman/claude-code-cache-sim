@@ -70,9 +70,9 @@ L11 has two economically distinct unsuccessful outcomes:
   - **Checkout fix:** “Find where checkout rejects expired cards and patch it.”
   - **Policy update:** “Change the policy without breaking this repository’s house style.”
   - **Customer sync:** “Map the new account field into the CRM sync.”
-- **0.5s:** The cards show prose only. No capability badge, provider icon, connecting line, recommended item, correctness color, or price comparison is visible.
-- **1.0s:** `UI_PREFIX_STACK_VISUALIZER` opens beside one desk-sized card tray and a token meter. The tray is a single focus region labeled **Batch setup**.
-- **1.5s:** Copy: **“Three unopened workspaces. Choose one desk setup to take through the batch.”**
+- **0.5s [ESTIMATE]:** The cards show prose only. No capability badge, provider icon, connecting line, recommended item, correctness color, or price comparison is visible.
+- **1.0s [ESTIMATE]:** `UI_PREFIX_STACK_VISUALIZER` opens beside one desk-sized card tray and a token meter. The tray is a single focus region labeled **Batch setup**.
+- **1.5s [ESTIMATE]:** Copy: **“Three unopened workspaces. Choose one desk setup to take through the batch.”**
 - **2.0s:** The compound loadout packer becomes interactive; **Run tickets** is the primary control. `firstInteractiveBySec = 2` `[ESTIMATE]`.
 
 The single card tray may group cards visually by source using small metadata chips, but selection, removal, keyboard navigation, and token feedback use one shared interaction model.
@@ -454,6 +454,21 @@ const level11: LevelDef = {
       },
     ],
     estimates: [
+      {
+        label: "ticket prose-only state time in seconds",
+        value: 0.5,
+        tag: "[ESTIMATE]",
+      },
+      {
+        label: "loadout visualizer opening time in seconds",
+        value: 1,
+        tag: "[ESTIMATE]",
+      },
+      {
+        label: "batch-setup copy reveal time in seconds",
+        value: 1.5,
+        tag: "[ESTIMATE]",
+      },
       {
         label: "first-interaction presentation target in seconds",
         value: 2,
@@ -1255,4 +1270,3 @@ The interface remains one toy. Skills, memory files, and connections are cards i
 Causal accounting remains honest. Missing context produces no fictional charge and uses `LocalAttemptFailure`. A bloated first run completes because its defensive benefit is real and its ledger is the evidence. Only sending the exact all-loaded setup again after its passengers and valid request-local alternative are visible produces a punitive freeze. That freeze fires from the real harmful request, prevents downstream dispatch, and rewinds only the unmastered transfer decision.
 
 After seeing used/passenger evidence, the player must state the causal rule and revise the next batch. That post-evidence action—not prediction correctness—passes the level. The output-inclusive tape preserves the true cost mix, while three aligned cold writes make the chosen setup’s multiplication legible. The decoy, local stop, narrow request-local freeze, fast checkpoint, and locked post-attempt counterfactual create the intended discovery rhythm without exposing the solution before play.
-

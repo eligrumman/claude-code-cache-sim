@@ -904,6 +904,11 @@ const LEVEL_13: LevelDef = {
 
     estimates: [
       {
+        label: "Report-ingest animation start in seconds",
+        value: 0.2,
+        tag: "[ESTIMATE]"
+      },
+      {
         label: "Report-ingest animation end in seconds",
         value: 0.7,
         tag: "[ESTIMATE]"
@@ -1595,4 +1600,3 @@ The two dominated pairs remain playable and completable. Their disadvantage beco
 The request tape remains economically truthful in an output-heavy capstone because `outTok` contributes its `5x` price to every bar’s geometry. The scalar `$90.00` wallet separately tracks priced API requests, the `$692.00` causal ledger tracks recoverable organizational loss, and `hidden.reworkUsd` tracks implementation cost plus risk reserve. Reference and anti-pattern outcomes appear only after the player owns an attempt and remain informational.
 
 Significant assumption: the `$72.00`, `$30.00`, and `$15.00` causal buckets, Eli’s `200` monthly requests, the two-remedy capacity, and all implementation setup, risk, and delivery values are calibrated `[FICTION]` fixtures. Risk is modeled as a deterministic expected rework reserve so replay remains byte-identical; no stochastic failure probability is introduced.
-

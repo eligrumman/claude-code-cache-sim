@@ -60,9 +60,9 @@ Prediction correctness is evidence only. It never changes the wallet, score, sta
 | Time | Beat |
 |---:|---|
 | `0.0s` | A **MONDAY** calendar strip lands on the desk. Four covered work blocks are visibly packed into one narrow portion of the same hour. Generic hour ticks establish scale, while the exact gap labels remain masked. |
-| `0.3s` | System copy: **“Four blocks today. The exact gaps are under the tape.”** |
-| `0.6s` | Accessible evidence says: **“Four evenly spaced blocks are tightly clustered within a small part of one hour.”** This is the same evidence conveyed by the silhouette, not hidden metadata. |
-| `0.8s` | Two equal-weight controls appear: **“Write · 5 min”** and **“Write · 1 hour.”** Neither has a price, recommendation, correctness color, or rebuild count. |
+| `0.3s` `[ESTIMATE]` | System copy: **“Four blocks today. The exact gaps are under the tape.”** |
+| `0.6s` `[ESTIMATE]` | Accessible evidence says: **“Four evenly spaced blocks are tightly clustered within a small part of one hour.”** This is the same evidence conveyed by the silhouette, not hidden metadata. |
+| `0.8s` `[ESTIMATE]` | Two equal-weight controls appear: **“Write · 5 min”** and **“Write · 1 hour.”** Neither has a price, recommendation, correctness color, or rebuild count. |
 | `1.0s` | Player may select Monday’s tier. `CREATE_CHECKPOINT { checkpointId: "cp-monday", reason: "decision" }` has already completed. |
 | After tier selection | Copy: **“Lock your prediction before the tape comes off.”** Open `pred-monday`. |
 | After Monday resolves | Both Monday totals become visible. Monday is an observed comparison, never a failure freeze. |
@@ -410,6 +410,21 @@ const L6_SCENARIO: ScenarioData = {
   allowedCfg: { oneHourFlag: [false, true] },
   fixtures: L6_FIXTURES,
   estimates: [
+    {
+      label: "Monday system-copy reveal time in seconds",
+      value: 0.3,
+      tag: "[ESTIMATE]"
+    },
+    {
+      label: "Monday accessible-evidence reveal time in seconds",
+      value: 0.6,
+      tag: "[ESTIMATE]"
+    },
+    {
+      label: "Monday tier-control reveal time in seconds",
+      value: 0.8,
+      tag: "[ESTIMATE]"
+    },
     {
       label: "First interactive tier control time",
       value: 1,
@@ -956,4 +971,3 @@ The screen opens on one tactile control and supplies just enough calendar geomet
 Tuesday freezes at the first decisive divergence. The harmful `r2-b2` request itself supplies the actual `$0.09838875` row; the engine computes the `$0.00787110` alternative from the same request-local buckets without creating a request or counterfactual. `FREEZE_FAILURE` dispatches from that event before any downstream request. This preserves one ledger row per request and keeps the punishment local.
 
 The gate observes the post-Monday `SELECT_WRITE_TIER` and verifies its reducer-visible transfer marker through pure state. Only after successful completion do Tuesday’s full counterfactual and numerical `C21` rule appear. The discovery rhythm is therefore silhouette → choice → prediction → reveal → observed comparison → transfer → decisive local freeze or success → post-attempt rule.
-

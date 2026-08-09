@@ -592,6 +592,26 @@ const L7: LevelDef = {
     ],
     estimates: [
       {
+        label: "main-cache panel and marker arrival time in seconds",
+        value: 0.4,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "scenario-copy reveal time in seconds",
+        value: 0.8,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "Lunch target pulse time in seconds",
+        value: 1.2,
+        tag: "[ESTIMATE]"
+      },
+      {
+        label: "Run to Lunch availability time in seconds",
+        value: 2,
+        tag: "[ESTIMATE]"
+      },
+      {
         label: "firstInteractiveBySec",
         value: 1.6,
         tag: "[ESTIMATE]"
@@ -1181,4 +1201,3 @@ The sole freeze occurs during the actual harmful Lunch request, immediately afte
 The discovery rhythm is: touch a finite resource, predict, observe a causal bill, transfer the rule through a new placement, encounter the break-even reversal, then compare completed policies.
 
 Significant tradeoff: `cfg.keepWarm` remains locked during the level because exposing it beside the finite marker planner would create a second source of ping effects. Marker placements are authoritative; the campaign unlock still exposes `keepWarm` after completion. Each resolved marker maps to one atomic `PLACE_KEEP_WARM_PING` request, which keeps the ledger, wallet, counters, tape, and single-charge totals aligned.
-

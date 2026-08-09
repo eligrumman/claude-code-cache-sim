@@ -1067,7 +1067,7 @@ const L3: LevelDef = {
             {
               id: "l3-lean-spend-threshold",
               kind: "compare",
-              path: "attemptResult.spentUsd",
+              path: "attemptMetrics.spentUsd",
               op: "lte",
               value: 2.3500653
             },
@@ -1105,7 +1105,7 @@ const L3: LevelDef = {
             {
               id: "l3-persistent-spend-threshold",
               kind: "compare",
-              path: "attemptResult.spentUsd",
+              path: "attemptMetrics.spentUsd",
               op: "lte",
               value: 2.4734988
             },
@@ -1549,4 +1549,3 @@ The second-session verification is a real priced request, not an epilogue badge 
 No punitive failure is attached to either placement because doing so would erase the live tradeoff. The level instead gates on a consistent post-evidence placement, its exact R3 cache behavior, and the later request that proves the handoff consequence.
 
 **Assumptions and tradeoffs:** The scenario explicitly shares one managed cache namespace across two main-session IDs, as permitted by the canonical context rule. BOOT PATCH’s benefit is time, not lower spend; FOLLOW-UP’s benefit is lower spend, not faster completion. The replay seed, budget, clock cap, verification buckets, handoff minute, and reapplication duration are named `[FICTION]` fixtures. Cold-open values are presentation-only `[ESTIMATE]` entries.
-
