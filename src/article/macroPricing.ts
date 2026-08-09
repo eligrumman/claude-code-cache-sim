@@ -9,6 +9,15 @@ export type WorkRoute = {
   output: number;
 };
 
+export type Effort = WorkRoute["effort"];
+export type RouteVerdict = "good" | "bad" | "expensive";
+
+const EFFORT_TOKENS: Record<Effort, { input: number; output: number }> = {
+  low: { input: 0.7, output: 0.65 },
+  medium: { input: 1, output: 1 },
+  high: { input: 1.35, output: 1.45 },
+};
+
 export const MACRO_ROUTES: readonly WorkRoute[] = [
   { task: "Plan", model: "sonnet", effort: "high", input: 18_000, output: 2_400 },
   { task: "Hotfix", model: "haiku", effort: "low", input: 5_000, output: 700 },
@@ -42,4 +51,34 @@ export function priceMacroRoutes(routed: boolean) {
 
 export function totalMacroRoutes(routed: boolean): number {
   return priceMacroRoutes(routed).reduce((sum, route) => sum + route.usd, 0);
+}
+
+/** Price a teaching-widget choice through the same token buckets as the simulator. */
+export function priceTaskChoice(route: WorkRoute, model: Model, effort: Effort): number {
+  const scale = EFFORT_TOKENS[effort];
+  return priceTokenBuckets({
+    cacheWrite: Math.round(route.input * scale.input),
+    output: Math.round(route.output * scale.output),
+  }, { model, ttl: "1h" });
+}
+
+export function verdictForChoice(route: WorkRoute, model: Model, effort: Effort): RouteVerdict {
+  const recommendedModel = route.model;
+  const modelRank: Record<Model, number> = { haiku: 0, sonnet: 1, opus: 2, fable: 3 };
+  const effortRank: Record<Effort, number> = { low: 0, medium: 1, high: 2 };
+  if (modelRank[model] < modelRank[recommendedModel] || effortRank[effort] < effortRank[route.effort]) return "bad";
+  if (modelRank[model] > modelRank[recommendedModel] || effortRank[effort] > effortRank[route.effort]) return "expensive";
+  return "good";
+}
+
+export function priceContextComparison(model: Model = "sonnet") {
+  const route = MACRO_ROUTES[4];
+  const scopedTokens = route.input;
+  return {
+    mainCold: priceTokenBuckets({ cacheWrite: DEFAULT_MAIN_CONTEXT_TOKENS, output: route.output }, { model, ttl: "1h" }),
+    mainWarm: priceTokenBuckets({ cacheRead: DEFAULT_MAIN_CONTEXT_TOKENS, output: route.output }, { model, ttl: "1h" }),
+    scopedCold: priceTokenBuckets({ cacheWrite: scopedTokens, output: route.output }, { model, ttl: "1h" }),
+    scopedWarm: priceTokenBuckets({ cacheRead: scopedTokens, output: route.output }, { model, ttl: "1h" }),
+    scopedTokens,
+  };
 }
