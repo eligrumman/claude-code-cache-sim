@@ -1,6 +1,6 @@
 <script lang="ts">
   import ConversationView from "../sandbox/ConversationView.svelte";
-  import type { MessageLedgerOptions, ScriptedMessage } from "../sandbox/model.js";
+  import type { MessageLedgerOptions, ScriptedMessage } from "../sim/ledger.js";
 
   interface Props {
     script: ScriptedMessage[];

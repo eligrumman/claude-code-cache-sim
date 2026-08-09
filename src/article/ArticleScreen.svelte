@@ -1,6 +1,6 @@
 <script lang="ts">
   import LeverWidget from "./LeverWidget.svelte";
-  import type { MessageLedgerOptions, ScriptedMessage } from "../sandbox/model.js";
+  import type { MessageLedgerOptions, ScriptedMessage } from "../sim/ledger.js";
 
   interface Props { onback: () => void; onsandbox: () => void; }
   let { onback, onsandbox }: Props = $props();

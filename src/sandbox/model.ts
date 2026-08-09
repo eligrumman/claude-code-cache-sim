@@ -1,8 +1,12 @@
-import { MODEL_IN, RATE, tokCost } from "../engine/pricing.js";
+import { MODEL_IN, priceTokens } from "../sim/cost.js";
 import type { Model } from "../engine/types.js";
+export { simulateMessageLedger } from "../sim/ledger.js";
+export type {
+  MessageBucket, MessageLedger, MessageLedgerEntry, MessageLedgerOptions, ScriptedMessage, Ttl,
+} from "../sim/ledger.js";
+import type { Ttl } from "../sim/ledger.js";
 
 export type PersonaId = "developer" | "pm" | "teamLead" | "oneManCompany";
-export type Ttl = "5m" | "1h";
 export type ApprovalMode = "manual" | "auto";
 export type SubagentPrompt = "same" | "different";
 export type BucketId = "input" | "cacheWrite" | "cacheRead" | "output" | "keepWarm";
@@ -70,47 +74,6 @@ export interface DayResult {
   dayLengthMin: number;
 }
 
-export interface ScriptedMessage {
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-  atMin: number;
-  /** Optional shared cache identity. A changed identity cannot reuse the previous prefix. */
-  prefixKey?: string;
-}
-
-export interface MessageBucket {
-  tokens: number;
-  usd: number;
-}
-
-export interface MessageLedgerEntry extends ScriptedMessage {
-  gapMin: number;
-  warm: boolean;
-  reason: string;
-  buckets: {
-    prefix: MessageBucket;
-    workIn: MessageBucket;
-    output: MessageBucket;
-    keepWarm: MessageBucket;
-  };
-  usd: number;
-}
-
-export interface MessageLedgerOptions {
-  ttl: Ttl;
-  model: Model;
-  prefixTok: number;
-  workInTok: number;
-  outputTok: number;
-  keepWarm?: boolean;
-}
-
-export interface MessageLedger {
-  messages: MessageLedgerEntry[];
-  totalUsd: number;
-}
-
 const base = {
   model: "sonnet" as Model,
   context: 1,
@@ -156,66 +119,7 @@ export const BUCKET_META: Record<BucketId, { label: string; why: string }> = {
 };
 
 export function bucketCost(tokens: number, bucket: BucketId, config: SandboxConfig): number {
-  const rate = bucket === "input" ? RATE.input
-    : bucket === "cacheWrite" ? (config.ttl === "5m" ? RATE.w5m : RATE.w1h)
-      : bucket === "output" ? RATE.out : RATE.read;
-  return tokCost(tokens, rate, config.model);
-}
-
-/** A small, UI-friendly, deterministic ledger. Every message is independently inspectable. */
-export function simulateMessageLedger(
-  script: ScriptedMessage[],
-  options: MessageLedgerOptions,
-): MessageLedger {
-  const ttlMin = options.ttl === "5m" ? 5 : 60;
-  const writeRate = options.ttl === "5m" ? RATE.w5m : RATE.w1h;
-  let lastTouch = Number.NEGATIVE_INFINITY;
-  let lastPrefixKey: string | undefined;
-  const messages = script.map((message, index): MessageLedgerEntry => {
-    const gapMin = index === 0 ? 0 : message.atMin - script[index - 1].atMin;
-    const prefixKey = message.prefixKey ?? "main";
-    const samePrefix = lastPrefixKey === undefined || prefixKey === lastPrefixKey;
-    const naturalWarm = samePrefix && message.atMin - lastTouch < ttlMin;
-    let pingTokens = 0;
-
-    if (options.keepWarm && samePrefix && Number.isFinite(lastTouch) && !naturalWarm) {
-      const pingEvery = Math.max(1, ttlMin - 1);
-      let pingAt = lastTouch + pingEvery;
-      while (pingAt < message.atMin) {
-        pingTokens += options.prefixTok;
-        lastTouch = pingAt;
-        pingAt += pingEvery;
-      }
-    }
-
-    const warm = samePrefix && message.atMin - lastTouch < ttlMin;
-    const prefixRate = warm ? RATE.read : writeRate;
-    const prefixUsd = tokCost(options.prefixTok, prefixRate, options.model);
-    const workInUsd = tokCost(options.workInTok, RATE.input, options.model);
-    const outputUsd = tokCost(options.outputTok, RATE.out, options.model);
-    const keepWarmUsd = tokCost(pingTokens, RATE.read, options.model);
-    const modelRate = MODEL_IN[options.model];
-    const prefixPrice = `$${prefixUsd.toFixed(3)}`;
-    const reason = warm
-      ? `${pingTokens ? "kept warm" : "warm read"}: prefix still live, ${options.prefixTok.toLocaleString()} × 0.1 × $${modelRate}/M = ${prefixPrice}`
-      : !samePrefix
-        ? `prompt changed: a different prefix must be written, ${options.prefixTok.toLocaleString()} tokens at ${writeRate}× = ${prefixPrice}`
-        : index === 0
-          ? `first message: ${options.prefixTok.toLocaleString()}-tok prefix written at ${writeRate}× = ${prefixPrice}`
-          : `TTL expired: ${gapMin} min gap > ${ttlMin} min → ${options.prefixTok.toLocaleString()}-tok prefix rebuilt at ${writeRate}× = ${prefixPrice}`;
-
-    lastTouch = message.atMin;
-    lastPrefixKey = prefixKey;
-    const buckets = {
-      prefix: { tokens: options.prefixTok, usd: prefixUsd },
-      workIn: { tokens: options.workInTok, usd: workInUsd },
-      output: { tokens: options.outputTok, usd: outputUsd },
-      keepWarm: { tokens: pingTokens, usd: keepWarmUsd },
-    };
-    return { ...message, gapMin, warm, reason, buckets, usd: prefixUsd + workInUsd + outputUsd + keepWarmUsd };
-  });
-
-  return { messages, totalUsd: messages.reduce((sum, message) => sum + message.usd, 0) };
+  return priceTokens(tokens, bucket, config);
 }
 
 function emptyBuckets(): DayResult["buckets"] {

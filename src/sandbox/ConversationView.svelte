@@ -1,11 +1,10 @@
 <script lang="ts">
   import {
-    BUCKET_META,
     simulateMessageLedger,
-    type BucketId,
     type MessageLedgerOptions,
     type ScriptedMessage,
-  } from "./model.js";
+  } from "../sim/ledger.js";
+  import { BUCKET_META, type BucketId } from "./model.js";
 
   type BucketTotal = { tokens: number; usd: number };
 

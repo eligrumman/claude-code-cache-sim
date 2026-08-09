@@ -1,15 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { balloonCost, isGameOver, overdraftLeft, shrinkToRead, type BalloonEconomy } from "./engine.js";
+  import { SCENARIOS } from "../sim/scenarios.js";
+  import { economyFromLedger, isGameOver, overdraftLeft, scenarioToTDWave, shrinkToRead, type BalloonEconomy, type TDWave } from "./engine.js";
 
   interface Props { onback: () => void }
   let { onback }: Props = $props();
 
   type TowerKind = "prefix" | "warm" | "subagent";
   interface Tower { id: number; kind: TowerKind; x: number; y: number; range: number; upgraded: boolean; memory: Record<string, number> }
-  interface Balloon extends BalloonEconomy { id: number; prefix: string; prompt: string; subagent: boolean; progress: number; speed: number; processed: Set<number>; reinflateAt?: number; reinflated?: boolean }
+  interface Balloon extends BalloonEconomy { id: number; prefix: string; prompt: string; subagent: boolean; atMin: number; progress: number; speed: number; processed: Set<number> }
   interface FloatText { x: number; y: number; text: string; life: number }
-  interface Wave { name: string; lesson: string; balloons: Array<{ tokens: number; prefix: string; prompt?: string; subagent?: boolean; delay: number; gap?: boolean }> }
 
   const W = 800, H = 440;
   const path = [{x:34,y:72},{x:250,y:72},{x:250,y:202},{x:548,y:202},{x:548,y:354},{x:758,y:354}];
@@ -18,23 +18,13 @@
     warm: { name: "Keep-Warm", icon: "☕", price: .06, range: 105, blurb: "Stops TTL re-inflation; tiny upkeep" },
     subagent: { name: "Same-Prompt", icon: "🧬", price: .10, range: 96, blurb: "Collapses identical subagent swarms" },
   };
-  const waves: Wave[] = [
-    { name: "Morning repeats", lesson: "Repeated project-A requests — teach a Prefix Cacher their shared prefix.", balloons: [0,1,2,3,4].map(i => ({tokens: 38_000, prefix:"project-A", delay:i*.72})) },
-    { name: "BIG context lands", lesson: "A huge red context repeats. One remembered prefix saves a fortune.", balloons: [0,1,2].map(i => ({tokens: 105_000, prefix:"big-repo", delay:i*1.05})) },
-    { name: "Identical subagent swarm", lesson: "Same prompt, many workers. The Same-Prompt tower loves this.", balloons: [0,1,2,3,4,5,6,7].map(i => ({tokens: 24_000, prefix:"agents", prompt:"review-one-file", subagent:true, delay:i*.34})) },
-    { name: "The lunch-break gap", lesson: "The cache sat idle. Stop green requests re-inflating at the ⏳ gate.", balloons: [0,1,2,3,4].map(i => ({tokens: 58_000, prefix:"project-A", delay:i*.7, gap:true})) },
-    { name: "4:59 PM mixed rush", lesson: "Repeats, varied prompts, and expensive context all arrive at once.", balloons: [
-      {tokens:72_000,prefix:"project-A",delay:0},{tokens:30_000,prefix:"agents",prompt:"same",subagent:true,delay:.3},
-      {tokens:91_000,prefix:"final",delay:.65},{tokens:30_000,prefix:"agents",prompt:"different-1",subagent:true,delay:.9},
-      {tokens:72_000,prefix:"project-A",delay:1.15},{tokens:30_000,prefix:"agents",prompt:"different-2",subagent:true,delay:1.35},
-      {tokens:91_000,prefix:"final",delay:1.7},{tokens:30_000,prefix:"agents",prompt:"same",subagent:true,delay:2.0},
-    ] },
-  ];
+  const waves: TDWave[] = SCENARIOS.map((scenario) => scenarioToTDWave(scenario));
 
   let canvas = $state<HTMLCanvasElement>();
   let ctx: CanvasRenderingContext2D | null = null;
   let phase = $state<"title"|"playing"|"dead"|"won">("title");
   let dailyBudget = $state(2.0);
+  let sandboxMode = $state(false);
   let budget = $state(2.0);
   let allowance = $state(.7);
   let spend = $state(0);
@@ -49,7 +39,7 @@
   let balloons = $state<Balloon[]>([]);
   let towers = $state<Tower[]>([]);
   let floats = $state<FloatText[]>([]);
-  let spawnQueue = $state<Array<Wave["balloons"][number] & { at: number }>>([]);
+  let spawnQueue = $state<Array<TDWave["balloons"][number] & { at: number }>>([]);
   let waveElapsed = 0;
   let simMinutes = 0;
   let nextId = 1;
@@ -58,13 +48,13 @@
   let challengeCode = $state(`function cacheReadCost(tokens, dollarPerMTok) {\n  // TODO: warm reads use the 0.1× rate\n  return 0;\n}`);
   let testOutput = $state<string[]>([]);
   let challengePassed = $state(false);
-  let spentPct = $derived(Math.min(100, spend / budget * 100));
+  let spentPct = $derived(sandboxMode ? 0 : Math.min(100, spend / budget * 100));
   let overdraft = $derived(overdraftLeft(spend, budget, allowance));
   let activeWave = $derived(waves[waveIndex]);
 
   function money(n: number) { return `$${n.toFixed(n < .1 ? 3 : 2)}`; }
   function startGame() {
-    budget = dailyBudget; allowance = dailyBudget * .35; spend = 0; credits = .24;
+    budget = dailyBudget; allowance = sandboxMode ? 0 : dailyBudget * .35; spend = 0; credits = sandboxMode ? 999 : .24;
     totalSaved = 0; waveIndex = 0; balloons = []; towers = []; floats = [];
     spawnQueue = []; running = false; speed = 1; phase = "playing"; simMinutes = 0;
     status = "Place a Prefix Cacher near the first bend, then start the wave.";
@@ -75,22 +65,19 @@
     if (running || balloons.length || spawnQueue.length || phase !== "playing") return;
     const wave = waves[waveIndex];
     if (!wave) return;
-    if (waveIndex === 3) simMinutes += 8; // a visible workday gap: default 5m memories expire
     waveElapsed = 0;
     spawnQueue = wave.balloons.map(b => ({...b, at:b.delay}));
     running = true;
     status = `Incoming: ${wave.name}!`;
   }
 
-  function spawn(spec: Wave["balloons"][number]) {
-    const fullCost = balloonCost(spec.tokens, "sonnet", "write");
-    const startsWarm = Boolean(spec.gap);
+  function spawn(spec: TDWave["balloons"][number]) {
+    const economy = economyFromLedger(spec.entry, waves[waveIndex].options);
     balloons = [...balloons, {
-      id: nextId++, tokens: spec.tokens, model:"sonnet", fullCost,
-      currentCost: startsWarm ? balloonCost(spec.tokens, "sonnet", "read") : fullCost,
+      id: nextId++, ...economy,
       prefix:spec.prefix, prompt:spec.prompt ?? spec.prefix, subagent:Boolean(spec.subagent),
-      progress:0, speed:.092 + Math.min(.025, 28_000/spec.tokens*.012), processed:new Set(),
-      reinflateAt: spec.gap ? .48 : undefined,
+      atMin: spec.entry.atMin + waveIndex * 1_000,
+      progress:0, speed:.092 + Math.min(.025, 28_000/economy.tokens*.012), processed:new Set(),
     }];
   }
 
@@ -116,35 +103,27 @@
     const due = spawnQueue.filter(s => s.at <= waveElapsed);
     spawnQueue = spawnQueue.filter(s => s.at > waveElapsed);
     due.forEach(spawn);
-    for (const tower of towers) if (tower.kind === "warm") credits = Math.max(0, credits - .00035*dt);
+    for (const tower of towers) if (tower.kind === "warm" && !sandboxMode) credits = Math.max(0, credits - .00035*dt);
 
     for (const b of balloons) {
       b.progress += b.speed * dt;
       const p = pointAt(b.progress);
-      if (b.reinflateAt && !b.reinflated && b.progress >= b.reinflateAt) {
-        const warmCover = towers.some(t => t.kind === "warm" && dist(t,p) <= t.range);
-        const longMemory = towers.some(t => t.kind === "prefix" && t.upgraded && t.memory[b.prefix] !== undefined);
-        if (!warmCover && !longMemory) {
-          b.currentCost = b.fullCost; b.reinflated = true;
-          floats = [...floats,{x:p.x,y:p.y,text:"TTL expired! ↗",life:1.25}];
-        } else {
-          b.reinflated = true;
-          floats = [...floats,{x:p.x,y:p.y,text:warmCover?"☕ kept warm":"1h TTL held",life:1.1}];
-        }
-      }
       for (const tower of towers) {
         if (b.processed.has(tower.id) || dist(tower,p) > tower.range) continue;
         b.processed.add(tower.id);
         if (tower.kind === "prefix") {
           const last = tower.memory[b.prefix];
           const ttl = tower.upgraded ? 60 : 5;
-          if (last !== undefined && simMinutes-last <= ttl) addSaving(b, shrinkToRead(b), p);
+          if (last !== undefined && b.atMin-last < ttl) addSaving(b, shrinkToRead(b), p);
           else floats = [...floats,{x:p.x,y:p.y,text:"prefix learned",life:.9}];
-          tower.memory[b.prefix] = simMinutes;
+          tower.memory[b.prefix] = b.atMin;
         } else if (tower.kind === "subagent" && b.subagent) {
           const twins = balloons.filter(o => o.subagent && o.prompt === b.prompt && Math.abs(o.progress-b.progress)<.18).length;
           if (twins >= 2) addSaving(b, shrinkToRead(b), p);
           else floats = [...floats,{x:p.x,y:p.y,text:"varied ≠ cached",life:.8}];
+        } else if (tower.kind === "warm") {
+          const saved = shrinkToRead(b);
+          if (saved) addSaving(b, saved, p);
         }
       }
     }
@@ -152,7 +131,7 @@
     if (arrived.length) {
       spend += arrived.reduce((sum,b)=>sum+b.currentCost,0);
       balloons = balloons.filter(b => b.progress < 1);
-      if (isGameOver(spend,budget,allowance)) { phase="dead"; running=false; challengePassed=false; testOutput=[]; }
+      if (!sandboxMode && isGameOver(spend,budget,allowance)) { phase="dead"; running=false; challengePassed=false; testOutput=[]; }
     } else balloons = [...balloons];
     floats = floats.map(f=>({...f,life:f.life-dt})).filter(f=>f.life>0);
     if (running && !spawnQueue.length && !balloons.length) {
@@ -179,16 +158,16 @@
     if(hit){selectedTowerId=hit.id;selected=null;status=hit.kind==="prefix"?"Selected Prefix Cacher — upgrade its memory to 1 hour below.":"Tower selected.";return;}
     if(!selected) return;
     const item=shop[selected];
-    if(credits<item.price){status=`Need ${money(item.price-credits)} more credits.`;return;}
+    if(!sandboxMode && credits<item.price){status=`Need ${money(item.price-credits)} more credits.`;return;}
     if(!canPlace(x,y)){status="That tile blocks the path (or another tower). Try the grass.";return;}
     towers=[...towers,{id:nextId++,kind:selected,x,y,range:item.range,upgraded:false,memory:{}}];
-    credits-=item.price; selectedTowerId=null; status=`${item.name} placed. Efficiency must fund the next one!`;
+    if (!sandboxMode) credits-=item.price; selectedTowerId=null; status=`${item.name} placed. ${sandboxMode ? "Experiment freely." : "Efficiency must fund the next one!"}`;
   }
   function upgradeSelected() {
     const tower=towers.find(t=>t.id===selectedTowerId);
     if(!tower||tower.kind!=="prefix"||tower.upgraded) return;
-    if(credits<.08){status="The 1h TTL upgrade costs $0.08 credits.";return;}
-    credits-=.08;tower.upgraded=true;towers=[...towers];status="Memory upgraded: 5m → 60m. Lunch breaks no longer scare it.";
+    if(!sandboxMode && credits<.08){status="The 1h TTL upgrade costs $0.08 credits.";return;}
+    if (!sandboxMode) credits-=.08;tower.upgraded=true;towers=[...towers];status="Memory upgraded: 5m → 60m. Lunch breaks no longer scare it.";
   }
   function runChallenge() {
     testOutput=[];
@@ -249,23 +228,34 @@
 </script>
 
 <section class="td-shell">
-  <header class="topline"><button class="back" onclick={onback}>← Back to map</button><div><h1>🎈 Tokenloons TD</h1><p>Defend your budget.</p></div><button class="restart" onclick={restart}>↻ Restart</button></header>
+  <header class="topline"><button class="back" onclick={onback}>← Back to map</button><div><h1>🎈 Tokenloons TD</h1><p>{sandboxMode ? "No-lose cost laboratory." : "Defend your budget."}</p></div><button class="restart" onclick={restart}>↻ Restart</button></header>
 
   {#if phase === "title"}
     <div class="title-card">
       <div class="hero-balloons"><i></i><i></i><i></i></div>
       <h2>Tokenloons TD</h2><p class="tag">Defend your budget.</p>
       <p>Requests are drifting toward your Wallet. Cache towers shrink expensive red writes into tiny green reads. The dollars you save become your building credits.</p>
-      <label class="budget-pick">Daily budget: <strong>{money(dailyBudget)}</strong><input type="range" min="1" max="3" step=".25" bind:value={dailyBudget}/></label>
-      <div class="difficulty"><span>🔥 $1.00 lean</span><span>☁️ $3.00 roomy</span></div>
-      <p class="overdraft-note">Overdraft allowance: <b>{money(dailyBudget*.35)}</b> beyond budget. At zero, Claude clocks out.</p>
-      <button class="primary big" onclick={startGame}>Start the workday →</button>
+      <label class="mode-pick"><input type="checkbox" bind:checked={sandboxMode}/><span><b>Sandbox Mode</b><small>Unlimited towers · no overdraft · no death</small></span></label>
+      {#if !sandboxMode}
+        <label class="budget-pick">Daily budget: <strong>{money(dailyBudget)}</strong><input type="range" min="1" max="3" step=".25" bind:value={dailyBudget}/></label>
+        <div class="difficulty"><span>🔥 $1.00 lean</span><span>☁️ $3.00 roomy</span></div>
+        <p class="overdraft-note">Overdraft allowance: <b>{money(dailyBudget*.35)}</b> beyond budget. At zero, Claude clocks out.</p>
+      {:else}
+        <p class="overdraft-note">All five waves use the exact same scenarios and ledger as the Conversation Sandbox.</p>
+      {/if}
+      <button class="primary big" onclick={startGame}>{sandboxMode ? "Enter the cost lab" : "Start the workday"} →</button>
     </div>
   {:else}
     <div class="hud-grid">
-      <div class="meter-card"><div class="metric"><small>SPEND / BUDGET</small><b>{money(spend)} <em>/ {money(budget)}</em></b></div><div class="bar"><i style={`width:${spentPct}%`}></i></div></div>
-      <div class="metric"><small>OVERDRAFT</small><b class:danger={overdraft<allowance*.25}>🫀 {money(overdraft)}</b></div>
-      <div class="metric"><small>BUILD CREDITS</small><b class="green">✦ {money(credits)}</b></div>
+      {#if sandboxMode}
+        <div class="metric"><small>SPENT SO FAR</small><b>{money(spend)}</b></div>
+        <div class="metric"><small>SAVED SO FAR</small><b class="green">{money(totalSaved)}</b></div>
+        <div class="metric"><small>BUILD LIMIT</small><b>∞ FREE</b></div>
+      {:else}
+        <div class="meter-card"><div class="metric"><small>SPEND / BUDGET</small><b>{money(spend)} <em>/ {money(budget)}</em></b></div><div class="bar"><i style={`width:${spentPct}%`}></i></div></div>
+        <div class="metric"><small>OVERDRAFT</small><b class:danger={overdraft<allowance*.25}>🫀 {money(overdraft)}</b></div>
+        <div class="metric"><small>BUILD CREDITS</small><b class="green">✦ {money(credits)}</b></div>
+      {/if}
       <div class="metric"><small>WAVE</small><b>{Math.min(waveIndex+1,5)} / 5</b></div>
     </div>
     <div class="incoming"><b>Incoming: {activeWave?.name ?? "Day complete"}</b><span>{activeWave?.lesson}</span></div>
@@ -274,12 +264,12 @@
         <h3>Tower shop</h3>
         {#each Object.entries(shop) as [key,item]}
           <button class:selected={selected===key} class="shop-item" onclick={()=>{selected=key as TowerKind;selectedTowerId=null;}} disabled={phase!=="playing"}>
-            <span class="tower-icon">{item.icon}</span><span><b>{item.name}</b><small>{item.blurb}</small></span><strong>{money(item.price)}</strong>
+            <span class="tower-icon">{item.icon}</span><span><b>{item.name}</b><small>{item.blurb}</small></span><strong>{sandboxMode ? "FREE" : money(item.price)}</strong>
           </button>
         {/each}
         <div class="upgrade-box">
           <b>📌 Prefix upgrade</b><small>1h TTL: memory survives the idle wave.</small>
-          <button onclick={upgradeSelected} disabled={!selectedTowerId || towers.find(t=>t.id===selectedTowerId)?.kind!=="prefix" || towers.find(t=>t.id===selectedTowerId)?.upgraded}>Upgrade selected · $0.08</button>
+          <button onclick={upgradeSelected} disabled={!selectedTowerId || towers.find(t=>t.id===selectedTowerId)?.kind!=="prefix" || towers.find(t=>t.id===selectedTowerId)?.upgraded}>Upgrade selected · {sandboxMode ? "FREE" : "$0.08"}</button>
         </div>
         <p class="tip">Tip: tap a placed tower to select it. Savings are real build income.</p>
       </aside>
@@ -290,14 +280,14 @@
           <button class="primary" onclick={startWave} disabled={running||balloons.length>0||spawnQueue.length>0||phase!=="playing"}>▶ Start wave {Math.min(waveIndex+1,5)}</button>
           <button onclick={()=>running=!running} disabled={phase!=="playing"||(!running&&!balloons.length&&!spawnQueue.length)}>{running?"Ⅱ Pause":"▶ Resume"}</button>
           <button onclick={()=>speed=speed===1?2:1}>{speed}× speed</button>
-          <span>Saved today: <b>{money(totalSaved)}</b></span>
+          <span>{sandboxMode ? "Spent / saved" : "Saved today"}: <b>{sandboxMode ? `${money(spend)} / ${money(totalSaved)}` : money(totalSaved)}</b></span>
         </div>
       </main>
     </div>
   {/if}
 </section>
 
-{#if phase === "dead"}
+{#if phase === "dead" && !sandboxMode}
   <div class="death-scrim">
     <div class="ide">
       <div class="ide-top"><span class="dots">● ● ●</span><b>cache-rescue.ts — 1 problem</b><span>BUILD FAILED</span></div>
@@ -312,10 +302,10 @@
 {/if}
 
 {#if phase === "won"}
-  <div class="death-scrim"><div class="win-card"><div class="confetti">🎈 ✨ 🎈</div><h2>Budget defended!</h2><p>You survived the workday with <b>{money(spend)}</b> spent against a {money(budget)} budget.</p><div class="saved-total">You saved {money(totalSaved)} by caching</div><p>The Wallet would like to formally recognize your aggressive reuse of prefixes.</p><button class="primary" onclick={restart}>Play another day</button><button onclick={onback}>Back to map</button></div></div>
+  <div class="death-scrim"><div class="win-card"><div class="confetti">🎈 ✨ 🎈</div><h2>{sandboxMode ? "Scenario lab complete!" : "Budget defended!"}</h2><p>{sandboxMode ? `The shared scenarios spent ${money(spend)} with your tower setup.` : `You survived the workday with ${money(spend)} spent against a ${money(budget)} budget.`}</p><div class="saved-total">You saved {money(totalSaved)} by caching</div><p>{sandboxMode ? "No limits, no losing — just a clean view of the economics." : "The Wallet would like to formally recognize your aggressive reuse of prefixes."}</p><button class="primary" onclick={restart}>Play another day</button><button onclick={onback}>Back to map</button></div></div>
 {/if}
 
 <style>
-  .td-shell{font-family:ui-rounded,"Comic Sans MS",system-ui,sans-serif;color:#292722}.topline{display:flex;align-items:center;gap:14px;margin-bottom:12px}.topline div{flex:1;text-align:center}.topline h1{font-size:27px;font-weight:900}.topline p{margin:0;color:#6f685c}.back,.restart,.controls button,.win-card button{border:2px solid #34312a;background:white;border-radius:10px;padding:8px 12px;font-weight:750;cursor:pointer;box-shadow:2px 2px 0 #34312a}.title-card{max-width:620px;margin:34px auto;background:#fffdf4;border:3px solid #302d27;border-radius:22px 17px 25px 18px;padding:32px;text-align:center;box-shadow:9px 10px 0 #f0c84c}.title-card h2{font-size:38px;margin:4px 0 0}.tag{font-size:20px;margin:0 0 20px;color:#6b655b}.title-card>p:not(.tag){max-width:480px;margin:12px auto}.hero-balloons{height:56px}.hero-balloons i{display:inline-block;width:40px;height:51px;margin:0 5px;border:2px solid #302d27;border-radius:50% 50% 45% 45%;background:#df5948;transform:rotate(-7deg)}.hero-balloons i:nth-child(2){width:28px;height:38px;background:#eab947;transform:translateY(10px)}.hero-balloons i:nth-child(3){width:19px;height:27px;background:#55ad70;transform:translateY(16px) rotate(8deg)}.budget-pick{display:flex;gap:14px;align-items:center;justify-content:center;font-size:17px;margin-top:22px}.budget-pick input{width:240px;accent-color:#df5948}.difficulty{display:flex;justify-content:space-between;max-width:375px;margin:2px auto;color:#786f62;font-size:11px}.overdraft-note{font-size:13px;color:#765b32}.primary{border:2px solid #292722!important;background:#f2c94c!important;color:#292722!important;box-shadow:3px 3px 0 #292722!important}.primary.big{font-size:17px;padding:12px 22px;border-radius:12px;font-weight:850;cursor:pointer}.hud-grid{display:grid;grid-template-columns:2fr 1fr 1fr .65fr;gap:8px;margin-bottom:9px}.hud-grid>div,.metric{background:#fff;border:2px solid #34312a;border-radius:11px;padding:8px 11px;box-shadow:2px 2px 0 #d9d0ba}.metric small{display:block;font-size:9px;font-weight:850;letter-spacing:.08em;color:#787064}.metric b{font:800 17px ui-monospace,monospace}.metric em{font-size:11px;color:#6f685c}.metric .green,.green{color:#258454}.danger{color:#c63e39}.meter-card .metric{border:0;box-shadow:none;padding:0}.bar{height:7px;background:#eee6d5;border-radius:9px;overflow:hidden}.bar i{display:block;height:100%;background:linear-gradient(90deg,#4fa86b 0 68%,#e2ad3e 78%,#dc5445);transition:width .25s}.incoming{display:flex;gap:10px;align-items:center;padding:8px 13px;margin-bottom:9px;border:2px dashed #a76a31;background:#fff7df;border-radius:10px}.incoming b{white-space:nowrap}.incoming span{font-size:12px;color:#6c6256}.game-grid{display:grid;grid-template-columns:235px 1fr;gap:10px}.shop-panel{background:#fff;border:2px solid #34312a;border-radius:13px;padding:10px;box-shadow:4px 4px 0 #9bc9a2}.shop-panel h3{margin:0 0 8px}.shop-item{width:100%;display:grid;grid-template-columns:34px 1fr auto;align-items:center;gap:5px;text-align:left;border:2px solid #d9d1be;background:#fffdf5;border-radius:9px;padding:8px 6px;margin-bottom:7px;cursor:pointer;color:#292722}.shop-item.selected{border-color:#317b52;background:#e8f6ea;transform:translateX(3px)}.shop-item:disabled{opacity:.6}.tower-icon{font-size:23px}.shop-item b,.shop-item small{display:block}.shop-item b{font-size:12px}.shop-item small{font-size:9px;line-height:1.3;color:#6e675d}.shop-item>strong{font-size:11px}.upgrade-box{border-top:2px dashed #d9d1be;padding-top:9px;margin-top:11px}.upgrade-box b,.upgrade-box small{display:block}.upgrade-box small{font-size:10px;color:#6e675d}.upgrade-box button{width:100%;font-size:10px;margin-top:6px;padding:6px;background:#ece5ff;border:1px solid #776597;border-radius:7px;font-weight:700;cursor:pointer}.tip{font-size:9px;color:#787064;margin:10px 2px 0}.board-wrap{min-width:0}canvas{width:100%;border:3px solid #34312a;border-radius:14px;background:#f8f4df;box-shadow:4px 4px 0 #d8c597;touch-action:manipulation;cursor:crosshair}.status{font:12px/1.4 ui-monospace,monospace;min-height:26px;padding:7px 9px;margin-top:8px;background:#fff;border-left:4px solid #e1b944}.controls{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.controls button{font-size:11px;padding:6px 9px}.controls button:disabled{opacity:.42}.controls span{margin-left:auto;font-size:12px}.death-scrim{position:fixed;z-index:80;inset:0;background:rgba(23,20,17,.8);display:flex;align-items:center;justify-content:center;padding:14px}.ide{width:min(720px,100%);max-height:95vh;overflow:auto;background:#17191e;color:#e4e5e7;border:2px solid #08090b;border-radius:10px;box-shadow:12px 14px 0 rgba(0,0,0,.35);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.ide-top{display:flex;justify-content:space-between;background:#292c33;padding:9px 12px;font-size:11px;color:#adb0b7}.dots{color:#dc5a55;letter-spacing:3px}.death-copy{padding:16px 22px 6px}.death-copy h2{font-size:27px;margin:0;color:#ff7168}.death-copy p{font-family:system-ui;margin:5px 0}.editor{display:flex;margin:6px 20px;background:#111318;border:1px solid #454955}.lines{width:34px;padding:12px 8px;text-align:right;color:#626771;line-height:1.5;user-select:none}.editor textarea{flex:1;min-height:118px;resize:vertical;border:0;outline:0;padding:12px;background:#111318;color:#c9f7cc;font:13px/1.5 ui-monospace,monospace}.spec{margin:10px 22px;font-size:11px}.spec code{color:#ffc66d}.ide pre{margin:10px 22px;padding:10px;background:#211416;border-left:3px solid #ed5b56;color:#ff938e}.ide pre.passing{background:#102018;border-color:#55c67c;color:#8be9a7}.rehired{margin:10px 22px;color:#7fda9d;font:bold 18px system-ui}.ide-actions{display:flex;gap:8px;padding:12px 22px 20px}.ide-actions button{border:1px solid #666b76;background:#292d35;color:#eee;border-radius:5px;padding:8px 12px;font-weight:700;cursor:pointer}.ide-actions .run{background:#287f4d}.ide-actions .revive{background:#e6b944;color:#181818}.win-card{width:min(520px,100%);text-align:center;background:#fffdf4;border:3px solid #292722;border-radius:22px;padding:30px;box-shadow:9px 9px 0 #55a971}.win-card h2{font-size:35px;margin:4px}.confetti{font-size:35px}.saved-total{font-size:23px;font-weight:900;color:#23804f;margin:20px}.win-card button{margin:5px}
+  .td-shell{font-family:ui-rounded,"Comic Sans MS",system-ui,sans-serif;color:#292722}.topline{display:flex;align-items:center;gap:14px;margin-bottom:12px}.topline div{flex:1;text-align:center}.topline h1{font-size:27px;font-weight:900}.topline p{margin:0;color:#6f685c}.back,.restart,.controls button,.win-card button{border:2px solid #34312a;background:white;border-radius:10px;padding:8px 12px;font-weight:750;cursor:pointer;box-shadow:2px 2px 0 #34312a}.title-card{max-width:620px;margin:34px auto;background:#fffdf4;border:3px solid #302d27;border-radius:22px 17px 25px 18px;padding:32px;text-align:center;box-shadow:9px 10px 0 #f0c84c}.title-card h2{font-size:38px;margin:4px 0 0}.tag{font-size:20px;margin:0 0 20px;color:#6b655b}.title-card>p:not(.tag){max-width:480px;margin:12px auto}.hero-balloons{height:56px}.hero-balloons i{display:inline-block;width:40px;height:51px;margin:0 5px;border:2px solid #302d27;border-radius:50% 50% 45% 45%;background:#df5948;transform:rotate(-7deg)}.hero-balloons i:nth-child(2){width:28px;height:38px;background:#eab947;transform:translateY(10px)}.hero-balloons i:nth-child(3){width:19px;height:27px;background:#55ad70;transform:translateY(16px) rotate(8deg)}.mode-pick{display:flex;align-items:center;gap:12px;max-width:390px;margin:18px auto 8px;padding:10px 14px;border:2px solid #302d27;border-radius:12px;background:#ecf8e9;text-align:left;cursor:pointer}.mode-pick input{width:20px;height:20px;accent-color:#258454}.mode-pick span,.mode-pick small{display:block}.mode-pick small{color:#675f54}.budget-pick{display:flex;gap:14px;align-items:center;justify-content:center;font-size:17px;margin-top:16px}.budget-pick input{width:240px;accent-color:#df5948}.difficulty{display:flex;justify-content:space-between;max-width:375px;margin:2px auto;color:#786f62;font-size:11px}.overdraft-note{font-size:13px;color:#765b32}.primary{border:2px solid #292722!important;background:#f2c94c!important;color:#292722!important;box-shadow:3px 3px 0 #292722!important}.primary.big{font-size:17px;padding:12px 22px;border-radius:12px;font-weight:850;cursor:pointer}.hud-grid{display:grid;grid-template-columns:2fr 1fr 1fr .65fr;gap:8px;margin-bottom:9px}.hud-grid>div,.metric{background:#fff;border:2px solid #34312a;border-radius:11px;padding:8px 11px;box-shadow:2px 2px 0 #d9d0ba}.metric small{display:block;font-size:9px;font-weight:850;letter-spacing:.08em;color:#787064}.metric b{font:800 17px ui-monospace,monospace}.metric em{font-size:11px;color:#6f685c}.metric .green,.green{color:#258454}.danger{color:#c63e39}.meter-card .metric{border:0;box-shadow:none;padding:0}.bar{height:7px;background:#eee6d5;border-radius:9px;overflow:hidden}.bar i{display:block;height:100%;background:linear-gradient(90deg,#4fa86b 0 68%,#e2ad3e 78%,#dc5445);transition:width .25s}.incoming{display:flex;gap:10px;align-items:center;padding:8px 13px;margin-bottom:9px;border:2px dashed #a76a31;background:#fff7df;border-radius:10px}.incoming b{white-space:nowrap}.incoming span{font-size:12px;color:#6c6256}.game-grid{display:grid;grid-template-columns:235px 1fr;gap:10px}.shop-panel{background:#fff;border:2px solid #34312a;border-radius:13px;padding:10px;box-shadow:4px 4px 0 #9bc9a2}.shop-panel h3{margin:0 0 8px}.shop-item{width:100%;display:grid;grid-template-columns:34px 1fr auto;align-items:center;gap:5px;text-align:left;border:2px solid #d9d1be;background:#fffdf5;border-radius:9px;padding:8px 6px;margin-bottom:7px;cursor:pointer;color:#292722}.shop-item.selected{border-color:#317b52;background:#e8f6ea;transform:translateX(3px)}.shop-item:disabled{opacity:.6}.tower-icon{font-size:23px}.shop-item b,.shop-item small{display:block}.shop-item b{font-size:12px}.shop-item small{font-size:9px;line-height:1.3;color:#6e675d}.shop-item>strong{font-size:11px}.upgrade-box{border-top:2px dashed #d9d1be;padding-top:9px;margin-top:11px}.upgrade-box b,.upgrade-box small{display:block}.upgrade-box small{font-size:10px;color:#6e675d}.upgrade-box button{width:100%;font-size:10px;margin-top:6px;padding:6px;background:#ece5ff;border:1px solid #776597;border-radius:7px;font-weight:700;cursor:pointer}.tip{font-size:9px;color:#787064;margin:10px 2px 0}.board-wrap{min-width:0}canvas{width:100%;border:3px solid #34312a;border-radius:14px;background:#f8f4df;box-shadow:4px 4px 0 #d8c597;touch-action:manipulation;cursor:crosshair}.status{font:12px/1.4 ui-monospace,monospace;min-height:26px;padding:7px 9px;margin-top:8px;background:#fff;border-left:4px solid #e1b944}.controls{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.controls button{font-size:11px;padding:6px 9px}.controls button:disabled{opacity:.42}.controls span{margin-left:auto;font-size:12px}.death-scrim{position:fixed;z-index:80;inset:0;background:rgba(23,20,17,.8);display:flex;align-items:center;justify-content:center;padding:14px}.ide{width:min(720px,100%);max-height:95vh;overflow:auto;background:#17191e;color:#e4e5e7;border:2px solid #08090b;border-radius:10px;box-shadow:12px 14px 0 rgba(0,0,0,.35);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.ide-top{display:flex;justify-content:space-between;background:#292c33;padding:9px 12px;font-size:11px;color:#adb0b7}.dots{color:#dc5a55;letter-spacing:3px}.death-copy{padding:16px 22px 6px}.death-copy h2{font-size:27px;margin:0;color:#ff7168}.death-copy p{font-family:system-ui;margin:5px 0}.editor{display:flex;margin:6px 20px;background:#111318;border:1px solid #454955}.lines{width:34px;padding:12px 8px;text-align:right;color:#626771;line-height:1.5;user-select:none}.editor textarea{flex:1;min-height:118px;resize:vertical;border:0;outline:0;padding:12px;background:#111318;color:#c9f7cc;font:13px/1.5 ui-monospace,monospace}.spec{margin:10px 22px;font-size:11px}.spec code{color:#ffc66d}.ide pre{margin:10px 22px;padding:10px;background:#211416;border-left:3px solid #ed5b56;color:#ff938e}.ide pre.passing{background:#102018;border-color:#55c67c;color:#8be9a7}.rehired{margin:10px 22px;color:#7fda9d;font:bold 18px system-ui}.ide-actions{display:flex;gap:8px;padding:12px 22px 20px}.ide-actions button{border:1px solid #666b76;background:#292d35;color:#eee;border-radius:5px;padding:8px 12px;font-weight:700;cursor:pointer}.ide-actions .run{background:#287f4d}.ide-actions .revive{background:#e6b944;color:#181818}.win-card{width:min(520px,100%);text-align:center;background:#fffdf4;border:3px solid #292722;border-radius:22px;padding:30px;box-shadow:9px 9px 0 #55a971}.win-card h2{font-size:35px;margin:4px}.confetti{font-size:35px}.saved-total{font-size:23px;font-weight:900;color:#23804f;margin:20px}.win-card button{margin:5px}
   @media(max-width:760px){.game-grid{grid-template-columns:1fr}.shop-panel{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}.shop-panel h3,.upgrade-box,.tip{grid-column:1/-1}.shop-item{grid-template-columns:1fr;text-align:center}.shop-item small{display:none}.hud-grid{grid-template-columns:1fr 1fr}.incoming{align-items:flex-start;flex-direction:column;gap:1px}.topline h1{font-size:20px}.back,.restart{font-size:10px;padding:6px}.title-card{margin-top:10px;padding:22px 15px}.budget-pick{flex-direction:column}.controls span{margin-left:0}.ide-actions{flex-wrap:wrap}}
 </style>
