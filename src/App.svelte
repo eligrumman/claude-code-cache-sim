@@ -9,6 +9,7 @@
   import L3PlayScreen from "./components/L3PlayScreen.svelte";
   import ResultScreen from "./components/ResultScreen.svelte";
   import SessionStream from "./components/SessionStream.svelte";
+  import SandboxScreen from "./sandbox/SandboxScreen.svelte";
   import {
     toMap,
     enterLevel,
@@ -28,10 +29,12 @@
 
   let screen = $state<Screen>(toMap());
   let campaign = $state(loadCampaign());
-  let showSandbox = $state(false);
+  let showStream = $state(false);
+  let sandboxOpen = $state(false);
 
   function goMap() {
-    showSandbox = false;
+    showStream = false;
+    sandboxOpen = false;
     screen = toMap();
   }
   function goEnter(id: LevelId) {
@@ -73,7 +76,12 @@
 </script>
 
 <div class="app">
-  {#if screen.id === "map"}
+  {#if sandboxOpen}
+    <SandboxScreen onback={goMap} />
+  {:else if screen.id === "map"}
+    <button class="sandbox-entry" onclick={() => (sandboxOpen = true)}>
+      <span>🧪</span><b>Sandbox</b><small>See where the money goes →</small>
+    </button>
     <MapScreen {campaign} onenter={goEnter} onfreeplay={goFreeplay} />
   {:else if screen.id === "learn"}
     {@const level = screen.level}
@@ -128,12 +136,12 @@
       it never tells you why.
     </p>
     <div class="card">
-      <button class="btn ghost" onclick={() => (showSandbox = !showSandbox)}>
-        {showSandbox ? "Hide" : "Show"} raw session message-stream view
+      <button class="btn ghost" onclick={() => (showStream = !showStream)}>
+        {showStream ? "Hide" : "Show"} raw session message-stream view
       </button>
       <button class="btn ghost" onclick={goMap}>Back to map</button>
     </div>
-    {#if showSandbox}
+    {#if showStream}
       <div class="card">
         <h2>Session message stream (real-shape simulation)</h2>
         <SessionStream cfg={DEFAULT_CFG} />
@@ -146,8 +154,23 @@
     />
   {/if}
 
-  <p class="footnote">
-    Economics use the canonical cost function and the real calibration table. Boot-time
-    invariants run in the console. No numbers are faked.
-  </p>
+  {#if !sandboxOpen}
+    <p class="footnote">
+      Economics use the canonical cost function and the real calibration table. Boot-time
+      invariants run in the console. No numbers are faked.
+    </p>
+  {/if}
 </div>
+
+<style>
+  .sandbox-entry {
+    width: 100%; margin: 0 0 14px; padding: 13px 18px; display: flex; align-items: center;
+    gap: 10px; border: 2px solid #24231f; border-radius: 15px 12px 16px 13px;
+    background: #fffdf4; color: #24231f; cursor: pointer; text-align: left;
+    box-shadow: 5px 5px 0 #f2c94c; transition: transform .18s, box-shadow .18s;
+  }
+  .sandbox-entry:hover { transform: translateY(-2px); box-shadow: 7px 7px 0 #f2c94c; }
+  .sandbox-entry span { font-size: 1.55rem; }
+  .sandbox-entry b { font-size: 1rem; }
+  .sandbox-entry small { margin-left: auto; color: #6d685c; font-weight: 700; }
+</style>
