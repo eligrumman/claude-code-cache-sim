@@ -174,3 +174,51 @@ describe("TapeRenderer hover: price calc, time, and cache duration", () => {
     expect(t.getHover()).toBeNull();
   });
 });
+
+// Fix #1 (tooltip clipping): TapeRenderer supports an `onHover` callback and
+// a `domTooltip` opt-out of the in-canvas tooltip box, so a host component
+// can render its own DOM-overlay tooltip positioned/clamped against the real
+// viewport instead of the canvas's own (possibly too-narrow/clipped) bounds.
+describe("TapeRenderer domTooltip/onHover: hosts can render their own positioned tooltip", () => {
+  beforeEach(() => {
+    (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = ((q: string) => ({
+      matches: true,
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as (q: string) => MediaQueryList;
+  });
+
+  it("onHover fires with the tooltip lines and the hovered bar's box (x/y/w/h) on hover, and null on mouseleave", () => {
+    const canvas = document.createElement("canvas");
+    document.body.appendChild(canvas);
+    const seen: unknown[] = [];
+    const t = new TapeRenderer(canvas, { domTooltip: true, onHover: (h) => seen.push(h) });
+    t.play([ROW]);
+
+    canvas.dispatchEvent(new MouseEvent("mousemove", { clientX: 100, clientY: 14 + 16 / 2 }));
+    expect(seen.length).toBe(1);
+    const h = seen[0] as { lines: string[]; x: number; y: number; w: number; h: number };
+    expect(h.lines.join("\n")).toContain("total: $0.0100");
+    expect(typeof h.x).toBe("number");
+    expect(typeof h.y).toBe("number");
+    // jsdom performs no real layout, so the bar's pixel width (derived from
+    // clientWidth) is 0 in this environment - only its height is
+    // layout-independent (a fixed row height).
+    expect(h.w).toBeGreaterThanOrEqual(0);
+    expect(h.h).toBeGreaterThan(0);
+
+    canvas.dispatchEvent(new MouseEvent("mouseleave"));
+    expect(seen[seen.length - 1]).toBeNull();
+
+    document.body.removeChild(canvas);
+  });
+
+  it("labelFor overrides the row's drawn label (used to show real task names instead of the bare agent tag)", () => {
+    const canvas = document.createElement("canvas");
+    document.body.appendChild(canvas);
+    const t = new TapeRenderer(canvas, { labelFor: (row) => (row.unitId === "u" ? "Fix the login bug" : null) });
+    expect(() => t.play([ROW])).not.toThrow();
+    document.body.removeChild(canvas);
+  });
+});

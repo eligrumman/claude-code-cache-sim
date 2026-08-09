@@ -5,6 +5,7 @@
   // (Section 7 gap #3).
   let {
     tasksLeft,
+    nextTaskLabel = null,
     standupDone,
     disabled,
     ontask,
@@ -12,6 +13,7 @@
     onstandup,
   }: {
     tasksLeft: number;
+    nextTaskLabel?: string | null;
     standupDone: boolean;
     disabled: boolean;
     ontask: () => void;
@@ -22,7 +24,7 @@
 
 <div class="choicebar">
   <button class="btn" disabled={disabled || tasksLeft === 0} onclick={ontask}>
-    Do next task {tasksLeft > 0 ? `(${tasksLeft} left)` : ""}
+    {nextTaskLabel ? `Do next task: ${nextTaskLabel}` : "Do next task"} {tasksLeft > 0 ? `(${tasksLeft} left)` : ""}
   </button>
   <button class="btn ghost" disabled={disabled} onclick={oncoffee}>Coffee - 20 min</button>
   <button class="btn ghost" disabled={disabled || standupDone} onclick={onstandup}>

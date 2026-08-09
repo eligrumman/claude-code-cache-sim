@@ -5,16 +5,16 @@
   // L1's mechanic - an out-of-order standup unit + a live clock/TTL drain -
   // doesn't fit the config-strip/unit-board shape the other 12 levels share
   // (L1_REDESIGN Section 7).
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { initGame, step, totalSpent } from "../game/step.js";
   import { L1_CFG } from "../game/step.js";
   import { LEVEL_BY_ID } from "../game/levels.js";
-  import { TapeRenderer } from "../render/tape.js";
+  import { TapeRenderer, type TapeHover } from "../render/tape.js";
   import IntroCards from "./IntroCards.svelte";
   import ClockTtlBar from "./ClockTtlBar.svelte";
   import ChoiceBar from "./ChoiceBar.svelte";
   import Toast from "./Toast.svelte";
-  import type { GameState } from "../game/types.js";
+  import type { GameState, LedgerRow } from "../game/types.js";
 
   let {
     attempted,
@@ -37,7 +37,24 @@
   let dawdleTicks = 0;
 
   let canvas: HTMLCanvasElement | undefined = $state();
+  let tapeHolder: HTMLDivElement | undefined = $state();
   let tape: TapeRenderer | null = null;
+  // Hover payload from TapeRenderer (fix #1: tooltip clipping). The canvas
+  // draws bars only (domTooltip:true); this component renders the tooltip as
+  // an absolutely-positioned DOM overlay so it can be measured and clamped
+  // to the viewport after render, instead of being clamped to canvas bounds
+  // (which clips when the canvas sits inside a narrower/scrolled panel).
+  let hoverTip = $state<TapeHover | null>(null);
+  let tipEl: HTMLDivElement | undefined = $state();
+  let tipStyle = $state("left:0px; top:0px; visibility:hidden;");
+
+  function unitLabel(unitId: string): string | null {
+    const u = st.units.find((x) => x.id === unitId);
+    if (u?.label) return u.label;
+    if (st.standup?.id === unitId) return st.standup.label ?? "Standup";
+    return null;
+  }
+
   onMount(() => {
     return () => tape?.destroy();
   });
@@ -47,17 +64,54 @@
   // the bound element shows up, mirroring IntroCards.svelte's tape effect.
   $effect(() => {
     if (canvas && !tape) {
-      tape = new TapeRenderer(canvas);
+      tape = new TapeRenderer(canvas, {
+        domTooltip: true,
+        onHover: (h) => (hoverTip = h),
+        labelFor: (row) => unitLabel(row.unitId),
+      });
     }
   });
 
+  // Reposition the DOM tooltip once its content is rendered and its real
+  // size is known, clamping so it never spills past the panel/viewport
+  // (flips to the left of the bar, or clamps top/left, as needed).
+  $effect(() => {
+    const h = hoverTip;
+    if (!h || !tapeHolder) {
+      tipStyle = "left:0px; top:0px; visibility:hidden;";
+      return;
+    }
+    tick().then(() => {
+      if (!tipEl || !tapeHolder || hoverTip !== h) return;
+      const holderRect = tapeHolder.getBoundingClientRect();
+      const tw = tipEl.offsetWidth;
+      const th = tipEl.offsetHeight;
+      let left = h.x + h.w + 8;
+      if (holderRect.left + left + tw > window.innerWidth - 4) {
+        left = Math.max(0, h.x - tw - 8);
+      }
+      let top = h.y;
+      if (holderRect.top + top + th > window.innerHeight - 4) {
+        top = Math.max(0, holderRect.height - th);
+      }
+      left = Math.min(Math.max(0, left), Math.max(0, holderRect.width - tw));
+      tipStyle = `left:${left}px; top:${top}px; visibility:visible;`;
+    });
+  });
+
   const tasksLeft = $derived(st.units.filter((u) => u.status === "queued").length);
+  const nextTaskLabel = $derived(st.units.find((u) => u.status === "queued")?.label ?? null);
   const standupDone = $derived(st.standup?.status === "done");
   const doneCount = $derived(st.units.filter((u) => u.status === "done").length + (standupDone ? 1 : 0));
   const spent = $derived(totalSpent(st));
   const mainEntry = $derived(st.cache.entries["main"]);
   const ttlLeft = $derived(mainEntry ? mainEntry.lastTouchMin + 60 - st.clockMin : null);
   const running = $derived(phase === "play" && !st.ended && !sweeping);
+  // Fix #2: each completed request is its own persistent row that
+  // accumulates down the panel as the session progresses, instead of
+  // replaying only st.lastRequests (the most recent action), which is why
+  // the wire previously showed just one request at a time.
+  const wireRows = $derived(st.ledger.filter((r) => r.agent === "main") as LedgerRow[]);
 
   function pushToast(id: string, text: string) {
     if (shown.has(id)) return;
@@ -66,7 +120,7 @@
   }
 
   function afterAction() {
-    tape?.play(st.lastRequests);
+    tape?.play(wireRows);
     sweeping = true;
     setTimeout(() => (sweeping = false), 700);
 
@@ -159,18 +213,45 @@
     <h2>Bob's morning</h2>
     <ChoiceBar
       {tasksLeft}
+      {nextTaskLabel}
       {standupDone}
       disabled={!!st.ended}
       ontask={runTask}
       oncoffee={coffee}
       onstandup={standup}
     />
+    <ol class="tasklist">
+      {#each st.units as u (u.id)}
+        <li class="tasklist-item {u.status}">
+          <span class="tasklist-dot"></span>
+          {u.label}
+          {#if u.status === "done"}<span class="tag">done</span>{/if}
+        </li>
+      {/each}
+      <li class="tasklist-item {st.standup?.status ?? 'queued'}">
+        <span class="tasklist-dot"></span>
+        <!-- lowercase "standup" here (vs. the button's "Standup") so this
+             list item doesn't collide with tests that click the /Standup/
+             button by matched text. -->
+        the 90-min standup
+        {#if standupDone}<span class="tag">done</span>{/if}
+      </li>
+    </ol>
     <div class="msg">{msg}</div>
   </div>
 
   <div class="card">
     <h2>Requests on the wire</h2>
-    <div class="tape-holder"><canvas bind:this={canvas}></canvas></div>
+    <div class="tape-holder" bind:this={tapeHolder}>
+      <canvas bind:this={canvas}></canvas>
+      {#if hoverTip}
+        <div class="tape-tooltip" bind:this={tipEl} style={tipStyle}>
+          {#each hoverTip.lines as l}
+            <div class="tape-tooltip-line">{l}</div>
+          {/each}
+        </div>
+      {/if}
+    </div>
     <div class="legend">
       <span><i class="sw read"></i> cache read (0.1x, cheap)</span>
       <span><i class="sw write"></i> written / rewrite (expensive)</span>
@@ -188,4 +269,24 @@
 <style>
   .goalbar { font-size: 13.5px; }
   .progress { color: var(--ink-soft); font-weight: 500; }
+  .tasklist { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .tasklist-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); }
+  .tasklist-item.done { color: var(--ink); }
+  .tasklist-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--grey-soft); flex: none; }
+  .tasklist-item.done .tasklist-dot { background: var(--read, #46a); }
+  .tag { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-soft); }
+  .tape-tooltip {
+    position: absolute;
+    z-index: 30;
+    max-width: min(360px, 90vw);
+    background: var(--panel-2, #111);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font: 10px ui-monospace, monospace;
+    color: var(--ink);
+    box-shadow: var(--shadow);
+    pointer-events: none;
+  }
+  .tape-tooltip-line + .tape-tooltip-line { margin-top: 2px; }
 </style>

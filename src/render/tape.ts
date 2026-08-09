@@ -61,6 +61,31 @@ interface Anim {
   dur: number;
 }
 
+// Hover payload handed to a host's onHover callback: the tooltip text lines
+// plus the hovered bar's box in canvas-local CSS px, so the host can position
+// its own DOM-overlay tooltip (clamped to viewport/panel bounds) instead of
+// relying on the in-canvas tooltip, which can only clamp to canvas bounds and
+// gets clipped when the canvas sits inside a narrower/scrolled panel.
+export interface TapeHover {
+  lines: string[];
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface TapeRendererOpts {
+  // When true, suppress the in-canvas tooltip box (hover outline + TTL
+  // bracket are still drawn); the host is expected to render its own DOM
+  // tooltip from onHover.
+  domTooltip?: boolean;
+  onHover?: (h: TapeHover | null) => void;
+  // Row-label override keyed by LedgerRow.unitId (e.g. task names instead of
+  // the bare "main" agent tag), for hosts that want each accumulated request
+  // labeled by the task that produced it.
+  labelFor?: (row: LedgerRow) => string | null | undefined;
+}
+
 export class TapeRenderer {
   private canvas: HTMLCanvasElement | null;
   private ctx: CanvasRenderingContext2D | null;
@@ -72,6 +97,12 @@ export class TapeRenderer {
   private rafId: number | null = null;
   private ro: ResizeObserver | null = null;
   private reduced = reducedMotion().reduced;
+  private domTooltip: boolean;
+  private onHoverCb: ((h: TapeHover | null) => void) | null;
+  private labelFor: ((row: LedgerRow) => string | null | undefined) | null;
+  // Row geometry from the most recent draw(), used both for the in-canvas
+  // tooltip and to report hover boxes to onHover.
+  private geom: { y: number; rowW: number }[] = [];
   // True once destroy() has run, or if the canvas/2D context was never
   // available in the first place - a stale/detached ref from a component
   // that unmounted before its onMount effect fired, a canvas with no 2D
@@ -88,7 +119,10 @@ export class TapeRenderer {
   private onMouseMove = (e: MouseEvent) => this.handleMove(e);
   private onMouseLeave = () => this.setHover(null);
 
-  constructor(canvas: HTMLCanvasElement | null | undefined) {
+  constructor(canvas: HTMLCanvasElement | null | undefined, opts?: TapeRendererOpts) {
+    this.domTooltip = opts?.domTooltip ?? false;
+    this.onHoverCb = opts?.onHover ?? null;
+    this.labelFor = opts?.labelFor ?? null;
     this.canvas = canvas ?? null;
     this.ctx = this.canvas ? this.canvas.getContext("2d") : null;
     if (!this.canvas || !this.ctx) {
@@ -123,6 +157,18 @@ export class TapeRenderer {
     if (this.hoverIndex === idx) return;
     this.hoverIndex = idx;
     this.draw();
+    if (!this.onHoverCb) return;
+    if (idx === null) {
+      this.onHoverCb(null);
+      return;
+    }
+    const row = this.rows[idx];
+    const g = this.geom[idx];
+    if (!row || !g) {
+      this.onHoverCb(null);
+      return;
+    }
+    this.onHoverCb({ lines: this.tooltipLines(row), x: GUTTER, y: g.y, w: Math.max(0, g.rowW), h: ROW_H });
   }
 
   // Row + tooltip text currently hovered, for hosts that render their own
@@ -251,11 +297,12 @@ export class TapeRenderer {
       const q = this.rows[r];
       const y = PAD_T + r * (ROW_H + ROW_GAP);
       const reveal = Math.max(0, Math.min(1, this.reveal - r));
+      const label = this.labelFor?.(q) || (q.agent === "main" ? "main" : q.agent);
       ctx.fillStyle = C.inkSoft;
       ctx.font = "600 9.5px -apple-system,system-ui,sans-serif";
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
-      ctx.fillText(q.agent === "main" ? "main" : q.agent, 0, y + ROW_H / 2);
+      ctx.fillText(label, 0, y + ROW_H / 2, GUTTER - 4);
       const totTok = q.readTok + q.inputTok + q.writeTok;
       const rowW = barMaxW * (totTok / mIn);
       geom[r] = { y, rowW };
@@ -292,6 +339,8 @@ export class TapeRenderer {
       }
     }
 
+    this.geom = geom;
+
     // Hover: price-calc breakdown, request time, and (for cache writes) the
     // TTL window drawn as a bracket under the bar - "hover shows price calc,
     // time, and cache duration on the timeline".
@@ -319,25 +368,28 @@ export class TapeRenderer {
           ctx.fillText(`cache alive ${ttl}m`, barX, by + 2);
         }
 
-        const lines = this.tooltipLines(q);
-        ctx.font = "10px ui-monospace,monospace";
-        const padX = 6;
-        const lineH = 13;
-        const boxW = Math.max(...lines.map((l) => ctx.measureText(l).width)) + padX * 2;
-        const boxH = lines.length * lineH + 8;
-        let bx = barX + 4;
-        let by = g.y + ROW_H + 16;
-        if (by + boxH > H) by = Math.max(0, g.y - boxH - 4);
-        if (bx + boxW > W) bx = Math.max(0, W - boxW);
-        ctx.fillStyle = cssVar("--panel-2") || "#111";
-        ctx.strokeStyle = C.ink;
-        ctx.lineWidth = 1;
-        ctx.fillRect(bx, by, boxW, boxH);
-        ctx.strokeRect(bx, by, boxW, boxH);
-        ctx.fillStyle = C.ink;
-        ctx.textAlign = "left";
-        ctx.textBaseline = "top";
-        lines.forEach((l, i) => ctx.fillText(l, bx + padX, by + 4 + i * lineH));
+        if (!this.domTooltip) {
+          const lines = this.tooltipLines(q);
+          ctx.font = "10px ui-monospace,monospace";
+          const padX = 6;
+          const lineH = 13;
+          const boxW = Math.max(...lines.map((l) => ctx.measureText(l).width)) + padX * 2;
+          const boxH = lines.length * lineH + 8;
+          let bx = barX + 4;
+          let by = g.y + ROW_H + 16;
+          if (by + boxH > H) by = Math.max(0, g.y - boxH - 4);
+          if (bx + boxW > W) bx = Math.max(0, W - boxW);
+          if (bx < 0) bx = 0;
+          ctx.fillStyle = cssVar("--panel-2") || "#111";
+          ctx.strokeStyle = C.ink;
+          ctx.lineWidth = 1;
+          ctx.fillRect(bx, by, boxW, boxH);
+          ctx.strokeRect(bx, by, boxW, boxH);
+          ctx.fillStyle = C.ink;
+          ctx.textAlign = "left";
+          ctx.textBaseline = "top";
+          lines.forEach((l, i) => ctx.fillText(l, bx + padX, by + 4 + i * lineH));
+        }
       }
     }
   }

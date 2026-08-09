@@ -83,6 +83,17 @@ function unitDefs(): UnitDef[] {
 // L1-onboarding scenario (L1_REDESIGN.md Section 3/7): 4 fixed-order TASK
 // units on the growing main session. The standup is NOT in this queue - it
 // lives on GameState.standup because it is playable at any point (gap #3).
+// Real task identities per L1_REDESIGN.md Section 3's unit table ("fix the
+// login bug", "add the logout route", "write the tests", "update the docs")
+// - a display label only, read by the UI (ChoiceBar/tape row labels); the
+// engine numbers (hours/workIn/outTok/growthTok) are unchanged.
+export const L1_TASK_LABELS = [
+  "Fix the login bug",
+  "Add the logout route",
+  "Write the tests",
+  "Update the docs",
+];
+
 export function buildL1Tasks(): UnitInstance[] {
   const tasks: UnitInstance[] = [];
   for (let i = 0; i < 4; i++) {
@@ -97,6 +108,7 @@ export function buildL1Tasks(): UnitInstance[] {
       workIn: 2000,
       outTok: 3000,
       growthTok: 3000,
+      label: L1_TASK_LABELS[i],
     });
   }
   return tasks;
@@ -115,6 +127,7 @@ export function buildL1Standup(): UnitInstance {
     outTok: 0,
     free: true, // no request emitted - absence, not work (Section 3)
     anyOrder: true,
+    label: "Standup",
   };
 }
 

@@ -10,6 +10,7 @@ import {
   runL1Reference,
   runL1Anti,
   L1_CFG,
+  L1_TASK_LABELS,
 } from "./step.js";
 import { INLINE_GROWTH } from "../engine/constants.js";
 import type { Action, SaveFile } from "./types.js";
@@ -263,5 +264,54 @@ describe("st.lastRequests: the render model behind the requests-on-the-wire tape
       expect(row.usd.toFixed(4)).not.toBe("0.0000");
     }
     expect(totalSpent(st)).toBeCloseTo(0.416, 2);
+  });
+});
+
+// Fix #2/#3 regression coverage (L1PlayScreen's "requests on the wire" is
+// driven by st.ledger filtered to agent === "main", not st.lastRequests,
+// which only ever held the most recent action - the bug the player hit was
+// "only one request visible at a time"): each completed task must add
+// exactly one persistent ledger row, the main-agent row count must grow
+// 1, 2, 3, 4 as tasks run, and every row must be traceable back to a
+// player-facing task label (fix #3: real task names, not "Do next task").
+describe("wire model: ledger rows accumulate per task and carry task labels", () => {
+  it("running each of the 4 L1 tasks adds exactly one main-agent ledger row, growing 1,2,3,4", () => {
+    let st = initL1();
+    const counts: number[] = [];
+    for (const id of ["task0", "task1", "task2", "task3"]) {
+      st = step(st, { type: "RUN_UNIT", unitId: id });
+      counts.push(st.ledger.filter((r) => r.agent === "main").length);
+    }
+    expect(counts).toEqual([1, 2, 3, 4]);
+  });
+
+  it("the standup (free unit, no request) does not add a wire row - only real requests accumulate", () => {
+    const st = runL1Reference(); // ends with the standup last
+    const mainRows = st.ledger.filter((r) => r.agent === "main");
+    expect(mainRows.length).toBe(4); // 4 tasks, no 5th row for the free standup
+    expect(mainRows.some((r) => r.unitId === "standup")).toBe(false);
+  });
+
+  it("each accumulated row's unitId resolves to a real, distinct L1 task label (L1_REDESIGN Section 3), not a generic placeholder", () => {
+    const st = runL1Reference();
+    const mainRows = st.ledger.filter((r) => r.agent === "main");
+    const byUnitId = new Map(st.units.map((u) => [u.id, u.label]));
+    const labelsSeen = mainRows.map((r) => byUnitId.get(r.unitId));
+    expect(labelsSeen).toEqual(L1_TASK_LABELS);
+    // Every label is a real task name (from L1_REDESIGN.md), never null/undefined
+    // or the old generic "Do next task" placeholder text.
+    for (const l of labelsSeen) {
+      expect(l).toBeTruthy();
+      expect(l).not.toMatch(/do next task/i);
+    }
+  });
+
+  it("row order on the wire matches task run order, so the history reads left-to-right / top-to-bottom as it happened", () => {
+    let st = initL1();
+    for (const id of ["task0", "task1", "task2", "task3"]) {
+      st = step(st, { type: "RUN_UNIT", unitId: id });
+    }
+    const order = st.ledger.filter((r) => r.agent === "main").map((r) => r.unitId);
+    expect(order).toEqual(["task0", "task1", "task2", "task3"]);
   });
 });
