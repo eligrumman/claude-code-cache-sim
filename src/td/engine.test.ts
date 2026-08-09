@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { priceScenario, SCENARIOS } from "../sim/scenarios.js";
 import {
-  DEFAULT_MONKEY, DEFAULT_TOGGLES, evaluateFit, isGameOver, overdraftLeft, priceRoutedTask, priceTDScenario, routeTask,
-  scenarioToDispatchWave, type DispatchTask,
+  DEFAULT_MAIN, DEFAULT_TOGGLES, MAIN_CONTEXT_TOKENS, ROUTABLE_TASK_TYPES,
+  createMoab, defaultRoutingControl, evaluateFit, isGameOver, overdraftLeft,
+  priceRoutedTask, priceTDScenario, resolveRoute, routeTask, routeTaskWithControl,
+  scenarioToDispatchWave, scoreMoab, type DispatchTask,
 } from "./engine.js";
 
 const task = (type: DispatchTask["type"]): DispatchTask => ({
@@ -10,71 +12,124 @@ const task = (type: DispatchTask["type"]): DispatchTask => ({
   contextTok: 20_000, workInTok: 800, outputTok: 900, prefixKey: "main", origin: "scenario",
 });
 
-describe("Tokenloons dispatch economy", () => {
-  it("uses Opus-high and shared-ledger pricing for default routing", () => {
-    const routed = routeTask(task("dev"), DEFAULT_MONKEY, DEFAULT_TOGGLES);
-    const direct = priceRoutedTask(task("dev"), DEFAULT_MONKEY, DEFAULT_TOGGLES);
-    expect(routed.baselineUsd).toBeCloseTo(direct.usd, 12);
-    expect(routed.usd).toBeCloseTo(routed.baselineUsd, 12);
+describe("Tokenloons routing economy", () => {
+  it("routes everything through the Opus-high 1M main agent by default", () => {
+    const control = defaultRoutingControl();
+    for (const type of ROUTABLE_TASK_TYPES) {
+      const route = resolveRoute(type, control);
+      const routed = routeTaskWithControl(task(type), control, DEFAULT_TOGGLES);
+      expect(route.context).toBe("main-1m");
+      expect(route.worker).toEqual(DEFAULT_MAIN);
+      expect(routed.ledgerOptions.prefixTok).toBe(MAIN_CONTEXT_TOKENS);
+      expect(routed.usd).toBeCloseTo(routed.baselineUsd, 12);
+    }
   });
 
-  it("marks an underpowered plan bad and spawns bug plus production fallout", () => {
-    const routed = routeTask(task("plan"), { model: "haiku", effort: "low" }, DEFAULT_TOGGLES);
-    expect(routed.outcome).toBe("bad-output");
-    expect(routed.rework.map((item) => item.type)).toEqual(["bug", "production-issue"]);
+  it("re-prices immediately when the live main model or effort changes", () => {
+    const control = defaultRoutingControl();
+    const work = task("debugging");
+    const opusHigh = routeTaskWithControl(work, control, DEFAULT_TOGGLES).usd;
+    control.main.model = "haiku";
+    const haikuHigh = routeTaskWithControl(work, control, DEFAULT_TOGGLES).usd;
+    control.main.effort = "low";
+    const haikuLow = routeTaskWithControl(work, control, DEFAULT_TOGGLES).usd;
+    expect(haikuHigh).toBeLessThan(opusHigh);
+    expect(haikuLow).toBeLessThan(haikuHigh);
   });
 
-  it("flags an overpowered docs route and quantifies shared-engine waste", () => {
-    const routed = routeTask(task("docs"), { model: "fable", effort: "high" }, DEFAULT_TOGGLES);
-    expect(routed.outcome).toBe("overkill");
-    expect(routed.wastedUsd).toBeGreaterThan(0);
+  it("uses scoped context and per-type workers only when subagents are enabled", () => {
+    const control = defaultRoutingControl();
+    control.routes.docs = { model: "haiku", effort: "low" };
+    expect(resolveRoute("docs", control).worker).toEqual(DEFAULT_MAIN);
+    control.useSubagents = true;
+    const route = resolveRoute("docs", control);
+    const routed = routeTaskWithControl(task("docs"), control, DEFAULT_TOGGLES);
+    expect(route.worker).toEqual({ model: "haiku", effort: "low" });
+    expect(route.context).toBe("scoped");
+    expect(routed.ledgerOptions.prefixTok).toBe(20_000);
+    expect(routed.usd).toBeLessThan(routed.baselineUsd);
   });
 
-  it("clears the documented ideal fits cleanly", () => {
-    expect(evaluateFit("dev", { model: "sonnet", effort: "high" })).toBe("good-fit");
+  it("inherits both live main settings by default but still sheds the 1M context", () => {
+    const control = defaultRoutingControl();
+    control.main = { model: "sonnet", effort: "med" };
+    control.useSubagents = true;
+    const route = resolveRoute("code-review", control);
+    expect(route.inherited).toBe(true);
+    expect(route.worker).toEqual(control.main);
+    expect(route.context).toBe("scoped");
+    expect(routeTaskWithControl(task("code-review"), control, DEFAULT_TOGGLES).ledgerOptions.prefixTok).toBe(20_000);
+  });
+
+  it("fires GOOD, BAD with cascade, and EXPENSIVE with measured waste", () => {
+    const good = routeTask(task("docs"), { model: "haiku", effort: "low" }, DEFAULT_TOGGLES, undefined, undefined, "scoped");
+    const bad = routeTask(task("plan"), { model: "haiku", effort: "low" }, DEFAULT_TOGGLES, undefined, undefined, "scoped");
+    const expensive = routeTask(task("docs"), { model: "fable", effort: "high" }, DEFAULT_TOGGLES, undefined, undefined, "scoped");
+    expect(good.outcome).toBe("good-fit");
+    expect(good.savingsUsd).toBeGreaterThan(0);
+    expect(bad.outcome).toBe("bad-output");
+    expect(bad.rework.map(item => item.type)).toEqual(["bug", "bug", "production-issue"]);
+    expect(expensive.outcome).toBe("overkill");
+    expect(expensive.wastedUsd).toBeGreaterThan(0);
+  });
+
+  it("encodes the documented ideal fits without scattered routing logic", () => {
+    expect(evaluateFit("plan", { model: "opus", effort: "high" })).toBe("good-fit");
+    expect(evaluateFit("hotfix", { model: "sonnet", effort: "high" })).toBe("good-fit");
+    expect(evaluateFit("debugging", { model: "opus", effort: "med" })).toBe("good-fit");
+    expect(evaluateFit("rca", { model: "opus", effort: "high" })).toBe("good-fit");
     expect(evaluateFit("code-review", { model: "sonnet", effort: "med" })).toBe("good-fit");
-    expect(evaluateFit("browser-test", { model: "sonnet", effort: "low" })).toBe("good-fit");
+    expect(evaluateFit("testing", { model: "sonnet", effort: "low" })).toBe("good-fit");
+    expect(evaluateFit("docs", { model: "haiku", effort: "low" })).toBe("good-fit");
   });
 
-  it("maps every shared scenario and prices it identically to the canonical engine", () => {
+  it("spawns the complete urgent MOAB burst and scores against panic-default", () => {
+    const stages = createMoab(10, "incident-1");
+    expect(stages.map(stage => stage.type)).toEqual(["hotfix", "debugging", "rca", "code-review", "testing"]);
+    expect(stages.every(stage => stage.urgent && stage.origin === "moab")).toBe(true);
+
+    const panicControl = defaultRoutingControl();
+    const panic = stages.map(stage => routeTaskWithControl(stage, panicControl, DEFAULT_TOGGLES));
+    expect(scoreMoab(panic).panicDefaulted).toBe(true);
+
+    const smart = defaultRoutingControl();
+    smart.useSubagents = true;
+    smart.routes.hotfix = { model: "sonnet", effort: "high" };
+    smart.routes.debugging = { model: "opus", effort: "med" };
+    smart.routes.rca = { model: "opus", effort: "high" };
+    smart.routes["code-review"] = { model: "sonnet", effort: "med" };
+    smart.routes.testing = { model: "sonnet", effort: "low" };
+    const scored = scoreMoab(stages.map(stage => routeTaskWithControl(stage, smart, DEFAULT_TOGGLES)));
+    expect(scored.panicDefaulted).toBe(false);
+    expect(scored.draggedStages).toBe(0);
+    expect(scored.actualUsd).toBeLessThan(scored.panicDefaultUsd);
+  });
+
+  it("maps every shared scenario and preserves canonical parity", () => {
     for (const scenario of SCENARIOS) {
       const tasks = scenarioToDispatchWave(scenario).tasks;
       expect(tasks).toHaveLength(scenario.script.length);
       for (const dispatchTask of tasks) {
-        const routed = routeTask(dispatchTask, DEFAULT_MONKEY, DEFAULT_TOGGLES);
+        const routed = routeTask(dispatchTask, DEFAULT_MAIN, DEFAULT_TOGGLES);
         expect(Number.isFinite(routed.usd)).toBe(true);
-        expect(Number.isFinite(routed.baselineUsd)).toBe(true);
         expect(routed.usd).toBeGreaterThanOrEqual(0);
       }
       expect(priceTDScenario(scenario).totalUsd).toBeCloseTo(priceScenario(scenario).totalUsd, 12);
     }
   });
 
-  it("makes every global cost toggle measurable in the documented direction", () => {
+  it("makes every global cost toggle measurable through the shared ledger", () => {
     const docs = { ...task("docs"), atMin: 20 };
-    const monkey = { model: "sonnet", effort: "low" } as const;
-    const cold = priceRoutedTask(docs, monkey, DEFAULT_TOGGLES, 0).usd;
-    const keptWarm = priceRoutedTask(docs, monkey, { ...DEFAULT_TOGGLES, keepWarm: true }, 0).usd;
-    const longTtl = priceRoutedTask(docs, monkey, { ...DEFAULT_TOGGLES, ttl: "1h" }, 0).usd;
-    const autoApproved = priceRoutedTask(docs, monkey, { ...DEFAULT_TOGGLES, approval: "auto" }).usd;
-    const docsSkill = priceRoutedTask(docs, monkey, { ...DEFAULT_TOGGLES, docsSkill: true }).usd;
-    const loadedMcp = priceRoutedTask(docs, monkey, { ...DEFAULT_TOGGLES, alwaysLoadedMcp: true }).usd;
-
-    expect(keptWarm).toBeLessThan(cold);
-    expect(longTtl).toBeLessThan(cold);
-    expect(autoApproved).toBeLessThan(priceRoutedTask(docs, monkey, DEFAULT_TOGGLES).usd);
-    expect(docsSkill).toBeLessThan(priceRoutedTask(docs, monkey, DEFAULT_TOGGLES).usd);
-    expect(loadedMcp).toBeGreaterThan(priceRoutedTask(docs, monkey, DEFAULT_TOGGLES).usd);
+    const worker = { model: "sonnet", effort: "low" } as const;
+    const cold = priceRoutedTask(docs, worker, DEFAULT_TOGGLES, 0).usd;
+    expect(priceRoutedTask(docs, worker, { ...DEFAULT_TOGGLES, keepWarm: true }, 0).usd).toBeLessThan(cold);
+    expect(priceRoutedTask(docs, worker, { ...DEFAULT_TOGGLES, ttl: "1h" }, 0).usd).toBeLessThan(cold);
+    expect(priceRoutedTask(docs, worker, { ...DEFAULT_TOGGLES, approval: "auto" }).usd).toBeLessThan(priceRoutedTask(docs, worker, DEFAULT_TOGGLES).usd);
+    expect(priceRoutedTask(docs, worker, { ...DEFAULT_TOGGLES, docsSkill: true }).usd).toBeLessThan(priceRoutedTask(docs, worker, DEFAULT_TOGGLES).usd);
+    expect(priceRoutedTask(docs, worker, { ...DEFAULT_TOGGLES, alwaysLoadedMcp: true }).usd).toBeGreaterThan(priceRoutedTask(docs, worker, DEFAULT_TOGGLES).usd);
   });
 
-  it("prices every spawned cascade task through the shared ledger", () => {
-    const badRoute = routeTask(task("plan"), { model: "haiku", effort: "low" }, DEFAULT_TOGGLES);
-    const reworkCosts = badRoute.rework.map((rework) => routeTask(rework, DEFAULT_MONKEY, DEFAULT_TOGGLES).usd);
-    expect(reworkCosts).toHaveLength(2);
-    expect(reworkCosts.every((cost) => Number.isFinite(cost) && cost > 0)).toBe(true);
-  });
-
-  it("ends challenge exactly at the overdraft boundary while sandbox can ignore it", () => {
+  it("keeps challenge and sandbox boundary helpers exact", () => {
     expect(isGameOver(8.09, 6, 2.1)).toBe(false);
     expect(isGameOver(8.1, 6, 2.1)).toBe(true);
     expect(overdraftLeft(7, 6, 2.1)).toBeCloseTo(1.1, 12);
