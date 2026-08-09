@@ -74,7 +74,7 @@
     },
     {
       id: "keep-warm", eyebrow: "2 · KEEP-WARM", title: "Pay a little before expiry.",
-      copy: "A small timed read can keep a useful prefix alive across a medium pause. Long idle periods can make the pings a bad trade.",
+      copy: "A small timed read can keep a useful prefix alive across a medium pause.",
       deep: [
         `Keep-warm sends a small request before expiry so the cached prefix is read and its lifetime is refreshed. The request is not free: this simulator bills the full cached prefix at the ${RATE.read}× cache-read rate. For the 260,000-token Sonnet prefix below, each warm read is ${money(sonnetPrefixRead)}; rebuilding it with a one-hour write is ${money(sonnetPrefixRebuild)}.`,
         `The decision is a break-even question, not a ritual. Add up the pings needed to bridge the pause and compare them with the rebuild they avoid. Use keep-warm for a known medium wait, then stop it when the session is truly idle; endless reads can eventually cost more than letting the prefix go cold once.`,
@@ -84,7 +84,7 @@
     },
     {
       id: "same-prompt", eyebrow: "3 · SAME PROMPT", title: "Give helpers one shared prefix.",
-      copy: "Identical helper instructions can reuse a cached prefix. Unique wording creates a new cache identity and another cold write.",
+      copy: "Identical helper instructions can reuse a cached prefix.",
       deep: [
         `Prompt caches match a prefix, not the intent behind it. The first helper below writes the shared instructions at ${RATE.w1h}×; each later helper with the same prefix reads those tokens at ${RATE.read}×. Change wording, tool order, or stable context and the simulator gives it a new identity, so the prefix is written cold again.`,
         `That is a ${RATE.w1h / RATE.read}× cold-versus-warm gap before fresh task input and output are added. Keep the reusable subagent brief byte-for-byte stable, then append the file name, question, or test target after it. The helpers still get distinct work without making the expensive front half distinct too.`,
@@ -94,7 +94,7 @@
     },
     {
       id: "large-context", eyebrow: "4 · LARGE CONTEXT", title: "Reuse the big prefix—or pay again.",
-      copy: "A large context magnifies both the first cold write and every saving after it. Prefix identity matters more as context grows.",
+      copy: "A large context magnifies both the first cold write and every saving after it.",
       deep: [
         `Context is input on every request; caching only changes which input bucket receives it. Sonnet's base input price is ${money(MODEL_IN.sonnet)} per million tokens, so the 260,000-token prefix below costs ${money(sonnetPrefixRebuild)} as a one-hour cold write and ${money(sonnetPrefixRead)} as a warm read. A larger prefix makes both numbers larger in direct proportion.`,
         `Put stable system instructions, tool definitions, and repository context first, then append the changing task. That layout preserves a reusable prefix across turns. Cache eligibility thresholds are provider and model rules; because this pricing source declares no numeric minimum, the article does not fabricate one.`,
@@ -104,7 +104,7 @@
     },
     {
       id: "auto-approve", eyebrow: "5 · AUTO-APPROVE", title: "Fewer round-trips, fewer expiry chances.",
-      copy: "Fast approvals keep related messages close together. Manual pauses can push the next message beyond its cache TTL.",
+      copy: "Fast approvals keep related messages close together.",
       deep: [
         `Auto-approve has no special discount. It changes the timeline: fewer approval turns and shorter pauses make the next real request more likely to arrive before the TTL. The ledger treats a gap shorter than the TTL as warm; a request at or beyond expiry writes the prefix again at ${RATE.w5m}× or ${RATE.w1h}× instead of reading it at ${RATE.read}×.`,
         `Approve only commands the workflow already trusts, such as a focused test or a read-only inspection. Keep destructive or surprising operations gated. The saving comes from removing safe, repetitive friction—not from weakening the boundary around risky actions.`,
@@ -117,7 +117,7 @@
   const macroSections = [
     {
       id: "route", eyebrow: "1 · MODEL + EFFORT", title: "Match the brain to the job.",
-      copy: "Planning and RCA need judgment; hotfixes, tests, and docs often need less. Haiku on a hard plan can underthink it. Fable on docs is overkill.",
+      copy: "Planning and RCA need judgment; hotfixes, tests, and docs often need less.",
       deep: [
         `Model choice changes the base price of every token: Haiku is ${money(MODEL_IN.haiku)}, Sonnet ${money(MODEL_IN.sonnet)}, Opus ${money(MODEL_IN.opus)}, and Fable ${money(MODEL_IN.fable)} per million input tokens before bucket multipliers. Effort changes how much reasoning input and output the teaching workload consumes; output is billed at ${RATE.out}×, so asking a premium model to think harder compounds both choices.`,
         `Route for the consequence of being wrong. A plan, difficult debug, or RCA deserves more judgment; a small hotfix, routine tests, or docs usually does not. The picker labels an underpowered choice “bad,” an oversized one “expensive,” and the intended pairing “good,” while every displayed dollar amount still runs through the simulator's token buckets.`,
@@ -133,25 +133,25 @@
     },
     {
       id: "delegate", eyebrow: "3 · DELEGATE", title: "Give subagents smaller backpacks.",
-      copy: "A scoped helper sees only the brief and files it needs. One endless main session repeatedly carries accumulated history.",
+      copy: "A scoped helper sees only the brief and files it needs.",
       deep: [
-        `Delegation creates a new context boundary. The helper pays a cold write for its scoped prefix, then gets cheap warm reads if later turns reuse that exact prefix. The alternative is not free: one long main session repeatedly reads its much larger accumulated history, even when the next job needs only a narrow slice.`,
+        `Delegation creates a new context boundary. The helper pays ${RATE.w1h}× the chosen model's input rate for a one-hour cold write of its scoped prefix, then only ${RATE.read}× for later reads that reuse that exact prefix. The alternative is not free: one long main session repeatedly reads its much larger accumulated history, even when the next job needs only a narrow slice.`,
         `Delegate work that can return a compact result—independent searches, reviews, focused tests, and docs. Keep cross-cutting decisions and final synthesis in the main agent. A stable shared helper prompt also lets parallel jobs reuse the front of their briefs instead of turning every helper into another cold cache identity.`,
       ],
     },
     {
       id: "compact", eyebrow: "4 · AUTO-COMPACT", title: "Compress history before it owns you.",
-      copy: "Compaction trades some detail for a smaller reusable prefix. Disable it only when exact old context matters more than repeated input cost.",
+      copy: "Compaction trades some detail for a smaller reusable prefix.",
       deep: [
-        `Auto-compact replaces older conversation detail with a shorter summary. It does not change the rates: the new summary is a new prefix, so its first use is a cold write and later identical uses are warm reads. The saving comes from putting fewer tokens into those buckets on every subsequent message.`,
+        `Auto-compact replaces older conversation detail with a shorter summary. It does not change the rates: the new summary is a new prefix, so its first one-hour use is a ${RATE.w1h}× cold write and later identical uses are ${RATE.read}× warm reads. The saving comes from putting fewer tokens into those buckets on every subsequent message.`,
         `Compact before accumulated history becomes the dominant input. Preserve exact logs, quotations, or code outside the chat when later work truly needs them verbatim; otherwise a concise record of decisions and open questions is usually the better repeated prefix.`,
       ],
     },
     {
       id: "lazy", eyebrow: "5 · LAZY-LOAD", title: "Load skills and MCPs when called.",
-      copy: "Unused tool descriptions are still context. Keep the starting prefix lean and add capabilities only for tasks that need them.",
+      copy: "Unused tool descriptions are still context.",
       deep: [
-        `Skill instructions and MCP tool schemas are input tokens even when the current task never calls them. Loading every capability up front enlarges the prefix, which enlarges its cold write and every warm read. Lazy loading keeps unrelated turns from paying for descriptions they cannot use.`,
+        `Skill instructions and MCP tool schemas are input tokens even when the current task never calls them. Loading every capability up front enlarges the prefix, which enlarges a one-hour cold write billed at ${RATE.w1h}× and every warm read billed at ${RATE.read}× the model's input rate. Lazy loading keeps unrelated turns from paying for descriptions they cannot use.`,
         `Load a capability when the task actually crosses that boundary. Once loaded, keep its stable definition in the reusable front of the prompt and put changing arguments later. This combines a lean starting context with the same-prefix cache benefit on repeated tool work.`,
       ],
     },
@@ -181,6 +181,14 @@
   <nav><button onclick={onback}>← Back to map</button><span>CLAUDE CODE — EXPLAINED</span></nav>
 
   <header>
+    <button
+      class:on={tldr}
+      class="reading-mode"
+      role="switch"
+      aria-checked={tldr}
+      aria-label="TL;DR"
+      onclick={toggleTldr}
+    ><span>TL;DR</span><i></i></button>
     <span class="doodle" aria-hidden="true">$</span>
     <p>AN INTERACTIVE FIELD GUIDE</p>
     <h1>Claude Code<br/><em>— Explained</em></h1>
@@ -190,14 +198,6 @@
       <button class:active={article === "macro"} aria-pressed={article === "macro"} onclick={() => show("macro")}>Macro</button>
     </div>
   </header>
-
-  <div class="reading-mode" data-testid="reading-mode">
-    <div><strong>TL;DR</strong><span>{tldr ? "Short summaries" : "Full article"}</span></div>
-    <button class:on={tldr} role="switch" aria-checked={tldr} aria-label={`TL;DR ${tldr ? "ON" : "OFF"}`} onclick={toggleTldr}>
-      <i></i><b>{tldr ? "ON" : "OFF"}</b>
-    </button>
-    <p>{tldr ? "Skim the one-liners. Open any > when curiosity wins." : "Every explanation is open. You can still close any section."}</p>
-  </div>
 
   {#if article === "micro"}
     <div class="article-intro">
@@ -212,13 +212,10 @@
         <div class="section-copy">
           <small>{section.eyebrow}</small>
           <h2>{section.title}</h2>
-          <p>{section.copy}</p>
+          <p class="section-prose">{section.copy}{#if expanded[`micro-${section.id}`]}<span data-testid="deep-dive"> {section.deep.join(" ")}</span>{/if}</p>
           <button class="expand" aria-expanded={Boolean(expanded[`micro-${section.id}`])} onclick={() => toggle(`micro-${section.id}`)}>
             <b>&gt;</b> {expanded[`micro-${section.id}`] ? "Close detail" : "Deep dive"}
           </button>
-          {#if expanded[`micro-${section.id}`]}
-            <div class="deep" data-testid="deep-dive">{#each section.deep as paragraph}<p>{paragraph}</p>{/each}</div>
-          {/if}
         </div>
         <LeverWidget
           script={section.script} offScript={section.offScript} onScript={section.onScript}
@@ -248,13 +245,10 @@
         <div class="section-copy">
           <small>{section.eyebrow}</small>
           <h2>{section.title}</h2>
-          <p>{section.copy}</p>
+          <p class="section-prose">{section.copy}{#if expanded[`macro-${section.id}`]}<span data-testid="deep-dive"> {section.deep.join(" ")}</span>{/if}</p>
           <button class="expand" aria-expanded={Boolean(expanded[`macro-${section.id}`])} onclick={() => toggle(`macro-${section.id}`)}>
             <b>&gt;</b> {expanded[`macro-${section.id}`] ? "Close detail" : "Deep dive"}
           </button>
-          {#if expanded[`macro-${section.id}`]}
-            <div class="deep" data-testid="deep-dive">{#each section.deep as paragraph}<p>{paragraph}</p>{/each}</div>
-          {/if}
         </div>
         {#if section.id === "main-context"}<ContextCostWidget />{/if}
       </section>
@@ -273,12 +267,12 @@
   button{font:inherit;color:inherit}nav{display:flex;justify-content:space-between;align-items:center;padding:18px 0;border-bottom:2px solid #20201d;font-size:.72rem;font-weight:900;letter-spacing:.12em}nav button{border:0;background:none;cursor:pointer;letter-spacing:0}
   header{min-height:510px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;position:relative}header>p,.section-copy>small,.article-intro>small,.cta small{font-weight:950;letter-spacing:.13em;font-size:.72rem}h1{font-size:clamp(3rem,9vw,6.3rem);line-height:.86;letter-spacing:-.065em;margin:16px 0 26px}h1 em{font-style:normal;text-decoration:underline wavy #f2c94c 5px;text-underline-offset:8px}header>div:not(.article-switch){max-width:560px;font-size:1.12rem;line-height:1.5}.doodle{position:absolute;right:10%;top:15%;width:55px;height:55px;border:3px solid #20201d;border-radius:50% 45% 52% 46%;display:grid;place-items:center;font:900 2rem serif;transform:rotate(12deg);background:#9ce5bd;box-shadow:5px 5px 0 #20201d}
   .article-switch{display:grid;grid-template-columns:1fr 1fr;margin-top:32px;border:2px solid #20201d;border-radius:999px;background:#f1efe9;padding:4px;box-shadow:4px 4px 0 #20201d}.article-switch button{min-width:110px;border:0;border-radius:999px;background:transparent;padding:10px 20px;font-weight:950;cursor:pointer}.article-switch button.active{background:#20201d;color:#fff}
-  .reading-mode{position:sticky;top:10px;z-index:5;display:grid;grid-template-columns:auto auto 1fr;align-items:center;gap:14px;width:min(650px,calc(100% - 16px));margin:-32px auto 58px;padding:12px 14px;border:3px solid #20201d;border-radius:15px;background:#fff;box-shadow:6px 6px 0 #f2c94c}.reading-mode>div{display:grid}.reading-mode>div strong{font-size:1rem;letter-spacing:.08em}.reading-mode>div span{font-size:.66rem;font-weight:750;color:#716c62}.reading-mode>button{display:flex;align-items:center;gap:7px;min-width:84px;padding:4px;border:2px solid #20201d;border-radius:99px;background:#62d39a;cursor:pointer}.reading-mode>button:not(.on){background:#8ec5ef}.reading-mode button i{width:20px;height:20px;border:1px solid #20201d;border-radius:50%;background:#fff;transition:transform .2s}.reading-mode button:not(.on) i{transform:translateX(51px)}.reading-mode button b{font-size:.7rem;margin-right:6px}.reading-mode button:not(.on) b{order:-1;margin:0 0 0 7px}.reading-mode p{margin:0;font:.76rem/1.3 system-ui;color:#565149}
+  .reading-mode{position:absolute;top:18px;right:0;z-index:5;display:flex;align-items:center;gap:7px;padding:5px 6px 5px 9px;border:2px solid #20201d;border-radius:999px;background:#fff;font-size:.72rem;font-weight:950;letter-spacing:.06em;cursor:pointer;box-shadow:3px 3px 0 #f2c94c}.reading-mode i{display:block;width:25px;height:15px;border:1.5px solid #20201d;border-radius:999px;background:#8ec5ef;position:relative}.reading-mode i::after{content:"";position:absolute;top:2px;left:2px;width:9px;height:9px;border:1px solid #20201d;border-radius:50%;background:#fff;transition:transform .18s}.reading-mode.on i{background:#62d39a}.reading-mode.on i::after{transform:translateX(10px)}
   .article-intro{max-width:720px;margin:35px auto 70px;text-align:center}.article-intro small{color:#a85e13}.article-intro h2{font-size:clamp(2.3rem,6vw,4.6rem);line-height:.95;letter-spacing:-.05em;margin:12px 0 18px}.article-intro p{font-size:1.08rem;line-height:1.5;margin:0 auto;max-width:590px}
   .article-intro .micro-hook{font-size:1rem;letter-spacing:0;margin:12px 0 24px;color:#716c62;font-weight:750}
-  section.lesson{margin:80px 0 125px}.section-copy{max-width:680px;margin:0 0 24px 18px}.section-copy>small{color:#a85e13}.section-copy h2,.cta h2{font-size:clamp(2rem,5vw,3.6rem);line-height:1;letter-spacing:-.045em;margin:8px 0 12px}.section-copy>p,.cta p{font-size:1.05rem;line-height:1.5;margin:0;max-width:650px}.expand{display:flex;align-items:center;gap:8px;margin-top:14px;padding:5px 0;border:0;border-bottom:2px solid #20201d;background:transparent;font-size:.82rem;font-weight:900;cursor:pointer}.expand b{font:950 1rem/1 ui-monospace,monospace;color:#a85e13;transition:transform .15s}.expand[aria-expanded="true"] b{transform:rotate(90deg)}.deep{margin-top:14px;padding:14px 16px;border-left:5px solid #f2c94c;background:#fff9db;font-family:system-ui,sans-serif;font-size:.88rem;line-height:1.55}.deep p{margin:0}.deep p+p{margin-top:10px;padding-top:10px;border-top:1px dashed #aaa398}
+  section.lesson{margin:80px 0 125px}.section-copy{max-width:680px;margin:0 0 24px 18px}.section-copy>small{color:#a85e13}.section-copy h2,.cta h2{font-size:clamp(2rem,5vw,3.6rem);line-height:1;letter-spacing:-.045em;margin:8px 0 12px}.section-copy>p,.cta p{font-size:1.05rem;line-height:1.5;margin:0;max-width:650px}.expand{display:flex;align-items:center;gap:8px;margin-top:14px;padding:5px 0;border:0;border-bottom:2px solid #20201d;background:transparent;font-size:.82rem;font-weight:900;cursor:pointer}.expand b{font:950 1rem/1 ui-monospace,monospace;color:#a85e13;transition:transform .15s}.expand[aria-expanded="true"] b{transform:rotate(90deg)}
   .macro-widget{margin:28px 0 70px}
   .macro-lesson{margin:65px 0!important;border-bottom:2px dashed #d4d0c6}.macro-lesson .section-copy{margin-bottom:48px}.crosslink{display:block;margin:40px auto 90px;border:0;background:none;color:#8c4a0a;font-weight:950;font-size:1rem;text-decoration:underline;text-underline-offset:4px;cursor:pointer}
   .cta{margin:70px 0 100px;border:3px solid #20201d;border-radius:25px 19px 28px 18px;padding:34px;display:flex;align-items:center;gap:30px;background:#fff6c7;box-shadow:10px 11px 0 #f2c94c}.cta div{flex:1}.cta>button{border:2px solid #20201d;border-radius:14px;background:#20201d;color:white;padding:16px 20px;font-weight:900;cursor:pointer;white-space:nowrap;box-shadow:5px 5px 0 #e57970;transition:transform .2s}.cta>button:hover{transform:translate(-2px,-2px)}.cta>button span{font-size:1.4rem;margin-left:8px}.macro-cta{background:#eaf5ff;box-shadow:10px 11px 0 #9dccee}
-  @media(max-width:650px){.article{width:min(100% - 18px,940px)}nav span{display:none}header{min-height:450px}header>div:not(.article-switch){font-size:.95rem}.doodle{right:2%;top:11%;width:40px;height:40px;font-size:1.4rem}.article-switch button{min-width:90px}.reading-mode{position:relative;top:auto;grid-template-columns:1fr auto;margin:-18px auto 45px}.reading-mode p{grid-column:1/-1}.article-intro{margin:20px auto 55px}section.lesson{margin:60px 0 90px}.section-copy{margin-left:6px}.section-copy>p{font-size:.94rem}.cta{padding:23px 18px;display:block}.cta>button{width:100%;margin-top:22px}}
+  @media(max-width:650px){.article{width:min(100% - 18px,940px)}nav span{display:none}header{min-height:450px}header>div:not(.article-switch){font-size:.95rem}.doodle{right:2%;top:15%;width:40px;height:40px;font-size:1.4rem}.article-switch button{min-width:90px}.reading-mode{top:12px;right:0}.article-intro{margin:20px auto 55px}section.lesson{margin:60px 0 90px}.section-copy{margin-left:6px}.section-copy>p{font-size:.94rem}.cta{padding:23px 18px;display:block}.cta>button{width:100%;margin-top:22px}}
 </style>

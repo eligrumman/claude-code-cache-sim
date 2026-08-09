@@ -49,7 +49,10 @@ describe("Micro and Macro articles", () => {
 
     await fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByTestId("deep-dive")).toHaveTextContent("20× the price");
+    const continuation = screen.getByTestId("deep-dive");
+    expect(continuation).toHaveTextContent("20× the price");
+    expect(continuation.closest("p")).toHaveTextContent("A longer cache costs more to write");
+    expect(continuation.closest(".deep")).toBeNull();
 
     await fireEvent.click(toggle);
     expect(screen.queryByTestId("deep-dive")).not.toBeInTheDocument();
@@ -59,8 +62,8 @@ describe("Micro and Macro articles", () => {
     renderArticle();
     expect(screen.queryAllByTestId("deep-dive")).toHaveLength(0);
 
-    await fireEvent.click(screen.getByRole("switch", { name: "TL;DR ON" }));
-    expect(screen.getByRole("switch", { name: "TL;DR OFF" })).toHaveAttribute("aria-checked", "false");
+    await fireEvent.click(screen.getByRole("switch", { name: "TL;DR" }));
+    expect(screen.getByRole("switch", { name: "TL;DR" })).toHaveAttribute("aria-checked", "false");
     expect(screen.getAllByTestId("deep-dive")).toHaveLength(5);
     expect(screen.getAllByRole("button", { name: /Close detail/ }).every((button) => button.getAttribute("aria-expanded") === "true")).toBe(true);
 
@@ -70,7 +73,7 @@ describe("Micro and Macro articles", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Macro" }));
     expect(screen.getAllByTestId("deep-dive")).toHaveLength(5);
 
-    await fireEvent.click(screen.getByRole("switch", { name: "TL;DR OFF" }));
+    await fireEvent.click(screen.getByRole("switch", { name: "TL;DR" }));
     expect(screen.queryAllByTestId("deep-dive")).toHaveLength(0);
   });
 
