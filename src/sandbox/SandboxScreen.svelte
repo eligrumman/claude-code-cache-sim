@@ -1,6 +1,7 @@
 <script lang="ts">
   import ConversationView from "./ConversationView.svelte";
   import MoneyCounter from "./MoneyCounter.svelte";
+  import ConfigHelp from "../components/ConfigHelp.svelte";
   import {
     PERSONAS, configForLever, simulateDay,
     type BucketId, type LeverId, type PersonaId, type SandboxConfig,
@@ -43,6 +44,10 @@
     subagents: "Subagent prompt", ttl: "Cache TTL", context: "Context size",
     approval: "Approval mode", keepWarm: "Keep-warm", autoCompact: "Auto-compact",
     lazyLoadTools: "Skills + MCP schemas", model: "Model",
+  };
+  const leverHelpIds: Record<LeverId, "same-prompt" | "ttl" | "large-context" | "auto-approve" | "keep-warm" | "compact" | "lazy" | "route"> = {
+    subagents: "same-prompt", ttl: "ttl", context: "large-context", approval: "auto-approve",
+    keepWarm: "keep-warm", autoCompact: "compact", lazyLoadTools: "lazy", model: "route",
   };
   const prompts = [
     ["Find the flaky test and explain the failure.", "I traced it to shared timer state and isolated the fixture."],
@@ -170,7 +175,7 @@
     <div class="lever-grid">
       {#each leverOrder as lever}
         <article>
-          <div class="lever-head"><span>{leverNames[lever]}</span><small class:positive={alternativeDelta(lever) > 0} class:negative={alternativeDelta(lever) < 0}>{moneyDelta(alternativeDelta(lever))}/day</small></div>
+          <div class="lever-head"><span>{leverNames[lever]} <ConfigHelp configId={leverHelpIds[lever]} /></span><small class:positive={alternativeDelta(lever) > 0} class:negative={alternativeDelta(lever) < 0}>{moneyDelta(alternativeDelta(lever))}/day</small></div>
           {#if lever === "subagents"}
             <div class="choice"><button class:chosen={config.subagents === "same"} onclick={() => changeLever(lever, { subagents: "same" })}>same prompt</button><button class:chosen={config.subagents === "different"} onclick={() => changeLever(lever, { subagents: "different" })}>different</button></div>
           {:else if lever === "ttl"}

@@ -1,0 +1,74 @@
+[
+  {
+    "iso": "2026-08-10T10:13:44",
+    "system_prompt_tok": 3746,
+    "tools_tok": 21265,
+    "messages_tok": 20390,
+    "n_tools": 14,
+    "n_system_blocks": 4,
+    "cache_write": 23921,
+    "cache_read": 21478,
+    "fresh_input": 2,
+    "output": 567
+  },
+  {
+    "iso": "2026-08-10T10:13:57",
+    "system_prompt_tok": 3737,
+    "tools_tok": 21127,
+    "messages_tok": 21418,
+    "n_tools": 14,
+    "n_system_blocks": 4,
+    "cache_write": 881,
+    "cache_read": 45399,
+    "fresh_input": 2,
+    "output": 104
+  },
+  {
+    "iso": "2026-08-10T10:13:59",
+    "system_prompt_tok": 3733,
+    "tools_tok": 21101,
+    "messages_tok": 22054,
+    "n_tools": 14,
+    "n_system_blocks": 4,
+    "cache_write": 104,
+    "cache_read": 46280,
+    "fresh_input": 504,
+    "output": 9
+  },
+  {
+    "iso": "2026-08-10T10:14:20",
+    "system_prompt_tok": 3733,
+    "tools_tok": 21101,
+    "messages_tok": 21575,
+    "n_tools": 14,
+    "n_system_blocks": 4,
+    "cache_write": 23,
+    "cache_read": 46384,
+    "fresh_input": 2,
+    "output": 381
+  },
+  {
+    "iso": "2026-08-10T10:14:44",
+    "system_prompt_tok": 3730,
+    "tools_tok": 21088,
+    "messages_tok": 22207,
+    "n_tools": 14,
+    "n_system_blocks": 4,
+    "cache_write": 616,
+    "cache_read": 46407,
+    "fresh_input": 2,
+    "output": 79
+  },
+  {
+    "iso": "2026-08-10T10:14:45",
+    "system_prompt_tok": 3726,
+    "tools_tok": 21062,
+    "messages_tok": 22818,
+    "n_tools": 14,
+    "n_system_blocks": 4,
+    "cache_write": 79,
+    "cache_read": 47023,
+    "fresh_input": 504,
+    "output": 7
+  }
+]
