@@ -4,10 +4,10 @@
   import ConfigHelp from "../components/ConfigHelp.svelte";
   import {
     PERSONAS, configForLever, simulateDay,
-    type BucketId, type LeverId, type PersonaId, type SandboxConfig,
+    type LeverId, type PersonaId, type SandboxConfig,
   } from "./model.js";
   import type { Model } from "../engine/types.js";
-  import { simulateMessageLedger, type MessageLedger, type ScriptedMessage } from "../sim/ledger.js";
+  import { simulateMessageLedger, type ScriptedMessage } from "../sim/ledger.js";
   import { SCENARIOS, SCENARIO_BY_ID, type Scenario, type ScenarioId } from "../sim/scenarios.js";
 
   let { onback }: { onback: () => void } = $props();
@@ -15,6 +15,7 @@
   let scenarioId = $state<ScenarioId | null>(null);
   let configOpen = $state(false);
   let config = $state<SandboxConfig>({ ...PERSONAS.developer.defaults });
+  let monthSummary = $state({ completedDays: 0, currentDay: 1, currentDayUsd: 0, averageDayUsd: 0, monthTotalUsd: 0 });
 
   const persona = $derived(PERSONAS[personaId]);
   const activeScenario = $derived(scenarioId ? SCENARIO_BY_ID[scenarioId] : null);
@@ -26,7 +27,6 @@
   const scenarioBaseline = $derived(activeScenario ? simulateMessageLedger(adaptScenarioScript(activeScenario, defaultConfig), scenarioOptions(activeScenario, defaultConfig)) : null);
   const totalUsd = $derived(scenarioLedger?.totalUsd ?? result.totalUsd);
   const baselineUsd = $derived(scenarioBaseline?.totalUsd ?? baseline.totalUsd);
-  const viewBuckets = $derived(scenarioLedger ? bucketsFromLedger(scenarioLedger) : result.buckets);
   const delta = $derived(totalUsd - baselineUsd);
   const tone = $derived(Math.abs(delta) < .00001 ? "neutral" : delta < 0 ? "good" : "bad");
   const isModified = $derived(Object.keys(defaultConfig).some((key) => config[key as keyof SandboxConfig] !== defaultConfig[key as keyof SandboxConfig]));
@@ -98,21 +98,6 @@
       usesTools: message.subagent || index % 4 === 2,
     }));
   }
-  function bucketsFromLedger(ledger: MessageLedger): Record<BucketId, { tokens: number; usd: number }> {
-    const buckets: Record<BucketId, { tokens: number; usd: number }> = {
-      input:{tokens:0,usd:0}, cacheWrite:{tokens:0,usd:0}, cacheRead:{tokens:0,usd:0}, output:{tokens:0,usd:0}, keepWarm:{tokens:0,usd:0}, compaction:{tokens:0,usd:0},
-    };
-    for (const message of ledger.messages) {
-      const prefix = message.warm ? buckets.cacheRead : buckets.cacheWrite;
-      prefix.tokens += message.buckets.prefix.tokens; prefix.usd += message.buckets.prefix.usd;
-      buckets.input.tokens += message.buckets.workIn.tokens; buckets.input.usd += message.buckets.workIn.usd;
-      buckets.output.tokens += message.buckets.output.tokens; buckets.output.usd += message.buckets.output.usd;
-      buckets.keepWarm.tokens += message.buckets.keepWarm.tokens; buckets.keepWarm.usd += message.buckets.keepWarm.usd;
-      buckets.compaction.tokens += message.buckets.compaction.tokens; buckets.compaction.usd += message.buckets.compaction.usd;
-    }
-    return buckets;
-  }
-
   function choosePersona(id: PersonaId) {
     personaId = id;
     scenarioId = null;
@@ -207,14 +192,22 @@
     </nav>
 
     <div class="canvas" class:good={tone === "good"} class:bad={tone === "bad"}>
-      <ConversationView script={conversationScript} options={ledgerOptions} bucketTotals={viewBuckets} projectedTotal={totalUsd} compact />
+      <ConversationView
+        script={conversationScript}
+        options={ledgerOptions}
+        projectedTotal={totalUsd}
+        compact
+        subagentCount={activeScenario ? Math.max(1, activeScenario.script.filter((message) => message.subagent).length) : persona.subagentsPerSession}
+        sharePrefix={config.subagents === "same"}
+        onmonthchange={(summary) => monthSummary = summary}
+      />
     </div>
 
     <section class="totals" aria-label="Daily, weekly, and monthly totals">
-      <div class="total-context"><span>{delta === 0 ? "At persona defaults" : `${moneyDelta(delta)} vs defaults`}</span><small>5 workdays/week · 21/month</small></div>
-      <MoneyCounter value={totalUsd} label="per day" {tone} />
-      <MoneyCounter value={totalUsd * 5} label="per week" {tone} />
-      <MoneyCounter value={totalUsd * 21} label="per month" {tone} />
+      <div class="total-context"><span>{delta === 0 ? "At persona defaults" : `${moneyDelta(delta)} vs defaults`}</span><small>frozen days + current config projection</small></div>
+      <MoneyCounter value={monthSummary.averageDayUsd || totalUsd} label="running avg / day" {tone} />
+      <MoneyCounter value={(monthSummary.averageDayUsd || totalUsd) * 5} label="avg workweek" {tone} />
+      <MoneyCounter value={monthSummary.monthTotalUsd || totalUsd * 21} label="projected month" {tone} />
     </section>
   </section>
 </main>

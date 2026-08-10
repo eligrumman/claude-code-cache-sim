@@ -13,6 +13,8 @@ export interface ScriptedMessage {
   atMin: number;
   /** A changed identity cannot reuse the prior cached prefix. */
   prefixKey?: string;
+  /** Optional conversation-local context state when multiple lanes share one cached prefix. */
+  contextKey?: string;
   /** Used by scenario consumers such as TD to render fan-out work. */
   subagent?: boolean;
   contextTok?: number;
@@ -54,6 +56,144 @@ export interface MessageLedgerOptions {
 
 export interface MessageLedger { messages: MessageLedgerEntry[]; totalUsd: number; compactionCount: number }
 
+export interface DayConversationLane {
+  id: string;
+  label: string;
+  kind: "main" | "subagent";
+  messages: MessageLedgerEntry[];
+  totalUsd: number;
+}
+
+export interface DayConversationLedger {
+  lanes: DayConversationLane[];
+  messages: MessageLedgerEntry[];
+  totalUsd: number;
+}
+
+export type PromptSegmentTier = "read" | "write" | "input";
+
+export interface PromptLogicalSegment { label: string; tokens: number }
+
+export interface PromptCascadeSegment extends PromptLogicalSegment {
+  id: string;
+  tier: PromptSegmentTier;
+  rate: number;
+  usd: number;
+  /** True on the first segment at or after cache reuse stops. */
+  cursor: boolean;
+}
+
+export interface PromptCascadeReceipt {
+  cacheRead: number;
+  cacheWrite: number;
+  freshInput: number;
+}
+
+/**
+ * Itemize an ordered prompt against the provider's billing buckets. Logical rows
+ * are split at billing boundaries, so the cache-break cursor is exact even when
+ * it falls part-way through tool schemas or a message.
+ */
+export function segmentPromptCascade(
+  logical: readonly PromptLogicalSegment[],
+  receipt: PromptCascadeReceipt,
+  model: Model,
+  ttl: Ttl,
+): PromptCascadeSegment[] {
+  const expected = receipt.cacheRead + receipt.cacheWrite + receipt.freshInput;
+  const actual = logical.reduce((sum, segment) => sum + segment.tokens, 0);
+  if (actual !== expected) {
+    throw new Error(`Prompt segments total ${actual} tokens; receipt totals ${expected}`);
+  }
+  const spans: Array<{ tier: PromptSegmentTier; remaining: number; rate: number }> = [
+    { tier: "read", remaining: receipt.cacheRead, rate: RATE.read },
+    { tier: "write", remaining: receipt.cacheWrite, rate: ttl === "5m" ? RATE.w5m : RATE.w1h },
+    { tier: "input", remaining: receipt.freshInput, rate: RATE.input },
+  ];
+  const rows: PromptCascadeSegment[] = [];
+  let spanIndex = 0;
+  let serial = 0;
+  let cursorPlaced = false;
+  for (const segment of logical) {
+    let remaining = segment.tokens;
+    let part = 0;
+    while (remaining > 0) {
+      while (spanIndex < spans.length && spans[spanIndex].remaining === 0) spanIndex += 1;
+      const span = spans[spanIndex];
+      if (!span) throw new Error("Prompt receipt ran out before logical segments");
+      const tokens = Math.min(remaining, span.remaining);
+      const cursor = !cursorPlaced && span.tier !== "read";
+      if (cursor) cursorPlaced = true;
+      rows.push({
+        id: `${serial++}-${span.tier}`,
+        label: part === 0 ? segment.label : `${segment.label} (continued)`,
+        tokens,
+        tier: span.tier,
+        rate: span.rate,
+        usd: priceTokens(tokens, span.tier === "read" ? "cacheRead" : span.tier === "write" ? "cacheWrite" : "input", { model, ttl }),
+        cursor,
+      });
+      remaining -= tokens;
+      span.remaining -= tokens;
+      part += 1;
+    }
+  }
+  return rows;
+}
+
+/**
+ * Build one modeled workday as concurrent main/subagent lanes. All lanes use the
+ * same prefix identity when `sharePrefix` is true, exposing cross-conversation
+ * cache reuse while retaining independent lane histories and totals.
+ */
+export function simulateDayConvos(
+  script: readonly ScriptedMessage[],
+  options: MessageLedgerOptions,
+  subagentCount: number,
+  sharePrefix: boolean,
+): DayConversationLedger {
+  const laneDefs: Array<{ id: string; label: string; kind: "main" | "subagent"; script: ScriptedMessage[] }> = [];
+  const prefixFor = (laneId: string) => sharePrefix ? "shared-boilerplate" : laneId;
+  laneDefs.push({
+    id: "main", label: "Main thread", kind: "main",
+    script: script.map((message, index) => ({
+      ...message,
+      id: `main:${message.id}`,
+      prefixKey: prefixFor("main"),
+      contextKey: "main",
+      contextTok: message.contextTok ?? (options.contextLevers ? options.prefixTok : options.prefixTok + index * Math.round(options.workInTok * 0.7)),
+    })),
+  });
+  for (let laneIndex = 0; laneIndex < subagentCount; laneIndex += 1) {
+    const laneId = `sub${laneIndex + 1}`;
+    const source = script.filter((_message, index) => index % Math.max(2, subagentCount + 1) === laneIndex % Math.max(2, subagentCount + 1)).slice(0, 4);
+    const fallback = script.slice(0, Math.min(3, script.length));
+    const selected = source.length ? source : fallback;
+    laneDefs.push({
+      id: laneId, label: `Subagent ${laneIndex + 1}`, kind: "subagent",
+      script: selected.map((message, index) => ({
+        ...message,
+        id: `${laneId}:${message.id}`,
+        subagent: true,
+        atMin: message.atMin + laneIndex * 0.2 + 0.1,
+        prefixKey: prefixFor(laneId),
+        contextKey: laneId,
+        contextTok: options.contextLevers ? options.prefixTok : options.prefixTok + index * Math.round(options.workInTok * 0.55),
+        workInTok: Math.max(80, Math.round((message.workInTok ?? options.workInTok) * 0.72)),
+        outputTok: Math.max(120, Math.round((message.outputTok ?? options.outputTok) * 0.68)),
+      })),
+    });
+  }
+  const combined = laneDefs.flatMap((lane) => lane.script)
+    .sort((left, right) => left.atMin - right.atMin || left.id.localeCompare(right.id));
+  const ledger = simulateMessageLedger(combined, options);
+  const lanes = laneDefs.map((lane): DayConversationLane => {
+    const messages = ledger.messages.filter((message) => message.id.startsWith(`${lane.id}:`));
+    return { id: lane.id, label: lane.label, kind: lane.kind, messages, totalUsd: messages.reduce((sum, message) => sum + message.usd, 0) };
+  });
+  return { lanes, messages: ledger.messages, totalUsd: ledger.totalUsd };
+}
+
 /** Deterministic per-message ledger shared by the Sandbox, article, and TD. */
 export function simulateMessageLedger(script: ScriptedMessage[], options: MessageLedgerOptions): MessageLedger {
   const ttlMin = options.ttl === "5m" ? 5 : 60;
@@ -64,6 +204,7 @@ export function simulateMessageLedger(script: ScriptedMessage[], options: Messag
   const messages = script.map((message, index): MessageLedgerEntry => {
     const gapMin = index === 0 ? 0 : message.atMin - script[index - 1].atMin;
     const prefixKey = message.prefixKey ?? "main";
+    const contextKey = message.contextKey ?? prefixKey;
     const samePrefix = lastPrefixKey === undefined || prefixKey === lastPrefixKey;
     const naturalWarm = samePrefix && message.atMin - lastTouch < ttlMin;
     let pingTokens = 0;
@@ -72,7 +213,7 @@ export function simulateMessageLedger(script: ScriptedMessage[], options: Messag
     const outputTok = message.outputTok ?? options.outputTok;
     const contextTurn = options.contextLevers
       ? applyContextLevers(
-        contextStates.get(prefixKey) ?? { conversationTok: 0 },
+        contextStates.get(contextKey) ?? { conversationTok: 0 },
         {
           basePrefixTok: message.contextTok ?? options.prefixTok,
           growthTok: message.contextGrowthTok ?? workInTok + outputTok,
@@ -82,7 +223,7 @@ export function simulateMessageLedger(script: ScriptedMessage[], options: Messag
       )
       : null;
     const prefixTok = contextTurn?.prefixTok ?? message.contextTok ?? options.prefixTok;
-    if (contextTurn) contextStates.set(prefixKey, contextTurn.nextState);
+    if (contextTurn) contextStates.set(contextKey, contextTurn.nextState);
 
     if (options.keepWarm && samePrefix && Number.isFinite(lastTouch) && !naturalWarm) {
       const pingEvery = Math.max(1, ttlMin - 1);

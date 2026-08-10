@@ -4,7 +4,7 @@ The real session was captured by a mitmproxy intercept of the authenticated `cla
 
 | Location | Data source | Notes |
 |---|---|---|
-| Sandbox conversation | `src/sim/captures/real-session-segments.jsonl` and the other capture files above | **Real captured traffic.** The six displayed main-thread rows are inlined, unchanged, in `realSegments.ts` for the offline single-file build. |
+| Sandbox playground month + concurrent conversations | none — engine-modeled by `src/sim/ledger.ts` (`simulateDayConvos`) | **Modeled, not captured traffic.** The deterministic 21-workday run repeats one main-thread routine plus subagent lanes; each frozen day snapshots the configuration used for that day. |
 | Article real-tape showcase | Same real capture files | **Real captured traffic.** This is a second view of the sandbox evidence, not a separate capture. |
 | Article micro: Cache TTL | none — modeled by `src/sim/ledger.ts` | Engine simulation from the widget's scripted messages and prefix/work/output inputs. |
 | Article micro: Keep-warm | none — modeled by `src/sim/ledger.ts` | Engine simulation; no intercepted traffic. |
