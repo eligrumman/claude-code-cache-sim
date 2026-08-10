@@ -27,13 +27,13 @@ describe("sandbox screen", () => {
     expect(screen.getByRole("complementary", { name: "Tune the workday" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "💬 Conversation" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "🔧 Under the hood" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Where the money goes")).toHaveTextContent("Run total");
+    expect(screen.getByLabelText("Running cache savings")).toHaveTextContent(/with cache.*uncached.*saved/);
     expect(screen.getByLabelText("Daily, weekly, and monthly totals")).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: "on" }));
     expect(screen.getByRole("button", { name: "on" })).toHaveClass("chosen");
     expect(screen.getByText("● Modified")).toBeInTheDocument();
-    expect(screen.getByLabelText(/Keep-warm ping:/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Running cache savings")).toHaveTextContent("with cache");
   });
 
   it("keeps lever edits independent and resets to the current persona defaults", async () => {
@@ -72,14 +72,22 @@ describe("sandbox screen", () => {
     expect(screen.getByRole("button", { name: "lazy" })).toHaveClass("chosen");
   });
 
-  it("opens a plain-English receipt from the shared conversation", async () => {
+  it("uses one corner transport control and opens the captured receipt", async () => {
     render(App);
     await fireEvent.click(screen.getByRole("button", { name: /Sandbox/ }));
-    await fireEvent.click(screen.getByRole("button", { name: /Find the flaky test/ }));
+
+    const pause = screen.getByRole("button", { name: "⏸ Pause" });
+    expect(screen.queryByRole("button", { name: "↻ Replay" })).not.toBeInTheDocument();
+    await fireEvent.click(pause);
+    expect(screen.getByRole("button", { name: "▶ Play" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByTitle("Inspect this API round trip"));
 
     expect(screen.getByRole("button", { name: "🔧 Under the hood" })).toHaveClass("active");
-    expect(screen.getByText("Message receipt")).toBeInTheDocument();
-    expect(screen.getByText(/first message:/)).toBeInTheDocument();
+    expect(screen.getByText("Message receipt · step 1")).toBeInTheDocument();
+    expect(screen.getByLabelText("Prompt chunks")).toHaveTextContent("47 005 tok");
+    expect(screen.getByText("output (incl. thinking)")).toBeInTheDocument();
+    expect(screen.getByText(/47 005 tok × \$0.50\/M = \$0.023503/)).toBeInTheDocument();
+    expect(screen.getByText(/With cache \$0.062344 vs \$0.270640 uncached · 77.0% saved/)).toBeInTheDocument();
   });
 
   it("opens and closes the narrow-screen configuration drawer", async () => {
