@@ -1,5 +1,7 @@
 <script lang="ts">
   import { priceMacroRoutes, totalMacroRoutes } from "./macroPricing.js";
+  import RawDataModal from "../components/RawDataModal.svelte";
+  import type { RawTurn } from "../sim/captures/realSegments.js";
 
   let routed = $state(true);
   const priced = $derived(priceMacroRoutes(routed));
@@ -7,6 +9,12 @@
   const defaultTotal = totalMacroRoutes(false);
   const routedTotal = totalMacroRoutes(true);
   const saved = defaultTotal - routedTotal;
+  const effortScale = { low: .7, medium: 1, high: 1.35 } as const;
+  const outputScale = { low: .65, medium: 1, high: 1.45 } as const;
+  const rawRows = $derived(priced.map((route, index): RawTurn => {
+    const fresh = Math.round(route.input * effortScale[route.activeEffort]);
+    return { label: route.task, messagesTok: routed ? undefined : 1_000_000, cacheWrite: routed ? fresh : index === 0 ? 1_000_000 : 0, cacheRead: routed || index === 0 ? 0 : 1_000_000, freshInput: routed ? 0 : fresh, output: Math.round(route.output * outputScale[route.activeEffort]) };
+  }));
 
   function money(value: number) {
     return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
@@ -22,6 +30,7 @@
     <button class:on={routed} onclick={() => routed = !routed} aria-label="Toggle routed workload">
       <i></i>
     </button>
+    <RawDataModal title="Modeled seven-task routing" provenance={{ real: false }} rows={rawRows} />
   </div>
 
   <div class="routes">

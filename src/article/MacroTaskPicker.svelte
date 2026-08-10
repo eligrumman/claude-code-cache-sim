@@ -6,10 +6,15 @@
     verdictForChoice,
     type Effort,
   } from "./macroPricing.js";
+  import RawDataModal from "../components/RawDataModal.svelte";
+  import type { RawTurn } from "../sim/captures/realSegments.js";
 
   const models: Model[] = ["haiku", "sonnet", "opus", "fable"];
   const efforts: Effort[] = ["low", "medium", "high"];
   let choices = $state(MACRO_ROUTES.map((route) => ({ model: route.model, effort: route.effort })));
+  const effortInput = { low: .7, medium: 1, high: 1.35 } as const;
+  const effortOutput = { low: .65, medium: 1, high: 1.45 } as const;
+  const rawRows = $derived(MACRO_ROUTES.map((route, index): RawTurn => ({ label: `${route.task} · ${choices[index].model}/${choices[index].effort}`, cacheWrite: Math.round(route.input * effortInput[choices[index].effort]), output: Math.round(route.output * effortOutput[choices[index].effort]) })));
 
   function money(value: number) {
     return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
@@ -17,7 +22,7 @@
 </script>
 
 <div class="picker" data-testid="macro-task-picker">
-  <header><small>TRY THE ROUTES</small><strong>Seven jobs. Four brains. Your call.</strong></header>
+  <header><small>TRY THE ROUTES</small><strong>Seven jobs. Four brains. Your call.</strong><RawDataModal title="Modeled task-picker inputs" provenance={{ real: false }} rows={rawRows} /></header>
   <div class="rows">
     {#each MACRO_ROUTES as route, index}
       {@const choice = choices[index]}

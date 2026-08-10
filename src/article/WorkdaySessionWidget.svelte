@@ -1,6 +1,8 @@
 <script lang="ts">
   import { MODEL_IN, RATE } from "../engine/pricing.js";
   import { SCENARIO_BY_ID, priceScenario, type ScenarioId } from "../sim/scenarios.js";
+  import RawDataModal from "../components/RawDataModal.svelte";
+  import type { RawTurn } from "../sim/captures/realSegments.js";
 
   const options: { id: ScenarioId; label: string }[] = [
     { id: "ship-feature", label: "Ship feature" },
@@ -27,6 +29,14 @@
   }));
   const maximum = $derived(Math.max(giant.totalUsd, 0.0001));
   const saving = $derived(giant.totalUsd - scoped.totalUsd);
+  const rawRows = $derived(giant.messages.flatMap((message, index): RawTurn[] => {
+    const scopedMessage = scoped.messages[index];
+    const turn = index + 1;
+    return [
+      { label: `Turn ${turn} · giant`, messagesTok: message.buckets.prefix.tokens, cacheWrite: message.warm ? 0 : message.buckets.prefix.tokens, cacheRead: message.warm ? message.buckets.prefix.tokens : 0, freshInput: message.buckets.workIn.tokens, output: message.buckets.output.tokens },
+      { label: `Turn ${turn} · scoped`, messagesTok: scopedMessage.buckets.prefix.tokens, cacheWrite: scopedMessage.warm ? 0 : scopedMessage.buckets.prefix.tokens, cacheRead: scopedMessage.warm ? scopedMessage.buckets.prefix.tokens : 0, freshInput: scopedMessage.buckets.workIn.tokens, output: scopedMessage.buckets.output.tokens },
+    ];
+  }));
 
   function money(value: number) {
     return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
@@ -41,6 +51,7 @@
         {#each options as option}<option value={option.id}>{option.label}</option>{/each}
       </select>
     </label>
+    <RawDataModal title={`Modeled workday · ${scenario.title}`} provenance={{ real: false }} rows={rawRows} />
   </header>
 
   <div class="legend">

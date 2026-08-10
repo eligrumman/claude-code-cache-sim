@@ -22,6 +22,8 @@
   import CopyButton from "../setup/CopyButton.svelte";
   import EnvDiagnose from "../setup/EnvDiagnose.svelte";
   import { recipeById, type RecipeId } from "../setup/recipes.js";
+  import RawDataModal from "../components/RawDataModal.svelte";
+  import { REAL_SEGMENT_PROVENANCE, REAL_SEGMENT_ROWS } from "../sim/captures/realSegments.js";
 
   interface Props {
     onback: () => void;
@@ -317,6 +319,7 @@
       <h2 class="micro-hook">The surprisingly expensive pause.</h2>
       <h2>Which caching configs spend the fewest tokens?</h2>
       <p>Flip each lever, then click a message to see exactly why it cost what it did.</p>
+      <RawDataModal title="A real Claude Code session — timestamped tape" provenance={REAL_SEGMENT_PROVENANCE} rows={REAL_SEGMENT_ROWS} prominent />
     </div>
 
     {#each microSections as section}

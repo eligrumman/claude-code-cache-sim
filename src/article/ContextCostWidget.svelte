@@ -1,10 +1,19 @@
 <script lang="ts">
   import type { Model } from "../engine/types.js";
-  import { DEFAULT_MAIN_CONTEXT_TOKENS, priceContextComparison } from "./macroPricing.js";
+  import { DEFAULT_MAIN_CONTEXT_TOKENS, MACRO_ROUTES, priceContextComparison } from "./macroPricing.js";
+  import RawDataModal from "../components/RawDataModal.svelte";
+  import type { RawTurn } from "../sim/captures/realSegments.js";
 
   const models: Model[] = ["haiku", "sonnet", "opus", "fable"];
   let model = $state<Model>("sonnet");
   const priced = $derived(priceContextComparison(model));
+  const reviewOutput = MACRO_ROUTES[4].output;
+  const rawRows = $derived([
+    { label: "Main · first message", messagesTok: DEFAULT_MAIN_CONTEXT_TOKENS, cacheWrite: DEFAULT_MAIN_CONTEXT_TOKENS, cacheRead: 0, freshInput: 0, output: reviewOutput },
+    { label: "Main · next message", messagesTok: DEFAULT_MAIN_CONTEXT_TOKENS, cacheWrite: 0, cacheRead: DEFAULT_MAIN_CONTEXT_TOKENS, freshInput: 0, output: reviewOutput },
+    { label: "Scoped · first message", messagesTok: priced.scopedTokens, cacheWrite: priced.scopedTokens, cacheRead: 0, freshInput: 0, output: reviewOutput },
+    { label: "Scoped · next message", messagesTok: priced.scopedTokens, cacheWrite: 0, cacheRead: priced.scopedTokens, freshInput: 0, output: reviewOutput },
+  ] satisfies RawTurn[]);
   function money(value: number) { return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`; }
 </script>
 
@@ -12,6 +21,7 @@
   <header>
     <div><small>ONE CODE REVIEW MESSAGE</small><strong>How heavy is the backpack?</strong></div>
     <label>Model <select bind:value={model} aria-label="Context example model">{#each models as item}<option value={item}>{item}</option>{/each}</select></label>
+    <RawDataModal title="Modeled context comparison" provenance={{ real: false }} rows={rawRows} />
   </header>
   <div class="cards">
     <article class="main">
