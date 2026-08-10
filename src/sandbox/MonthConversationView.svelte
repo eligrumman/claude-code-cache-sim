@@ -89,6 +89,10 @@
   });
 
   $effect(() => {
+    // Track `shown` (and `day`) so the timer re-arms after every advance — otherwise
+    // the effect only re-runs when speed/playing change and the sim stalls after one step.
+    void shown;
+    void day;
     if (!playing || reducedMotion || day > 21 || ledger.messages.length === 0) return;
     const timer = setTimeout(advance, Math.max(70, Math.round(820 / speed)));
     return () => clearTimeout(timer);
