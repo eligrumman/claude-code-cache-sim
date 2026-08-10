@@ -29,7 +29,7 @@ export const SCENARIOS: readonly Scenario[] = [
       msg("r1", 0, "Map the old architecture and plan the migration."), msg("r1a", 3, "I found four coupled seams. Starting with the data layer."),
       msg("r2", 7, "Refactor the core and keep compatibility."), msg("r2a", 12, "Core is migrated; validating callers now."),
       msg("r3", 18, "Delegate the UI and test migrations.", { subagent: true, prefixKey: "refactor-helper" }),
-      msg("r3a", 22, "Helpers are working in parallel.", { subagent: true, prefixKey: "refactor-helper" }),
+      msg("r3a", 22, "Subagents are working in parallel.", { subagent: true, prefixKey: "refactor-helper" }),
       msg("r4", 29, "Integrate everything and run the full suite."), msg("r4a", 36, "Integrated. The suite is green."),
     ],
   },
@@ -39,12 +39,12 @@ export const SCENARIOS: readonly Scenario[] = [
     script: Array.from({ length: 12 }, (_, i) => msg(`i${i}${i % 2 ? "a" : ""}`, i * 2, i % 2 ? "Done — next item?" : `Triage issue #${i / 2 + 1} and suggest the smallest action.`)),
   },
   {
-    id: "ship-feature", title: "Ship a Feature", blurb: "A balanced build: discovery, implementation, a few helpers, review, and release.",
+    id: "ship-feature", title: "Ship a Feature", blurb: "A balanced build: discovery, implementation, a few subagents, review, and release.",
     stresses: ["subagents", "context", "approval"], defaults: defaults(32_000, 650, 900),
     script: [
       msg("s1", 0, "Trace the feature flow and propose an implementation."), msg("s1a", 4, "Plan ready; the API and UI can move together."),
       msg("s2", 9, "Build the API slice."), msg("s2a", 14, "API and tests are in place."),
-      msg("s3", 17, "Have a helper review edge cases.", { subagent: true, prefixKey: "feature-review" }),
+      msg("s3", 17, "Have a subagent review edge cases.", { subagent: true, prefixKey: "feature-review" }),
       msg("s3a", 20, "Review found two validation gaps.", { subagent: true, prefixKey: "feature-review" }),
       msg("s4", 25, "Finish the UI and ship it."), msg("s4a", 31, "Feature shipped with the gaps covered."),
     ],
@@ -59,11 +59,11 @@ export const SCENARIOS: readonly Scenario[] = [
     ],
   },
   {
-    id: "subagent-swarm", title: "Subagent Swarm", blurb: "A wide fan-out where shared helper prompts can turn repeated writes into reads.",
+    id: "subagent-swarm", title: "Subagent Swarm", blurb: "A wide fan-out where shared subagent prompts can turn repeated writes into reads.",
     stresses: ["subagents", "context"], defaults: defaults(55_000, 420, 620),
     script: [
       msg("a0", 0, "Audit every package in parallel."),
-      ...Array.from({ length: 10 }, (_, i) => msg(`a${i + 1}${i % 2 ? "a" : ""}`, i + 1, `Helper ${i + 1}: inspect package ${i + 1}.`, { subagent: true, prefixKey: "shared-audit" })),
+      ...Array.from({ length: 10 }, (_, i) => msg(`a${i + 1}${i % 2 ? "a" : ""}`, i + 1, `Subagent ${i + 1}: inspect package ${i + 1}.`, { subagent: true, prefixKey: "shared-audit" })),
       msg("a12a", 14, "Merged the swarm's findings into one report."),
     ],
   },

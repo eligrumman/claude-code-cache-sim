@@ -61,7 +61,7 @@ describe("Micro and Macro articles", () => {
   });
 
   it("renders realistic, internally scrolling micro sessions", () => {
-    renderArticle();
+    const { container } = renderArticle();
     const widgets = Array.from(document.querySelectorAll(".lesson .widget"));
     expect(widgets).toHaveLength(5);
     expect(widgets.map((widget) => widget.querySelectorAll(".tick").length)).toEqual([12, 10, 10, 12, 12]);
@@ -70,6 +70,32 @@ describe("Micro and Macro articles", () => {
     expect(screen.getByText(/pagination diff for contract regressions/)).toBeInTheDocument();
     expect(screen.getByText(/billing state machine/)).toBeInTheDocument();
     expect(screen.getByText(/flaky notification test/)).toBeInTheDocument();
+    expect(container).not.toHaveTextContent(/\bhelpers?\b/i);
+  });
+
+  it("puts each setup prompt after its interactive widget and the environment analyzer last", () => {
+    renderArticle();
+    const lessons = Array.from(document.querySelectorAll(".lesson"));
+    for (const lesson of lessons) {
+      const widget = lesson.querySelector(".widget");
+      const setup = lesson.querySelector(".section-setup");
+      expect(widget).not.toBeNull();
+      expect(setup).not.toBeNull();
+      expect(widget!.compareDocumentPosition(setup!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+
+    const analyzer = document.querySelector(".article-diagnose");
+    const lastSetup = document.querySelectorAll(".section-setup")[4];
+    expect(lastSetup.compareDocumentPosition(analyzer!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("explains cascading subagent cache misses in the same-prompt deep dive", async () => {
+    renderArticle();
+    await fireEvent.click(screen.getAllByRole("button", { name: /Deep dive/ })[2]);
+    const detail = screen.getByTestId("deep-dive");
+    expect(detail).toHaveTextContent("miss cascades");
+    expect(detail).toHaveTextContent("skills block, tools block, and everything downstream");
+    expect(detail).toHaveTextContent("specific task last");
   });
 
   it("uses TL;DR as collapse-all / expand-all and preserves individual controls afterward", async () => {

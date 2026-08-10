@@ -88,15 +88,15 @@
   ];
 
   const sharedHelperSession: ScriptedMessage[] = [
-    { id: "helper-api", role: "user", text: "Helper API: inspect the pagination diff for contract regressions.", atMin: 0, subagent: true, prefixKey: "pagination-review" },
+    { id: "helper-api", role: "user", text: "Subagent API: inspect the pagination diff for contract regressions.", atMin: 0, subagent: true, prefixKey: "pagination-review" },
     { id: "helper-api-result", role: "assistant", text: "API review: cursor encoding is stable; the empty-page response needs one assertion.", atMin: 1, subagent: true, prefixKey: "pagination-review" },
-    { id: "helper-db", role: "user", text: "Helper DB: inspect query plans and migration compatibility.", atMin: 2, subagent: true, prefixKey: "pagination-review" },
+    { id: "helper-db", role: "user", text: "Subagent DB: inspect query plans and migration compatibility.", atMin: 2, subagent: true, prefixKey: "pagination-review" },
     { id: "helper-db-result", role: "assistant", text: "DB review: the composite index is used, but the down migration drops it in the wrong order.", atMin: 3, subagent: true, prefixKey: "pagination-review" },
-    { id: "helper-ui", role: "user", text: "Helper UI: trace loading, empty, and retry states.", atMin: 4, subagent: true, prefixKey: "pagination-review" },
+    { id: "helper-ui", role: "user", text: "Subagent UI: trace loading, empty, and retry states.", atMin: 4, subagent: true, prefixKey: "pagination-review" },
     { id: "helper-ui-result", role: "assistant", text: "UI review: loading and retry are covered; keyboard focus is lost after appending a page.", atMin: 5, subagent: true, prefixKey: "pagination-review" },
-    { id: "helper-tests", role: "user", text: "Helper tests: find missing boundary cases without duplicating existing coverage.", atMin: 6, subagent: true, prefixKey: "pagination-review" },
+    { id: "helper-tests", role: "user", text: "Subagent tests: find missing boundary cases without duplicating existing coverage.", atMin: 6, subagent: true, prefixKey: "pagination-review" },
     { id: "helper-tests-result", role: "assistant", text: "Test review: add empty cursor, deleted-row, and final-page cases; the rest is redundant.", atMin: 7, subagent: true, prefixKey: "pagination-review" },
-    { id: "helper-security", role: "user", text: "Helper security: check cursor tampering and tenant isolation.", atMin: 8, subagent: true, prefixKey: "pagination-review" },
+    { id: "helper-security", role: "user", text: "Subagent security: check cursor tampering and tenant isolation.", atMin: 8, subagent: true, prefixKey: "pagination-review" },
     { id: "helper-security-result", role: "assistant", text: "Security review: tenant scope is preserved; malformed signed cursors correctly fail closed.", atMin: 9, subagent: true, prefixKey: "pagination-review" },
   ];
   const uniqueHelperSession = sharedHelperSession.map((message, index) => ({
@@ -126,8 +126,8 @@
     { id: "approve-read", role: "assistant", text: "Reading the test, implementation, and recent failure logs.", atMin: 1 },
     { id: "approve-scope", role: "user", text: "Keep the fix scoped; don't change the production retry policy.", atMin: 2 },
     { id: "approve-search", role: "assistant", text: "Searching call sites confirms only the test clock races the queued callback.", atMin: 3 },
-    { id: "approve-edit", role: "user", text: "Make the deterministic clock change in the test helper.", atMin: 4 },
-    { id: "approve-edited", role: "assistant", text: "Helper updated. The focused test now waits on the queued callback explicitly.", atMin: 5 },
+    { id: "approve-edit", role: "user", text: "Make the deterministic clock change in the test utility.", atMin: 4 },
+    { id: "approve-edited", role: "assistant", text: "Test utility updated. The focused test now waits on the queued callback explicitly.", atMin: 5 },
     { id: "approve-focused", role: "user", text: "Run the focused test repeatedly to check the flake.", atMin: 6 },
     { id: "approve-focused-done", role: "assistant", text: "Fifty focused runs passed with no timing variance.", atMin: 7 },
     { id: "approve-suite", role: "user", text: "Run the notification package suite and typecheck.", atMin: 8 },
@@ -183,11 +183,11 @@
       on: { ttl: "5m", model: "sonnet", prefixTok: 68_000, workInTok: 520, outputTok: 680, keepWarm: true },
     },
     {
-      id: "same-prompt", eyebrow: "3 · SAME PROMPT", title: "Give helpers one shared prefix.",
-      copy: "Helpers share cache only when their stable instructions share an exact prefix.",
+      id: "same-prompt", eyebrow: "3 · SAME PROMPT", title: "Give subagents one shared prefix.",
+      copy: "Subagents must share the same boilerplate prefix—system prompt, tools, skills, and project context—so it stays cached and is read cheaply instead of rebuilt.",
       deep: [
-        `Prompt caches match a prefix, not the intent behind it. The first helper below writes the shared instructions at ${RATE.w1h}×; each later helper with the same prefix reads those tokens at ${RATE.read}×. Change wording, tool order, or stable context and the simulator gives it a new identity, so the prefix is written cold again.`,
-        `That is a ${RATE.w1h / RATE.read}× cold-versus-warm gap before fresh task input and output are added. Keep the reusable subagent brief byte-for-byte stable, then append the file name, question, or test target after it. The helpers still get distinct work without making the expensive front half distinct too.`,
+        `Prompt caches match a prefix, not the intent behind it. The first subagent below writes the shared instructions at ${RATE.w1h}×; each later subagent with the same prefix reads those tokens at ${RATE.read}×. A different leading message invalidates the cache from the first byte of divergence, and the miss cascades: the skills block, tools block, and everything downstream must be written again at full price.`,
+        `That is a ${RATE.w1h / RATE.read}× cold-versus-warm gap before fresh task input and output are added. Keep the prefix byte-identical through the last shared breakpoint. Put the specific task last, after shared skills and tools, so a different tail never poisons the reusable head.`,
       ],
       script: sharedHelperSession, offScript: uniqueHelperSession, onScript: sharedHelperSession,
       offLabel: "Unique prompts", onLabel: "Same prompt",
@@ -241,10 +241,10 @@
     },
     {
       id: "delegate", eyebrow: "3 · DELEGATE", title: "Give subagents smaller backpacks.",
-      copy: "A scoped helper sees only the brief and files it needs.",
+      copy: "A scoped subagent sees only the brief and files it needs.",
       deep: [
-        `Delegation creates a new context boundary. A 260,000-token Sonnet helper prefix costs 260,000 × ${RATE.w1h} × $${MODEL_IN.sonnet}/M = ${money(sonnetPrefixRebuild)} for its first one-hour write, then 260,000 × ${RATE.read} × $${MODEL_IN.sonnet}/M = ${exactMoney(sonnetPrefixRead)} per warm read—a ${RATE.w1h / RATE.read}× swing on the prefix. The alternative is not free: a long main session repeatedly reads its larger accumulated history even when the next job needs one directory.`,
-        `Delegate work that can be specified narrowly, checked independently, and returned compactly: searches, bounded reviews, focused tests, and factual docs. Do not delegate a two-minute edit whose brief and result need more tokens than the work, a decision that depends on tacit conversation history, or parallel tasks that will collide in the same files. Keep cross-cutting decisions and final synthesis in the main agent. When several helpers share a stable instruction prefix, preserve it exactly and append the task-specific target afterward so later helpers can read rather than rewrite it.`,
+        `Delegation creates a new context boundary. A 260,000-token Sonnet subagent prefix costs 260,000 × ${RATE.w1h} × $${MODEL_IN.sonnet}/M = ${money(sonnetPrefixRebuild)} for its first one-hour write, then 260,000 × ${RATE.read} × $${MODEL_IN.sonnet}/M = ${exactMoney(sonnetPrefixRead)} per warm read—a ${RATE.w1h / RATE.read}× swing on the prefix. The alternative is not free: a long main session repeatedly reads its larger accumulated history even when the next job needs one directory.`,
+        `Delegate work that can be specified narrowly, checked independently, and returned compactly: searches, bounded reviews, focused tests, and factual docs. Do not delegate a two-minute edit whose brief and result need more tokens than the work, a decision that depends on tacit conversation history, or parallel tasks that will collide in the same files. Keep cross-cutting decisions and final synthesis in the main agent. When several subagents share a stable instruction prefix, preserve it exactly and append the task-specific target afterward so later subagents can read rather than rewrite it.`,
       ],
     },
     {
@@ -328,13 +328,13 @@
           <button class="expand" aria-expanded={Boolean(expanded[`micro-${section.id}`])} onclick={() => toggle(`micro-${section.id}`)}>
             <b>&gt;</b> {expanded[`micro-${section.id}`] ? "Close detail" : "Deep dive"}
           </button>
-          <CopyButton recipe={articleRecipe(section.id)} compact />
         </div>
         <LeverWidget
           script={section.script} offScript={section.offScript} onScript={section.onScript}
           offLabel={section.offLabel} onLabel={section.onLabel}
           off={section.off} on={section.on} startOn={section.startOn}
         />
+        <div class="section-setup"><CopyButton recipe={articleRecipe(section.id)} compact /></div>
       </section>
     {/each}
 
@@ -366,10 +366,10 @@
           <button class="expand" aria-expanded={Boolean(expanded[`macro-${section.id}`])} onclick={() => toggle(`macro-${section.id}`)}>
             <b>&gt;</b> {expanded[`macro-${section.id}`] ? "Close detail" : "Deep dive"}
           </button>
-          <CopyButton recipe={articleRecipe(section.id)} compact />
         </div>
         {#if section.id === "main-context"}<ContextCostWidget />{/if}
         {#if section.id === "delegate"}<WorkdaySessionWidget />{/if}
+        <div class="section-setup"><CopyButton recipe={articleRecipe(section.id)} compact /></div>
       </section>
     {/each}
 
@@ -398,8 +398,9 @@
   .intro-links{display:flex;justify-content:center;flex-wrap:wrap;gap:10px;margin-top:20px}.intro-links button{border:0;background:none;color:#8c4a0a;font-weight:900;font-size:.82rem;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
   section.lesson{margin:80px 0 125px}.section-copy{max-width:680px;margin:0 0 24px 18px}.section-copy>small{color:#a85e13}.section-copy h2,.cta h2{font-size:clamp(2rem,5vw,3.6rem);line-height:1;letter-spacing:-.045em;margin:8px 0 12px}.section-copy>p,.cta p{font-size:1.05rem;line-height:1.5;margin:0;max-width:650px}.expand{display:flex;align-items:center;gap:8px;margin-top:14px;padding:5px 0;border:0;border-bottom:2px solid #20201d;background:transparent;font-size:.82rem;font-weight:900;cursor:pointer}.expand b{font:950 1rem/1 ui-monospace,monospace;color:#a85e13;transition:transform .15s}.expand[aria-expanded="true"] b{transform:rotate(90deg)}
   .macro-widget{margin:28px 0 70px}
+  .section-setup{max-width:680px;margin:24px 0 0 18px}
   .macro-lesson{margin:65px 0!important;border-bottom:2px dashed #d4d0c6}.macro-lesson .section-copy{margin-bottom:48px}.crosslink{display:block;margin:40px auto 90px;border:0;background:none;color:#8c4a0a;font-weight:950;font-size:1rem;text-decoration:underline;text-underline-offset:4px;cursor:pointer}
   .cta{margin:70px 0 100px;border:3px solid #20201d;border-radius:25px 19px 28px 18px;padding:34px;display:flex;align-items:center;gap:30px;background:#fff6c7;box-shadow:10px 11px 0 #f2c94c}.cta div{flex:1}.cta>button{border:2px solid #20201d;border-radius:14px;background:#20201d;color:white;padding:16px 20px;font-weight:900;cursor:pointer;white-space:nowrap;box-shadow:5px 5px 0 #e57970;transition:transform .2s}.cta>button:hover{transform:translate(-2px,-2px)}.cta>button span{font-size:1.4rem;margin-left:8px}.macro-cta{background:#eaf5ff;box-shadow:10px 11px 0 #9dccee}
   .article-diagnose{margin:110px 0 40px;padding-top:55px;border-top:3px solid #20201d}.article-diagnose>small{display:block;text-align:center;color:#a85e13;font-weight:950;letter-spacing:.13em;font-size:.72rem}.article-diagnose>h2{text-align:center;font-size:clamp(2rem,5vw,3.6rem);line-height:1;margin:8px 0 24px;letter-spacing:-.045em}
-  @media(max-width:650px){.article{width:min(100% - 18px,940px)}nav span{display:none}header{min-height:450px}header>div:not(.article-switch){font-size:.95rem}.doodle{right:2%;top:15%;width:40px;height:40px;font-size:1.4rem}.article-switch button{min-width:90px}.reading-mode{top:12px;right:0}.article-intro{margin:20px auto 55px}section.lesson{margin:60px 0 90px}.section-copy{margin-left:6px}.section-copy>p{font-size:.94rem}.cta{padding:23px 18px;display:block}.cta>button{width:100%;margin-top:22px}}
+  @media(max-width:650px){.article{width:min(100% - 18px,940px)}nav span{display:none}header{min-height:450px}header>div:not(.article-switch){font-size:.95rem}.doodle{right:2%;top:15%;width:40px;height:40px;font-size:1.4rem}.article-switch button{min-width:90px}.reading-mode{top:12px;right:0}.article-intro{margin:20px auto 55px}section.lesson{margin:60px 0 90px}.section-copy,.section-setup{margin-left:6px}.section-copy>p{font-size:.94rem}.cta{padding:23px 18px;display:block}.cta>button{width:100%;margin-top:22px}}
 </style>
