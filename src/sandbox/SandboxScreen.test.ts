@@ -26,7 +26,7 @@ describe("sandbox screen", () => {
     expect(screen.getByRole("heading", { name: "Conversation playground" })).toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: "Tune the workday" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "💬 Conversation" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "💸 Behind the scenes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "🔧 Under the hood" })).toBeInTheDocument();
     expect(screen.getByLabelText("Where the money goes")).toHaveTextContent("Run total");
     expect(screen.getByLabelText("Daily, weekly, and monthly totals")).toBeInTheDocument();
 
@@ -77,7 +77,7 @@ describe("sandbox screen", () => {
     await fireEvent.click(screen.getByRole("button", { name: /Sandbox/ }));
     await fireEvent.click(screen.getByRole("button", { name: /Find the flaky test/ }));
 
-    expect(screen.getByRole("button", { name: "💸 Behind the scenes" })).toHaveClass("active");
+    expect(screen.getByRole("button", { name: "🔧 Under the hood" })).toHaveClass("active");
     expect(screen.getByText("Message receipt")).toBeInTheDocument();
     expect(screen.getByText(/first message:/)).toBeInTheDocument();
   });
