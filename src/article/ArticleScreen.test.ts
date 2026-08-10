@@ -60,6 +60,18 @@ describe("Micro and Macro articles", () => {
     expect(screen.queryByTestId("deep-dive")).not.toBeInTheDocument();
   });
 
+  it("renders realistic, internally scrolling micro sessions", () => {
+    renderArticle();
+    const widgets = Array.from(document.querySelectorAll(".lesson .widget"));
+    expect(widgets).toHaveLength(5);
+    expect(widgets.map((widget) => widget.querySelectorAll(".tick").length)).toEqual([12, 10, 10, 12, 12]);
+    expect(screen.getAllByTestId("lever-scroll")).toHaveLength(5);
+    expect(screen.getByText(/intermittent checkout timeout/)).toBeInTheDocument();
+    expect(screen.getByText(/pagination diff for contract regressions/)).toBeInTheDocument();
+    expect(screen.getByText(/billing state machine/)).toBeInTheDocument();
+    expect(screen.getByText(/flaky notification test/)).toBeInTheDocument();
+  });
+
   it("uses TL;DR as collapse-all / expand-all and preserves individual controls afterward", async () => {
     renderArticle();
     expect(screen.queryAllByTestId("deep-dive")).toHaveLength(0);

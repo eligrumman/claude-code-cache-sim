@@ -39,6 +39,10 @@
   const ahaWarm = priceTokens(1_000_000, "cacheRead", { model: "haiku", ttl: "5m" });
   const sonnetPrefixRead = priceTokens(260_000, "cacheRead", { model: "sonnet", ttl: "1h" });
   const sonnetPrefixRebuild = priceTokens(260_000, "cacheWrite", { model: "sonnet", ttl: "1h" });
+  const keepWarmPrefixRead = priceTokens(68_000, "cacheRead", { model: "sonnet", ttl: "5m" });
+  const keepWarmPrefixRebuild = priceTokens(68_000, "cacheWrite", { model: "sonnet", ttl: "5m" });
+  const largePrefixRead = priceTokens(420_000, "cacheRead", { model: "sonnet", ttl: "1h" });
+  const largePrefixRebuild = priceTokens(420_000, "cacheWrite", { model: "sonnet", ttl: "1h" });
   const money = (value: number) => value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
   const exactMoney = (value: number) => `$${value.toFixed(3)}`;
   const routeCost = (task: string, model: Model, effort: Effort) => {
@@ -55,25 +59,88 @@
   const lazyColdSaving = priceTokens(TOTAL_TOOL_CONTEXT_TOKENS, "cacheWrite", { model: "sonnet", ttl: "1h" });
   const lazyWarmSaving = priceTokens(TOTAL_TOOL_CONTEXT_TOKENS, "cacheRead", { model: "sonnet", ttl: "1h" });
 
-  const chat: ScriptedMessage[] = [
-    { id: "brief", role: "user", text: "Refactor the auth module", atMin: 0 },
-    { id: "scan", role: "assistant", text: "I found the session boundary. Editing it now…", atMin: 2 },
-    { id: "tests", role: "user", text: "Run the focused tests", atMin: 10 },
-    { id: "done", role: "assistant", text: "All 18 auth tests pass ✓", atMin: 12 },
+  const ttlSession: ScriptedMessage[] = [
+    { id: "ttl-brief", role: "user", text: "Trace the intermittent checkout timeout and propose the smallest safe fix.", atMin: 0 },
+    { id: "ttl-scan", role: "assistant", text: "I mapped the request path. The retry wrapper and idempotency key disagree on timeout ownership.", atMin: 2 },
+    { id: "ttl-logs", role: "user", text: "Compare that with this morning's production logs before editing.", atMin: 5 },
+    { id: "ttl-hypothesis", role: "assistant", text: "The logs confirm duplicate retries after the gateway deadline. I have a focused patch plan.", atMin: 12 },
+    { id: "ttl-edit", role: "user", text: "Implement it, preserving the existing payment-provider fallback.", atMin: 14 },
+    { id: "ttl-edited", role: "assistant", text: "Patched timeout propagation and added a regression case for the late gateway response.", atMin: 19 },
+    { id: "ttl-suite", role: "user", text: "Run checkout tests plus the provider contract suite.", atMin: 22 },
+    { id: "ttl-failure", role: "assistant", text: "The contract suite exposed one stale mock; the production path is clean. Updating the fixture now.", atMin: 36 },
+    { id: "ttl-rerun", role: "user", text: "Update only that fixture and rerun the failed shard.", atMin: 39 },
+    { id: "ttl-review", role: "assistant", text: "Shard is green. I also checked the diff for retry-count or API-shape changes.", atMin: 48 },
+    { id: "ttl-summary", role: "user", text: "Give me the risk summary and rollout checks for the PR.", atMin: 52 },
+    { id: "ttl-done", role: "assistant", text: "Ready: bounded timeout fix, regression coverage, and three dashboard checks for rollout.", atMin: 58 },
   ];
-  const fast = chat.map((message, index) => ({ ...message, atMin: [0, 2, 4, 6][index] }));
-  const slow = chat.map((message, index) => ({ ...message, atMin: [0, 8, 16, 24][index] }));
-  const noReuse = chat.map((message, index) => ({ ...message, prefixKey: `turn-${index}` }));
-  const subSame: ScriptedMessage[] = [
-    { id: "a1", role: "user", text: "Agent 1: review this diff", atMin: 0, prefixKey: "review" },
-    { id: "a2", role: "assistant", text: "Agent 1: two edge cases found", atMin: 1, prefixKey: "review" },
-    { id: "a3", role: "user", text: "Agent 2: review this diff", atMin: 2, prefixKey: "review" },
-    { id: "a4", role: "assistant", text: "Agent 2: types look clean", atMin: 3, prefixKey: "review" },
+
+  const keepWarmSession: ScriptedMessage[] = [
+    { id: "kw-alert", role: "user", text: "Triage the elevated 502s after the catalog deploy.", atMin: 0 },
+    { id: "kw-trace", role: "assistant", text: "The errors start at the search adapter, not the API edge. I'm checking the deploy diff.", atMin: 1 },
+    { id: "kw-diff", role: "user", text: "Correlate it with the new connection-pool setting.", atMin: 3 },
+    { id: "kw-plan", role: "assistant", text: "That setting is the likely trigger. A canary rollback is running; we need its metrics.", atMin: 5 },
+    { id: "kw-metrics", role: "user", text: "Canary metrics are in: error rate recovered and latency is flat.", atMin: 20 },
+    { id: "kw-verify", role: "assistant", text: "Confirmed across all three regions. The pool was exhausting under burst traffic.", atMin: 22 },
+    { id: "kw-test", role: "user", text: "Add a configuration regression test before the full rollback.", atMin: 24 },
+    { id: "kw-patch", role: "assistant", text: "Test added and failing on the deployed value; the safe default passes.", atMin: 27 },
+    { id: "kw-close", role: "user", text: "Finish the rollback and draft the incident handoff.", atMin: 29 },
+    { id: "kw-done", role: "assistant", text: "Rollback is complete. Handoff includes impact, cause, validation, and the follow-up owner.", atMin: 32 },
   ];
-  const subDifferent = subSame.map((message, index) => ({ ...message, prefixKey: `review-${index}` }));
-  const base: MessageLedgerOptions = {
-    ttl: "5m", model: "sonnet", prefixTok: 260_000, workInTok: 600, outputTok: 900,
-  };
+
+  const sharedHelperSession: ScriptedMessage[] = [
+    { id: "helper-api", role: "user", text: "Helper API: inspect the pagination diff for contract regressions.", atMin: 0, subagent: true, prefixKey: "pagination-review" },
+    { id: "helper-api-result", role: "assistant", text: "API review: cursor encoding is stable; the empty-page response needs one assertion.", atMin: 1, subagent: true, prefixKey: "pagination-review" },
+    { id: "helper-db", role: "user", text: "Helper DB: inspect query plans and migration compatibility.", atMin: 2, subagent: true, prefixKey: "pagination-review" },
+    { id: "helper-db-result", role: "assistant", text: "DB review: the composite index is used, but the down migration drops it in the wrong order.", atMin: 3, subagent: true, prefixKey: "pagination-review" },
+    { id: "helper-ui", role: "user", text: "Helper UI: trace loading, empty, and retry states.", atMin: 4, subagent: true, prefixKey: "pagination-review" },
+    { id: "helper-ui-result", role: "assistant", text: "UI review: loading and retry are covered; keyboard focus is lost after appending a page.", atMin: 5, subagent: true, prefixKey: "pagination-review" },
+    { id: "helper-tests", role: "user", text: "Helper tests: find missing boundary cases without duplicating existing coverage.", atMin: 6, subagent: true, prefixKey: "pagination-review" },
+    { id: "helper-tests-result", role: "assistant", text: "Test review: add empty cursor, deleted-row, and final-page cases; the rest is redundant.", atMin: 7, subagent: true, prefixKey: "pagination-review" },
+    { id: "helper-security", role: "user", text: "Helper security: check cursor tampering and tenant isolation.", atMin: 8, subagent: true, prefixKey: "pagination-review" },
+    { id: "helper-security-result", role: "assistant", text: "Security review: tenant scope is preserved; malformed signed cursors correctly fail closed.", atMin: 9, subagent: true, prefixKey: "pagination-review" },
+  ];
+  const uniqueHelperSession = sharedHelperSession.map((message, index) => ({
+    ...message, prefixKey: `pagination-review-${index}`,
+  }));
+
+  const largeContextSession: ScriptedMessage[] = [
+    { id: "ctx-map", role: "user", text: "Map the billing state machine and plan the invoice-ledger migration.", atMin: 0 },
+    { id: "ctx-plan", role: "assistant", text: "I traced six packages and two workers. The safe seam is the posting interface.", atMin: 3 },
+    { id: "ctx-contract", role: "user", text: "Define that interface without changing external invoice behavior.", atMin: 6 },
+    { id: "ctx-contract-done", role: "assistant", text: "Interface and compatibility adapter are in; typecheck catches direct legacy writes.", atMin: 10 },
+    { id: "ctx-core", role: "user", text: "Migrate the core posting path and its unit tests.", atMin: 14 },
+    { id: "ctx-core-done", role: "assistant", text: "Core path is migrated. Existing rounding and reversal fixtures remain green.", atMin: 19 },
+    { id: "ctx-workers", role: "user", text: "Move the retry and reconciliation workers onto the adapter.", atMin: 23 },
+    { id: "ctx-workers-done", role: "assistant", text: "Both workers now use idempotent postings; I found one retry test with a stale clock.", atMin: 28 },
+    { id: "ctx-integration", role: "user", text: "Fix the test, then run the cross-package integration suite.", atMin: 32 },
+    { id: "ctx-suite", role: "assistant", text: "Integration suite passes. No schema, event, or public API snapshots changed.", atMin: 39 },
+    { id: "ctx-review", role: "user", text: "Review the full diff for migration ordering and rollback risk.", atMin: 43 },
+    { id: "ctx-done", role: "assistant", text: "Review complete: migration is additive, rollback keeps the adapter, and the PR is ready.", atMin: 48 },
+  ];
+  const rebuiltLargeContextSession = largeContextSession.map((message, index) => ({
+    ...message, prefixKey: `billing-turn-${index}`,
+  }));
+
+  const approvalSession: ScriptedMessage[] = [
+    { id: "approve-brief", role: "user", text: "Fix the flaky notification test and verify the change locally.", atMin: 0 },
+    { id: "approve-read", role: "assistant", text: "Reading the test, implementation, and recent failure logs.", atMin: 1 },
+    { id: "approve-scope", role: "user", text: "Keep the fix scoped; don't change the production retry policy.", atMin: 2 },
+    { id: "approve-search", role: "assistant", text: "Searching call sites confirms only the test clock races the queued callback.", atMin: 3 },
+    { id: "approve-edit", role: "user", text: "Make the deterministic clock change in the test helper.", atMin: 4 },
+    { id: "approve-edited", role: "assistant", text: "Helper updated. The focused test now waits on the queued callback explicitly.", atMin: 5 },
+    { id: "approve-focused", role: "user", text: "Run the focused test repeatedly to check the flake.", atMin: 6 },
+    { id: "approve-focused-done", role: "assistant", text: "Fifty focused runs passed with no timing variance.", atMin: 7 },
+    { id: "approve-suite", role: "user", text: "Run the notification package suite and typecheck.", atMin: 8 },
+    { id: "approve-suite-done", role: "assistant", text: "Package suite and typecheck are green. Reviewing the final diff now.", atMin: 9 },
+    { id: "approve-status", role: "user", text: "Summarize the root cause and exactly what changed.", atMin: 10 },
+    { id: "approve-done", role: "assistant", text: "The test raced a queued callback; it now advances the fake clock and awaits that callback. Production is untouched.", atMin: 11 },
+  ];
+  const automaticApprovalSession = approvalSession.map((message, index) => ({
+    ...message, atMin: [0, 1, 2, 3, 4, 5, 7, 9, 10, 12, 13, 15][index],
+  }));
+  const manualApprovalSession = approvalSession.map((message, index) => ({
+    ...message, atMin: [0, 7, 9, 16, 18, 25, 27, 34, 36, 44, 46, 53][index],
+  }));
 
   type MicroSection = {
     id: string;
@@ -99,18 +166,21 @@
         `The TTL controls how long the provider can reuse an exact prompt prefix. The first request is a cache write: ${RATE.w5m}× the model's input rate for five minutes or ${RATE.w1h}× for one hour. A hit during that window is only ${RATE.read}×. That makes a one-hour cold rebuild ${RATE.w1h / RATE.read}× the price of reading the same warm tokens.`,
         `Here is the useful gut check: a one-million-token Haiku prefix is ${money(ahaCold)} on its first five-minute write, ${money(ahaWarm)} while warm, and ${money(ahaCold)} again after it expires. Choose one hour when the likely reuse crosses a coffee break; choose five minutes for tight bursts where the cheaper initial write is likely to stay warm.`,
       ],
-      script: chat, offLabel: "5-minute TTL", onLabel: "1-hour TTL",
-      off: { ...base, ttl: "5m" }, on: { ...base, ttl: "1h" },
+      script: ttlSession, offLabel: "5-minute TTL", onLabel: "1-hour TTL",
+      off: { ttl: "5m", model: "sonnet", prefixTok: 92_000, workInTok: 720, outputTok: 820 },
+      on: { ttl: "1h", model: "sonnet", prefixTok: 92_000, workInTok: 720, outputTok: 820 },
     },
     {
       id: "keep-warm", eyebrow: "2 · KEEP-WARM", title: "Pay a little before expiry.",
       copy: "A timed read can preserve a valuable prefix across a known medium pause.",
       deep: [
-        `Keep-warm sends a small request before expiry so the cached prefix is read and its lifetime is refreshed. The request is not free: this simulator bills the full cached prefix at the ${RATE.read}× cache-read rate. For the 260,000-token Sonnet prefix below, each warm read is ${money(sonnetPrefixRead)}; rebuilding it with a one-hour write is ${money(sonnetPrefixRebuild)}.`,
+        `Keep-warm sends a small request before expiry so the cached prefix is read and its lifetime is refreshed. The request is not free: this simulator bills the full cached prefix at the ${RATE.read}× cache-read rate. For the 68,000-token Sonnet prefix below, each warm read is ${money(keepWarmPrefixRead)}; rebuilding it with a five-minute write is ${money(keepWarmPrefixRebuild)}.`,
         `The decision is a break-even question, not a ritual. Add up the pings needed to bridge the pause and compare them with the rebuild they avoid. Use keep-warm for a known medium wait, then stop it when the session is truly idle; endless reads can eventually cost more than letting the prefix go cold once.`,
       ],
-      script: chat.map((message, index) => ({ ...message, atMin: [0, 2, 17, 19][index] })),
-      offLabel: "No pings", onLabel: "Keep-warm", off: { ...base }, on: { ...base, keepWarm: true },
+      script: keepWarmSession,
+      offLabel: "No pings", onLabel: "Keep-warm",
+      off: { ttl: "5m", model: "sonnet", prefixTok: 68_000, workInTok: 520, outputTok: 680 },
+      on: { ttl: "5m", model: "sonnet", prefixTok: 68_000, workInTok: 520, outputTok: 680, keepWarm: true },
     },
     {
       id: "same-prompt", eyebrow: "3 · SAME PROMPT", title: "Give helpers one shared prefix.",
@@ -119,18 +189,22 @@
         `Prompt caches match a prefix, not the intent behind it. The first helper below writes the shared instructions at ${RATE.w1h}×; each later helper with the same prefix reads those tokens at ${RATE.read}×. Change wording, tool order, or stable context and the simulator gives it a new identity, so the prefix is written cold again.`,
         `That is a ${RATE.w1h / RATE.read}× cold-versus-warm gap before fresh task input and output are added. Keep the reusable subagent brief byte-for-byte stable, then append the file name, question, or test target after it. The helpers still get distinct work without making the expensive front half distinct too.`,
       ],
-      script: subSame, offScript: subDifferent, onScript: subSame,
-      offLabel: "Unique prompts", onLabel: "Same prompt", off: { ...base, ttl: "1h" }, on: { ...base, ttl: "1h" }, startOn: true,
+      script: sharedHelperSession, offScript: uniqueHelperSession, onScript: sharedHelperSession,
+      offLabel: "Unique prompts", onLabel: "Same prompt",
+      off: { ttl: "1h", model: "sonnet", prefixTok: 44_000, workInTok: 380, outputTok: 520 },
+      on: { ttl: "1h", model: "sonnet", prefixTok: 44_000, workInTok: 380, outputTok: 520 }, startOn: true,
     },
     {
       id: "large-context", eyebrow: "4 · LARGE CONTEXT", title: "Reuse the big prefix—or pay again.",
       copy: "A large context magnifies both the first cold write and every saving after it.",
       deep: [
-        `Context is input on every request; caching only changes which input bucket receives it. Sonnet's base input price is ${money(MODEL_IN.sonnet)} per million tokens, so the 260,000-token prefix below costs ${money(sonnetPrefixRebuild)} as a one-hour cold write and ${money(sonnetPrefixRead)} as a warm read. A larger prefix makes both numbers larger in direct proportion.`,
+        `Context is input on every request; caching only changes which input bucket receives it. Sonnet's base input price is ${money(MODEL_IN.sonnet)} per million tokens, so the 420,000-token prefix below costs ${money(largePrefixRebuild)} as a one-hour cold write and ${money(largePrefixRead)} as a warm read. A larger prefix makes both numbers larger in direct proportion.`,
         `Put stable system instructions, tool definitions, and repository context first, then append the changing task. That layout preserves a reusable prefix across turns. Cache eligibility thresholds are provider and model rules; because this pricing source declares no numeric minimum, the article does not fabricate one.`,
       ],
-      script: chat, offScript: noReuse, onScript: chat,
-      offLabel: "Rebuild each turn", onLabel: "Reuse prefix", off: { ...base, ttl: "1h" }, on: { ...base, ttl: "1h" }, startOn: true,
+      script: largeContextSession, offScript: rebuiltLargeContextSession, onScript: largeContextSession,
+      offLabel: "Rebuild each turn", onLabel: "Reuse prefix",
+      off: { ttl: "1h", model: "sonnet", prefixTok: 420_000, workInTok: 1_100, outputTok: 1_450 },
+      on: { ttl: "1h", model: "sonnet", prefixTok: 420_000, workInTok: 1_100, outputTok: 1_450 }, startOn: true,
     },
     {
       id: "auto-approve", eyebrow: "5 · AUTO-APPROVE", title: "Fewer round-trips, fewer expiry chances.",
@@ -139,8 +213,10 @@
         `Auto-approve has no special discount. It changes the timeline: fewer approval turns and shorter pauses make the next real request more likely to arrive before the TTL. The ledger treats a gap shorter than the TTL as warm; a request at or beyond expiry writes the prefix again at ${RATE.w5m}× or ${RATE.w1h}× instead of reading it at ${RATE.read}×.`,
         `Approve only commands the workflow already trusts, such as a focused test or a read-only inspection. Keep destructive or surprising operations gated. The saving comes from removing safe, repetitive friction—not from weakening the boundary around risky actions.`,
       ],
-      script: fast, offScript: slow, onScript: fast,
-      offLabel: "Manual", onLabel: "Auto-approve", off: { ...base }, on: { ...base }, startOn: true,
+      script: automaticApprovalSession, offScript: manualApprovalSession, onScript: automaticApprovalSession,
+      offLabel: "Manual", onLabel: "Auto-approve",
+      off: { ttl: "5m", model: "sonnet", prefixTok: 36_000, workInTok: 320, outputTok: 480 },
+      on: { ttl: "5m", model: "sonnet", prefixTok: 36_000, workInTok: 320, outputTok: 480 }, startOn: true,
     },
   ];
 
