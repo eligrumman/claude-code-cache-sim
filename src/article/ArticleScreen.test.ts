@@ -5,11 +5,13 @@ import MacroRouteWidget from "./MacroRouteWidget.svelte";
 import MacroTaskPicker from "./MacroTaskPicker.svelte";
 import ContextCostWidget from "./ContextCostWidget.svelte";
 import WorkdaySessionWidget from "./WorkdaySessionWidget.svelte";
+import MacroMonthWidget from "./MacroMonthWidget.svelte";
 import {
   MACRO_ROUTES,
   priceContextComparison,
   priceMacroRoutes,
   priceTaskChoice,
+  simulateMacroMonth,
   totalMacroRoutes,
   verdictForChoice,
   type Effort,
@@ -46,6 +48,7 @@ describe("Micro and Macro articles", () => {
       "all", "strategy", "model", "effort", "volume", "compaction",
     ]);
     expect(screen.getByTestId("macro-route-widget")).toBeInTheDocument();
+    expect(screen.getByTestId("macro-month-widget")).toBeInTheDocument();
     expect(screen.getByTestId("workday-session-widget")).toBeInTheDocument();
     expect(screen.queryByTestId("spend-breakdown-task")).not.toBeInTheDocument();
     expect(screen.queryByTestId("route-rate-card-widget")).not.toBeInTheDocument();
@@ -132,7 +135,7 @@ describe("Micro and Macro articles", () => {
     expect(screen.getAllByTestId("deep-dive")).toHaveLength(4);
 
     await fireEvent.click(screen.getByRole("button", { name: "Macro" }));
-    expect(screen.getAllByTestId("deep-dive")).toHaveLength(11);
+    expect(screen.getAllByTestId("deep-dive")).toHaveLength(12);
 
     await fireEvent.click(screen.getByRole("switch", { name: "TL;DR" }));
     expect(screen.queryAllByTestId("deep-dive")).toHaveLength(0);
@@ -180,6 +183,19 @@ describe("Micro and Macro articles", () => {
     await fireEvent.change(screen.getByLabelText("Docs model"), { target: { value: "fable" } });
     expect(screen.getAllByTestId("route-verdict")[6]).toHaveTextContent("expensive · more than this needs");
     expect(screen.getByText(/cannot recover facts absent from the brief/)).toBeInTheDocument();
+  });
+
+  it("builds and renders a reconciling 30-day macro month", () => {
+    const routed = simulateMacroMonth(true);
+    const uniform = simulateMacroMonth(false);
+    expect(routed.days).toHaveLength(30);
+    expect(routed.totalUsd).toBeGreaterThan(0);
+    expect(routed.totalUsd).toBeLessThan(uniform.totalUsd);
+    expect(Object.values(routed.byModel).reduce((sum, value) => sum + value, 0)).toBeCloseTo(routed.totalUsd, 2);
+    expect(Object.values(routed.byEffort).reduce((sum, value) => sum + value, 0)).toBeCloseTo(routed.totalUsd, 2);
+    render(MacroMonthWidget);
+    expect(screen.getAllByTestId("macro-month-day")).toHaveLength(30);
+    expect(Number(screen.getByTestId("macro-month-total").getAttribute("data-value"))).toBeCloseTo(routed.totalUsd, 8);
   });
 
   it("prices both sides of the context example", () => {

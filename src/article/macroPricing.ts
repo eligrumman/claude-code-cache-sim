@@ -18,6 +18,22 @@ export type RouteVerdict = "good" | "bad" | "expensive";
 export type MacroLabStrategy = "uniform" | "routed";
 export type MacroSpendClass = "input" | "cacheRead" | "cacheWrite" | "output";
 
+export interface MacroDay {
+  day: number;
+  totalUsd: number;
+  tasks: Array<{ task: string; model: Model; effort: Effort; usd: number }>;
+  byModel: Record<Model, number>;
+  byEffort: Record<Effort, number>;
+}
+
+export interface MacroMonth {
+  days: MacroDay[];
+  totalUsd: number;
+  peakDay: number;
+  byModel: Record<Model, number>;
+  byEffort: Record<Effort, number>;
+}
+
 export interface MacroLabOptions {
   strategy: MacroLabStrategy;
   model: Model;
@@ -101,6 +117,43 @@ export function taskChoiceBuckets(route: WorkRoute, effort: Effort) {
 /** Price a teaching-widget choice through the same token buckets as the simulator. */
 export function priceTaskChoice(route: WorkRoute, model: Model, effort: Effort): number {
   return priceTokenBuckets(taskChoiceBuckets(route, effort), { model, ttl: "1h" });
+}
+
+/** A deterministic engineering month, priced through the shared task-choice path. */
+export function simulateMacroMonth(routed: boolean): MacroMonth {
+  const emptyModels = (): Record<Model, number> => ({ haiku: 0, sonnet: 0, opus: 0, fable: 0 });
+  const emptyEfforts = (): Record<Effort, number> => ({ low: 0, medium: 0, high: 0 });
+  const monthModels = emptyModels();
+  const monthEfforts = emptyEfforts();
+  const incidentDays = new Set([9, 18, 26]);
+  const normalRouteIndexes = [0, 4, 5, 6, 1];
+  const days = Array.from({ length: 30 }, (_, index): MacroDay => {
+    const day = index + 1;
+    const weekday = day % 7;
+    const weekend = weekday === 6 || weekday === 0;
+    const routeIndexes = incidentDays.has(day)
+      ? [2, 3, 4, 5, 2]
+      : weekend
+        ? (day % 2 === 0 ? [6] : [1, 6])
+        : Array.from({ length: 3 + (day % 3) }, (__, offset) => normalRouteIndexes[(day + offset * 2) % normalRouteIndexes.length]);
+    const byModel = emptyModels();
+    const byEffort = emptyEfforts();
+    const tasks = routeIndexes.map((routeIndex) => {
+      const route = MACRO_ROUTES[routeIndex];
+      const model: Model = routed ? route.model : "opus";
+      const effort: Effort = routed ? route.effort : "high";
+      const usd = priceTaskChoice(route, model, effort);
+      byModel[model] += usd;
+      byEffort[effort] += usd;
+      monthModels[model] += usd;
+      monthEfforts[effort] += usd;
+      return { task: route.task, model, effort, usd };
+    });
+    return { day, totalUsd: tasks.reduce((sum, task) => sum + task.usd, 0), tasks, byModel, byEffort };
+  });
+  const totalUsd = days.reduce((sum, day) => sum + day.totalUsd, 0);
+  const peakDay = days.reduce((peak, day, index) => day.totalUsd > days[peak].totalUsd ? index : peak, 0);
+  return { days, totalUsd, peakDay, byModel: monthModels, byEffort: monthEfforts };
 }
 
 export function verdictForChoice(route: WorkRoute, model: Model, effort: Effort): RouteVerdict {

@@ -2,6 +2,7 @@
   import LeverWidget from "./LeverWidget.svelte";
   import MacroRouteWidget from "./MacroRouteWidget.svelte";
   import MacroTaskPicker from "./MacroTaskPicker.svelte";
+  import MacroMonthWidget from "./MacroMonthWidget.svelte";
   import ContextCostWidget from "./ContextCostWidget.svelte";
   import WorkdaySessionWidget from "./WorkdaySessionWidget.svelte";
   import MacroLabWidget from "./MacroLabWidget.svelte";
@@ -297,6 +298,7 @@
     expanded = Object.fromEntries([
       ...microSections.map((section) => [`micro-${section.id}`, !tldr]),
       ...["lab"].map((id) => [`macro-${id}`, !tldr]),
+      ["macro-month", !tldr],
       ...macroLabFocusSections.map((section) => [`macro-lab-${section.id}`, !tldr]),
       ...macroSections.map((section) => [`macro-${section.id}`, !tldr]),
     ]);
@@ -400,6 +402,16 @@
 
     <MacroRouteWidget />
     <div class="macro-widget"><MacroTaskPicker /></div>
+
+    <section class="lesson macro-lesson">
+      <div class="section-copy">
+        <small>6 · 30 DAYS</small>
+        <h2>A month of choices, day by day.</h2>
+        <p class="section-prose">Over 30 days, per-task model-and-effort routing separates a cheap month from an expensive one; the timeline shows each day’s cost and which models drove it.{#if expanded["macro-month"]}<span data-testid="deep-dive"> Weekends carry a skeleton workload, while deterministic incident days force Debug and RCA spikes. Toggle the routing strategy, then inspect any bar to reconcile its model and effort mix with the month total.</span>{/if}</p>
+        <button class="expand" aria-expanded={Boolean(expanded["macro-month"])} onclick={() => toggle("macro-month")}><b>&gt;</b> {expanded["macro-month"] ? "Close detail" : "Deep dive"}</button>
+      </div>
+      <MacroMonthWidget />
+    </section>
 
     {#each macroSections as section}
       <section class="lesson macro-lesson">
