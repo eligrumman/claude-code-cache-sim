@@ -80,18 +80,18 @@ describe("sandbox screen", () => {
     render(App);
     await fireEvent.click(screen.getByRole("button", { name: /Sandbox/ }));
 
-    expect(screen.getByRole("heading", { name: "Conversation playground" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Turn knobs. Watch the bill." })).toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: "Tune the workday" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "💬 Parallel conversations" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "🔧 Under the hood" })).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Concurrent conversation lanes")).toHaveTextContent(/Main thread.*Subagent 1/s);
-    expect(screen.getByLabelText("Daily cost strip")).toHaveTextContent(/average.*month total/);
+    expect(screen.getByRole("region", { name: "Live cost machine" })).toHaveTextContent(/YOUR MACHINE BURNS.*per day.*month.*Factory settings/s);
+    expect(screen.getByLabelText(/Cache warmth/)).toBeInTheDocument();
     expect(screen.getByLabelText("Daily, weekly, and monthly totals")).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: "on" }));
     expect(screen.getByRole("button", { name: "on" })).toHaveClass("chosen");
     expect(screen.getByText("● Modified")).toBeInTheDocument();
-    expect(screen.getByText(/Configuration queued → applies Day 2/)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Live cost machine" })).toHaveTextContent(/\$.*\/ day vs defaults/);
   });
 
   it("keeps lever edits independent and resets to the current persona defaults", async () => {
@@ -134,6 +134,7 @@ describe("sandbox screen", () => {
     render(App);
     await fireEvent.click(screen.getByRole("button", { name: /Sandbox/ }));
 
+    await fireEvent.click(screen.getByRole("button", { name: /Pull the output receipt/ }));
     const pause = screen.getByRole("button", { name: "⏸ Pause" });
     expect(screen.getByRole("slider", { name: "Simulation speed" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "↺ Reset" })).toBeInTheDocument();
