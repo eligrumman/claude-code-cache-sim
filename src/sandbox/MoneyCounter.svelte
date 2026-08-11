@@ -19,15 +19,15 @@
 </script>
 
 <div class="money {tone}" aria-label={`${label}: $${value.toFixed(2)}`}>
-  <strong>${shown.toFixed(2)}</strong>
+  <strong class="toy-num">${shown.toFixed(2)}</strong>
   <span>{label}</span>
 </div>
 
 <style>
   .money { text-align: center; min-width: 0; transition: color .3s ease, transform .3s ease; }
   strong { display: block; font-size: clamp(2rem, 6vw, 4rem); line-height: 1; letter-spacing: -.055em; font-variant-numeric: tabular-nums; }
-  span { display: block; margin-top: .45rem; color: #686760; font-size: .82rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-  .good { color: #12804a; transform: translateY(3px); }
-  .bad { color: #c93c2c; transform: translateY(-3px); }
-  .neutral { color: #20201e; }
+  span { display: block; margin-top: .45rem; color: var(--toy-muted); font-size: .82rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+  .good { color: var(--toy-green-ink); transform: translateY(3px); }
+  .bad { color: var(--toy-red-ink); transform: translateY(-3px); }
+  .neutral { color: var(--toy-ink); }
 </style>
