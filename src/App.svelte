@@ -59,8 +59,8 @@
         <span class="icon" aria-hidden="true">🎈</span>
         <span class="card-copy">
           <strong>Don't Get Replaced</strong>
-          <span class="hook">Tickets pile up. The clock races.</span>
-          <small>Right-size the brain, keep cache warm, and bank what panic-Opus would burn — before the automation notice lands.</small>
+          <span class="hook">Six weeks. One increasingly weird team.</span>
+          <small>Route each kind of work, compound cache configs, and survive the quarter for less than panic-Opus.</small>
         </span>
         <span class="arrow" aria-hidden="true">→</span>
       </button>

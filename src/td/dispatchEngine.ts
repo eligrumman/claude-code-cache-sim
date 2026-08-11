@@ -1,76 +1,54 @@
 import type { Model } from "../engine/types.js";
-import {
-  MACRO_ROUTES, priceTaskChoice, verdictForChoice,
-  type Effort, type RouteVerdict, type WorkRoute,
-} from "../article/macroPricing.js";
+import { MACRO_ROUTES, priceTaskChoice, verdictForChoice, type Effort, type RouteVerdict } from "../article/macroPricing.js";
 
 export type Difficulty = "easy" | "medium" | "hard";
-export type Persona = "developer" | "pm" | "lead" | "solo";
-export type UpgradeId = "keepWarm" | "ttl" | "lazyTools" | "compact" | "stablePrefix";
-export interface DispatchTask { id: string; routeIndex: number; urgent: boolean; rework: boolean; patience?: number }
-export interface DispatchState { spent: number; baseline: number; banked: number; combo: number; reworks: number; completed: number }
-export interface DispatchResult { state: DispatchState; verdict: RouteVerdict; cost: number; baseline: number; reward: number; rework?: DispatchTask }
-export interface GameState { dispatch: DispatchState; security: number; day: number; phase: "playing"|"shop"|"won"|"lost"; upgrades: UpgradeId[] }
+export type Phase = "briefing" | "setup" | "running" | "report" | "won" | "lost";
+export type ConfigId = "stablePrefix" | "lazyTools" | "compact" | "keepWarm" | "ttl" | "backpacks";
+export type Assignment = { model: Model; effort: Effort };
+export type TaskType = { name: string; routeIndex: number; unlock: number; icon: string };
+export type CampaignTask = TaskType & { id: string; day: number };
+export type TaskResult = CampaignTask & { assignment: Assignment; verdict: RouteVerdict; cost: number; baseline: number; passed: boolean };
+export type WeekReport = { week: number; results: TaskResult[]; spent: number; baseline: number; saved: number; successRate: number; required: number; budget: number; securityDelta: number };
+export type CampaignState = { week: number; phase: Phase; security: number; assignments: Record<string, Assignment>; subagents: boolean | null; configs: ConfigId[]; reports: WeekReport[]; totalSaved: number; endless: boolean };
 
 export const MODELS: readonly Model[] = ["haiku", "sonnet", "opus", "fable"];
 export const EFFORTS: readonly Effort[] = ["low", "medium", "high"];
-export const DIFFICULTY = {
-  easy: { board: 8, patience: 34, arrivalMs: 6500, budget: 5.2, cacheChance: .025, preview: true, suggestion: true },
-  medium: { board: 6, patience: 25, arrivalMs: 4800, budget: 4.1, cacheChance: .055, preview: true, suggestion: false },
-  hard: { board: 4, patience: 18, arrivalMs: 3300, budget: 3.25, cacheChance: .1, preview: false, suggestion: false },
-} as const;
-export const PERSONAS = {
-  developer: { label: "Developer", budget: 1, board: 0, quip: "Tests are your emotional support animal." },
-  pm: { label: "PM", budget: 1.12, board: -1, quip: "Everything is P0, tastefully." },
-  lead: { label: "Team Lead", budget: .95, board: 2, quip: "You own the shared prefix." },
-  solo: { label: "One-Man Company", budget: 1.22, board: 0, quip: "The org chart is a mirror." },
-} as const;
-export const UPGRADES: Record<UpgradeId, { name: string; price: number; effect: string }> = {
-  keepWarm: { name: "Keep-warm ping", price: .12, effect: "Cache shocks and decay −60%." },
-  ttl: { name: "1-hour cache TTL", price: .2, effect: "Long-gap reads stay at 0.1×; writes cost 2× vs 1.25×." },
-  lazyTools: { name: "Lazy-load skills + MCP", price: .18, effect: "Drops 14k prefix tokens: task input −14%." },
-  compact: { name: "Auto-compact", price: .26, effect: "Caps long-day context growth: input −10%." },
-  stablePrefix: { name: "Stable shared prefix", price: .32, effect: "More cache hits: input −18%." },
+export const TASK_TYPES: readonly TaskType[] = [
+  { name:"Development", routeIndex:0, unlock:1, icon:"🛠" }, { name:"QA", routeIndex:4, unlock:2, icon:"🔎" },
+  { name:"Production Bug", routeIndex:1, unlock:2, icon:"🚨" }, { name:"Design", routeIndex:0, unlock:3, icon:"✏️" },
+  { name:"Refactor / Config", routeIndex:5, unlock:3, icon:"🧹" }, { name:"RCA", routeIndex:3, unlock:4, icon:"🧾" },
+  { name:"Docs", routeIndex:6, unlock:4, icon:"📚" }, { name:"Debugging", routeIndex:2, unlock:5, icon:"🪲" },
+  { name:"Tests", routeIndex:5, unlock:5, icon:"🧪" },
+];
+export const CONFIGS: Record<ConfigId,{name:string; effect:string; discount:number}> = {
+  stablePrefix:{name:"Stable shared prefix",effect:"input −18%",discount:.18}, lazyTools:{name:"Lazy-load skills + MCP",effect:"input −14%",discount:.14},
+  compact:{name:"Auto-compact",effect:"input −10%",discount:.10}, keepWarm:{name:"Keep-warm ping",effect:"cache shocks/decay −60%",discount:.06},
+  ttl:{name:"1-hour cache TTL",effect:"long-gap reads stay 0.1×",discount:.07}, backpacks:{name:"Smaller subagent backpacks",effect:"subagent input reduction",discount:.08},
 };
+export const CONFIG_UNLOCKS: readonly ConfigId[] = ["stablePrefix","lazyTools","compact","keepWarm","ttl","backpacks"];
+const SETTINGS = {
+  easy:{ required:[20,30,48,60,72,80], budget:1.32, volume:.85, damage:.65 },
+  medium:{ required:[25,38,55,68,80,88], budget:1.12, volume:1, damage:1 },
+  hard:{ required:[35,48,65,78,88,94], budget:.96, volume:1.18, damage:1.25 },
+} as const;
 
-export function newDispatchState(): DispatchState { return { spent: 0, baseline: 0, banked: 0, combo: 0, reworks: 0, completed: 0 }; }
-export function routeFor(task: DispatchTask): WorkRoute { return MACRO_ROUTES[task.routeIndex % MACRO_ROUTES.length]; }
-export function costMultiplier(warmth: number, upgrades: readonly UpgradeId[]): number {
-  const cold = (100 - Math.max(0, Math.min(100, warmth))) / 100;
-  let multiplier = 1 + cold * (upgrades.includes("keepWarm") ? .3 : .75);
-  if (upgrades.includes("lazyTools")) multiplier *= .86;
-  if (upgrades.includes("compact")) multiplier *= .9;
-  if (upgrades.includes("stablePrefix")) multiplier *= .82;
-  if (upgrades.includes("ttl")) multiplier *= .93;
-  return multiplier;
+export function newCampaign(): CampaignState { return {week:1,phase:"briefing",security:100,assignments:{},subagents:null,configs:[],reports:[],totalSaved:0,endless:false}; }
+export function typesForWeek(week:number): TaskType[] { return TASK_TYPES.filter(t=>t.unlock<=Math.min(week,6)); }
+export function newlyUnlocked(week:number): TaskType[] { return TASK_TYPES.filter(t=>t.unlock===week); }
+export function assignmentFor(state:CampaignState,typeName:string): Assignment | undefined { return state.subagents===false ? state.assignments.Development : state.assignments[typeName] ?? state.assignments.Development; }
+export function configMultiplier(configs:readonly ConfigId[]):number { return configs.reduce((n,id)=>n*(1-CONFIGS[id].discount),1); }
+export function previewChoice(type:TaskType, assignment:Assignment, configs:readonly ConfigId[]=[]){ const route=MACRO_ROUTES[type.routeIndex]; return {verdict:verdictForChoice(route,assignment.model,assignment.effort),cost:priceTaskChoice(route,assignment.model,assignment.effort)*configMultiplier(configs),baseline:priceTaskChoice(route,"opus","high")}; }
+export function weekTasks(week:number,difficulty:Difficulty):CampaignTask[]{
+  const types=typesForWeek(week); const base=week>=6?18:4+week*2; const count=Math.max(types.length,Math.round(base*SETTINGS[difficulty].volume));
+  return Array.from({length:count},(_,i)=>({...types[(i*3+week)%types.length],id:`w${week}-t${i+1}`,day:i%5+1}));
 }
-export function previewTask(task: DispatchTask, model: Model, effort: Effort, multiplier = 1) {
-  const route = routeFor(task); const verdict = verdictForChoice(route, model, effort);
-  const cost = priceTaskChoice(route, model, effort) * multiplier;
-  const baseline = priceTaskChoice(route, "opus", "high");
-  return { verdict, cost, delta: baseline - cost };
+export function requiredRate(week:number,difficulty:Difficulty):number { const bars=SETTINGS[difficulty].required; return bars[Math.min(week,6)-1] ?? Math.min(98,bars[5]+(week-6)*2); }
+export function resolveWeek(state:CampaignState,difficulty:Difficulty,tasks=weekTasks(state.week,difficulty),practice=false):{state:CampaignState;report:WeekReport}{
+  const multiplier=configMultiplier(state.configs); const results=tasks.map(task=>{const assignment=assignmentFor(state,task.name)??{model:"haiku" as Model,effort:"low" as Effort};const route=MACRO_ROUTES[task.routeIndex];const verdict=verdictForChoice(route,assignment.model,assignment.effort);const baseline=priceTaskChoice(route,"opus","high");return {...task,assignment,verdict,cost:priceTaskChoice(route,assignment.model,assignment.effort)*multiplier,baseline,passed:verdict!=="bad"};});
+  const spent=results.reduce((n,r)=>n+r.cost,0), baseline=results.reduce((n,r)=>n+r.baseline,0), successRate=results.length?results.filter(r=>r.passed).length/results.length*100:100, required=requiredRate(state.week,difficulty), budget=baseline*SETTINGS[difficulty].budget*.58;
+  const over=spent>budget; let securityDelta=successRate<required?-Math.ceil((required-successRate)*.55*SETTINGS[difficulty].damage):over?0:successRate>=required+10?8:3; if(state.week<=2)securityDelta=Math.max(securityDelta,-18);
+  const security=practice?Math.max(1,state.security+Math.max(0,securityDelta)):Math.max(0,Math.min(100,state.security+securityDelta)); const report={week:state.week,results,spent,baseline,saved:baseline-spent,successRate,required,budget,securityDelta};
+  return {report,state:{...state,phase:security<=0&&!practice?"lost":"report",security,reports:[...state.reports,report],totalSaved:state.totalSaved+report.saved}};
 }
-export function dispatchTask(state: DispatchState, task: DispatchTask, model: Model, effort: Effort, multiplier = 1): DispatchResult {
-  const route = routeFor(task); const verdict = verdictForChoice(route, model, effort);
-  const cost = priceTaskChoice(route, model, effort) * multiplier;
-  const baseline = task.rework ? 0 : priceTaskChoice(route, "opus", "high");
-  const fitCost = priceTaskChoice(route, route.model, route.effort) * multiplier;
-  const combo = verdict === "good" ? state.combo + 1 : 0;
-  const reward = verdict === "good" ? Math.max(0, baseline - cost) : 0;
-  return { verdict, cost, baseline, reward,
-    rework: verdict === "bad" && !task.rework ? { ...task, id: `${task.id}-rework`, rework: true, urgent: true, patience: 10 } : undefined,
-    state: { spent: state.spent + cost + (verdict === "bad" ? fitCost : 0), baseline: state.baseline + baseline,
-      banked: state.banked + reward, combo, reworks: state.reworks + (verdict === "bad" ? 1 : 0), completed: state.completed + (verdict === "bad" ? 0 : 1) },
-  };
-}
-export function damageForQueue(count: number, capacity: number, expired = 0): number { return Math.max(0, count - capacity) * 12 + expired * 16; }
-export function buyUpgrade(state: GameState, id: UpgradeId): GameState {
-  const item = UPGRADES[id]; if (state.upgrades.includes(id) || state.dispatch.banked < item.price) return state;
-  return { ...state, upgrades: [...state.upgrades, id], dispatch: { ...state.dispatch, banked: state.dispatch.banked - item.price } };
-}
-export function resolvePhase(state: GameState, budget: number, practice = false): GameState["phase"] {
-  if (!practice && (state.security <= 0 || state.dispatch.spent > budget)) return "lost";
-  if (state.day > 5) return "won";
-  return state.phase;
-}
-export function gradeFor(state: DispatchState): string { return state.reworks === 0 && state.banked > 0 ? "S" : state.reworks <= 1 && state.banked > 0 ? "A" : state.banked > 0 ? "B" : "C"; }
+export function advanceWeek(state:CampaignState):CampaignState { if(state.week>=6&&!state.endless)return {...state,phase:"won"}; return {...state,week:state.week+1,phase:"briefing"}; }
+export function enterEndless(state:CampaignState):CampaignState { return {...state,endless:true,week:7,phase:"briefing",configs:Object.keys(CONFIGS) as ConfigId[]}; }
