@@ -222,7 +222,14 @@ export function simulateMessageLedger(script: ScriptedMessage[], options: Messag
         options.contextLevers,
       )
       : null;
-    const prefixTok = contextTurn?.prefixTok ?? message.contextTok ?? options.prefixTok;
+    // When neither an explicit contextLever prefix nor an explicit per-message
+    // contextTok is supplied, the cached prefix grows each turn: the prior turn's
+    // user input and assistant output both become part of the cached context that
+    // the next turn re-reads, so turn N's flat-fallback prefix is the base prefix
+    // plus N * (workIn + output) rather than a constant.
+    const growthPerTurn = (options.workInTok || 0) + (options.outputTok || 0);
+    const flatFallback = options.prefixTok + index * growthPerTurn;
+    const prefixTok = contextTurn?.prefixTok ?? message.contextTok ?? flatFallback;
     if (contextTurn) contextStates.set(contextKey, contextTurn.nextState);
 
     if (options.keepWarm && samePrefix && Number.isFinite(lastTouch) && !naturalWarm) {
