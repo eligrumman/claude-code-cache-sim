@@ -1,346 +1,179 @@
 <script lang="ts">
-  import { MODEL_IN } from "../sim/cost.js";
-  import { SCENARIOS } from "../sim/scenarios.js";
-  import CopyButton from "../setup/CopyButton.svelte";
-  import ConfigHelp from "../components/ConfigHelp.svelte";
-  import RawDataModal from "../components/RawDataModal.svelte";
-  import type { RawTurn } from "../sim/captures/realSegments.js";
-  import { recipeById, type RecipeId } from "../setup/recipes.js";
-  import {
-    DEFAULT_MAIN, DEFAULT_TOGGLES, EFFORTS, FIT_TABLE, MODELS, ROUTABLE_TASK_TYPES,
-    createMoab, defaultRoutingControl, isGameOver, liveSpendRate, overdraftLeft,
-    resolveRoute, routeTaskWithControl, scenarioToDispatchWave, scoreMoab,
-    type DispatchTask, type DispatchToggles, type FitOutcome, type RouteResult, type RoutingControl, type Worker,
-  } from "./engine.js";
+  import type { Model } from "../engine/types.js";
+  import { MACRO_ROUTES, type Effort, type RouteVerdict } from "../article/macroPricing.js";
+  import { MODELS, EFFORTS, dispatchTask, gradeFor, newDispatchState, routeFor, type DispatchTask, type DispatchState } from "./dispatchEngine.js";
 
   interface Props { onback: () => void }
   let { onback }: Props = $props();
-  interface LiveTask extends DispatchTask { progress: number; lane: number }
-  interface Pop { x: number; y: number; text: string; tone: FitOutcome; life: number }
+  type Phase = "intro" | "playing" | "won" | "lost";
+  type Spark = { id: number; verdict: RouteVerdict; text: string };
+  const icons = ["🗺️", "🩹", "🔎", "🧪", "👀", "✅", "✍️"];
+  const personalities: Record<Model, string> = { haiku: "tiny & quick", sonnet: "steady hand", opus: "the professor", fable: "moonshot brain" };
+  const WAVE_COUNTS = [4, 5, 6, 7, 8];
+  const KEEP_WARM_PRICE = 0.35;
 
-  const W = 900;
-  const H = 330;
-  const gameSetups: readonly { id: RecipeId; label: string }[] = [
-    { id: "keep-warm", label: "Keep-warm" },
-    { id: "ttl", label: "TTL" },
-    { id: "auto-approve", label: "Approvals" },
-    { id: "compact", label: "Compaction" },
-    { id: "lazy", label: "Lazy skills + MCPs" },
-    { id: "lazy", label: "Docs skill" },
-    { id: "lazy", label: "Extra MCP" },
-  ];
-  const waves = SCENARIOS.map(scenarioToDispatchWave);
-  const typeMeta = {
-    plan: { icon: "📐", color: "#cbb3e5", short: "PLAN" },
-    hotfix: { icon: "🚑", color: "#ff9b8f", short: "HOTFIX" },
-    debugging: { icon: "🔍", color: "#8ec4ef", short: "DEBUG" },
-    rca: { icon: "🧪", color: "#ba9cdb", short: "RCA" },
-    "code-review": { icon: "👀", color: "#efc86d", short: "REVIEW" },
-    testing: { icon: "✅", color: "#83d5bf", short: "TEST" },
-    docs: { icon: "📄", color: "#b8d987", short: "DOCS" },
-    bug: { icon: "🐞", color: "#f18c7e", short: "BUG" },
-    "production-issue": { icon: "🔥", color: "#df5c54", short: "PROD" },
-  } as const;
-
-  let canvas = $state<HTMLCanvasElement>();
-  let ctx: CanvasRenderingContext2D | null = null;
-  let phase = $state<"title" | "playing" | "dead" | "won">("title");
-  let sandboxMode = $state(false);
-  let dailyBudget = $state(25);
-  let budget = $state(25);
-  let allowance = $state(8.75);
-  let spend = $state(0);
-  let baseline = $state(0);
-  let reworkSpend = $state(0);
-  let clean = $state(0);
-  let bad = $state(0);
-  let overkill = $state(0);
-  let wasted = $state(0);
-  let waveIndex = $state(0);
-  let live = $state<LiveTask[]>([]);
-  let queue = $state<Array<{ task: DispatchTask; at: number }>>([]);
-  let pops = $state<Pop[]>([]);
+  let phase = $state<Phase>("intro");
+  let sandbox = $state(false);
+  let tasks = $state<DispatchTask[]>([]);
   let selectedId = $state<string | null>(null);
-  let running = $state(false);
-  let speed = $state(1);
-  let status = $state("One main agent receives everything. Retune it before the stream starts.");
-  let toggles = $state<DispatchToggles>({ ...DEFAULT_TOGGLES });
-  let control = $state<RoutingControl>(defaultRoutingControl());
-  let moabResults = $state<RouteResult[]>([]);
-  let moabSeen = $state(false);
-  let rawTurns = $state<RawTurn[]>([]);
-  let waveElapsed = 0;
-  let lastFrame = 0;
-  let raf = 0;
-  let actualTouches = new Map<string, number>();
-  let baselineTouches = new Map<string, number>();
-  let actualContexts = new Map<string, number>();
-  let baselineContexts = new Map<string, number>();
-  let challengeCode = $state(`function cacheReadCost(tokens, dollarPerMTok) {\n  // TODO: warm reads use the 0.1× rate\n  return 0;\n}`);
-  let testOutput = $state<string[]>([]);
-  let challengePassed = $state(false);
+  let effort = $state<Effort>("medium");
+  let score = $state<DispatchState>(newDispatchState());
+  let wave = $state(0);
+  let serial = $state(0);
+  let cacheWarmth = $state(100);
+  let keepWarm = $state(false);
+  let cacheEvent = $state("");
+  let feedback = $state("Pick a ticket, set effort, then hire a brain.");
+  let shake = $state(false);
+  let sparks = $state<Spark[]>([]);
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let sparkSerial = 0;
 
-  let selectedTask = $derived(live.find(task => task.id === selectedId));
-  let activeWave = $derived(waves[waveIndex]);
-  let previewTask = $derived(selectedTask ?? queue[0]?.task ?? activeWave?.tasks[0]);
-  let spendRate = $derived.by(() => {
-    spend;
-    if (!previewTask) return 0;
-    const key = touchKey(previewTask);
-    return routeTaskWithControl(
-      previewTask, control, toggles, undefined, undefined,
-      actualContexts.get(key) ?? 0, baselineContexts.get(`main-1m:${DEFAULT_MAIN.model}`) ?? 0,
-    ).usd;
-  });
-  let delta = $derived(baseline - spend);
-  let overdraft = $derived(overdraftLeft(spend, budget, allowance));
-  let spentPct = $derived(sandboxMode ? 0 : Math.min(100, spend / budget * 100));
-  let moabScore = $derived(scoreMoab(moabResults));
+  let selected = $derived(tasks.find((task) => task.id === selectedId));
+  let budget = $derived(1.8 + wave * 0.65);
+  let savedVsPanic = $derived(score.baseline - score.spent);
+  let progress = $derived(tasks.length ? Math.max(0, (WAVE_COUNTS[wave] - tasks.length) / WAVE_COUNTS[wave] * 100) : 100);
 
-  function safeMoney(value: number) {
-    const finite = Number.isFinite(value) && value >= 0 ? value : 0;
-    return `$${finite.toFixed(finite < 0.1 ? 3 : 2)}`;
+  function money(value: number) { return `$${Math.max(0, value).toFixed(2)}`; }
+  function makeTask(routeIndex = (serial * 3 + wave) % MACRO_ROUTES.length, rework = false): DispatchTask {
+    serial += 1;
+    return { id: `dispatch-${serial}`, routeIndex, rework, urgent: rework || (serial + wave) % 4 === 0 };
   }
-  function rateMoney(value: number) {
-    const finite = Number.isFinite(value) && value >= 0 ? value : 0;
-    return `$${finite.toFixed(3)}`;
+  function seedWave() {
+    tasks = Array.from({ length: WAVE_COUNTS[wave] }, (_, index) => makeTask((index * 2 + wave) % MACRO_ROUTES.length));
+    selectedId = tasks[0]?.id ?? null;
+    feedback = `Wave ${wave + 1}: ${tasks.length} tickets just hit the belt.`;
   }
-  function workerName(worker: Worker) { return `${worker.model[0].toUpperCase()}${worker.model.slice(1)} · ${worker.effort}`; }
-  function touchKey(task: DispatchTask, route = resolveRoute(task.type, control)) {
-    return route.context === "main-1m" ? `main-1m:${route.worker.model}` : `scoped:${route.worker.model}:${task.type}`;
+  function start() {
+    phase = "playing"; wave = 0; serial = 0; score = newDispatchState(); cacheWarmth = 100;
+    keepWarm = false; cacheEvent = ""; sparks = []; seedWave(); startClock();
   }
-  function priorFor(map: Map<string, number>, task: DispatchTask, key: string) {
-    const prior = map.get(key);
-    return prior !== undefined && prior <= task.atMin ? prior : undefined;
+  function startClock() {
+    if (timer) clearInterval(timer);
+    if (typeof window === "undefined" || import.meta.env.MODE === "test") return;
+    timer = setInterval(() => {
+      cacheWarmth = Math.max(15, cacheWarmth - (keepWarm ? 0.25 : 0.7));
+      if (Math.random() < 0.045) triggerCacheMiss();
+    }, 1000);
   }
-  function remember(map: Map<string, number>, task: DispatchTask, key: string) { map.set(key, Math.max(map.get(key) ?? Number.NEGATIVE_INFINITY, task.atMin)); }
-
-  function startGame() {
-    budget = dailyBudget;
-    allowance = sandboxMode ? 0 : dailyBudget * 0.35;
-    spend = baseline = reworkSpend = wasted = 0;
-    clean = bad = overkill = waveIndex = 0;
-    live = []; queue = []; pops = []; moabResults = []; moabSeen = false; rawTurns = []; selectedId = null; running = false; speed = 1;
-    toggles = { ...DEFAULT_TOGGLES };
-    control = defaultRoutingControl();
-    actualTouches = new Map(); baselineTouches = new Map(); actualContexts = new Map(); baselineContexts = new Map();
-    phase = "playing";
-    status = "MAIN AGENT is Opus · high with a real 1M-token prefix. Change model or effort live.";
+  function triggerCacheMiss() {
+    const events = ["CLAUDE.md edited!", "Context reshuffled!", "Prefix changed lanes!"];
+    cacheEvent = events[Math.floor(Math.random() * events.length)];
+    cacheWarmth = Math.max(8, cacheWarmth - (keepWarm ? 12 : 42));
+    setTimeout(() => { cacheEvent = ""; }, 2200);
   }
-  function restart() { phase = "title"; running = false; live = []; queue = []; selectedId = null; }
-
-  function startWave() {
-    if (phase !== "playing" || running || live.length || queue.length || !activeWave) return;
-    waveElapsed = 0;
-    const isCrisis = activeWave.scenario.id === "debug-prod";
-    const tasks = isCrisis ? [...createMoab(0.25, "moab-prod-down"), ...activeWave.tasks.map(task => ({ ...task, atMin: task.atMin + 8 }))] : activeWave.tasks;
-    let at = 0;
-    queue = tasks.map((task, index) => {
-      if (isCrisis && task.origin === "moab") at = 0.25 + index * 0.035;
-      else if (index === 0) at = 0.25;
-      else at += Math.min(3.2, 0.7 + Math.max(0, task.atMin - tasks[index - 1].atMin) * 0.075);
-      return { task, at };
-    });
-    if (isCrisis) { moabSeen = true; status = "🚨 MOAB: production DOWN — every incident stage just landed URGENT."; }
-    else status = `LIVE: ${activeWave.name}. Routes are applied when each task reaches the agent.`;
-    running = true;
+  function buyKeepWarm() {
+    if (keepWarm || score.banked < KEEP_WARM_PRICE) return;
+    keepWarm = true; score = { ...score, banked: score.banked - KEEP_WARM_PRICE };
+    feedback = "🔥 Prefix tending enabled. Cache shocks now land softly.";
   }
-
-  function spawn(task: DispatchTask) {
-    const lane = task.urgent ? live.length % 3 : task.type === "production-issue" ? 2 : task.type === "bug" ? 0 : live.length % 3;
-    live = [...live, { ...task, progress: 0, lane }];
+  function selectTask(task: DispatchTask) { selectedId = task.id; }
+  function chooseBrain(model: Model) {
+    if (!selected) { feedback = "Choose a ticket first — brains dislike mystery paperwork."; return; }
+    const task = selected;
+    const route = routeFor(task);
+    const multiplier = 1 + (100 - cacheWarmth) / 100 * 0.75;
+    const result = dispatchTask(score, task, model, effort, multiplier);
+    score = result.state;
+    tasks = tasks.filter((item) => item.id !== task.id);
+    if (result.rework) tasks = [...tasks, { ...result.rework, id: `${result.rework.id}-${serial++}` }];
+    const copy = result.verdict === "good" ? `Perfect fit! +${money(result.reward)} into the jar.`
+      : result.verdict === "expensive" ? `Delivered, but ${model} was more brain than this needed.`
+      : `Uh-oh. Bad output → fit-route rework charged and bounced back.`;
+    feedback = `${route.task} · ${copy}`;
+    sparks = [...sparks, { id: ++sparkSerial, verdict: result.verdict, text: result.verdict === "good" ? "+$" : result.verdict === "bad" ? "REWORK" : "OVERKILL" }];
+    setTimeout(() => { sparks = sparks.filter((spark) => spark.id !== sparkSerial); }, 900);
+    if (result.verdict === "bad") { shake = true; setTimeout(() => { shake = false; }, 380); }
+    selectedId = tasks[0]?.id ?? null;
+    if (!sandbox && score.spent > budget) finish("lost");
+    else if (tasks.length === 0) nextWave();
   }
-
-  function dispatch(taskId: string, automatic = false) {
-    const task = live.find(item => item.id === taskId);
-    if (!task || phase !== "playing") return;
-    const route = resolveRoute(task.type, control);
-    const actualKey = touchKey(task, route);
-    const baselineKey = `main-1m:${DEFAULT_MAIN.model}`;
-    const actualPriorTouch = priorFor(actualTouches, task, actualKey);
-    const result = routeTaskWithControl(
-      task, control, toggles,
-      actualPriorTouch,
-      task.origin === "scenario" || task.origin === "moab" ? priorFor(baselineTouches, task, baselineKey) : undefined,
-      actualContexts.get(actualKey) ?? 0,
-      baselineContexts.get(baselineKey) ?? 0,
-    );
-    spend += result.usd;
-    const warm = actualPriorTouch !== undefined && (toggles.keepWarm || task.atMin - actualPriorTouch < (toggles.ttl === "5m" ? 5 : 60));
-    rawTurns = [...rawTurns, {
-      label: `${task.type} · ${result.route.label}`,
-      messagesTok: result.ledgerOptions.prefixTok,
-      cacheWrite: warm ? 0 : result.ledgerOptions.prefixTok,
-      cacheRead: warm ? result.ledgerOptions.prefixTok : 0,
-      freshInput: result.ledgerOptions.workInTok,
-      output: result.ledgerOptions.outputTok,
-    }];
-    remember(actualTouches, task, actualKey);
-    actualContexts.set(actualKey, result.nextConversationTok);
-    if (task.origin !== "rework") {
-      baseline += result.baselineUsd;
-      remember(baselineTouches, task, baselineKey);
-      baselineContexts.set(baselineKey, result.baselineNextConversationTok);
-    } else reworkSpend += result.usd;
-    if (result.outcome === "good-fit") clean += 1;
-    if (result.outcome === "bad-output") bad += 1;
-    if (result.outcome === "overkill") { overkill += 1; wasted += result.wastedUsd; }
-    if (task.incidentId) moabResults = [...moabResults, result];
-
-    const laneY = 88 + task.lane * 76;
-    const x = Math.min(650, 80 + task.progress * 700);
-    const who = `${result.route.label} ${workerName(result.monkey)}`;
-    const text = result.outcome === "bad-output" ? `BAD ❌ ${who} · +${result.rework.length} cascade`
-      : result.outcome === "overkill" ? `EXPENSIVE 💸 ${who} · ${safeMoney(result.wastedUsd)} waste`
-        : `GOOD ✅ ${who} · ${safeMoney(result.savingsUsd)} saved`;
-    pops = [...pops, { x, y: laneY, text, tone: result.outcome, life: 2.6 }];
-    live = live.filter(item => item.id !== task.id);
-    selectedId = selectedId === task.id ? null : selectedId;
-    result.rework.forEach((rework, index) => { queue = [...queue, { task: rework, at: waveElapsed + 1.1 + index * 0.8 }]; });
-    status = result.compactionUsd > 0
-      ? `${automatic ? "AUTO · " : "NOW · "}🗜️ compacted via Haiku (+${safeMoney(result.compactionUsd)}), then ${task.type} → ${who}.`
-      : `${automatic ? "AUTO · " : "NOW · "}${task.type} → ${who}: ${text.split(" · ")[0]}.`;
-    if (!sandboxMode && isGameOver(spend, budget, allowance)) { phase = "dead"; running = false; challengePassed = false; testOutput = []; }
+  function nextWave() {
+    if (wave >= WAVE_COUNTS.length - 1) { finish("won"); return; }
+    wave += 1; cacheWarmth = Math.max(30, cacheWarmth - 8); seedWave();
   }
-
-  function tick(rawDt: number) {
-    if (!running || phase !== "playing") return;
-    const dt = Math.min(0.04, rawDt) * speed;
-    waveElapsed += dt;
-    const due = queue.filter(item => item.at <= waveElapsed);
-    queue = queue.filter(item => item.at > waveElapsed);
-    due.forEach(item => spawn(item.task));
-    live = live.map(task => ({ ...task, progress: task.progress + dt * (task.origin === "rework" ? 0.105 : task.urgent ? 0.12 : 0.09) }));
-    live.filter(task => task.progress >= 1).map(task => task.id).forEach(id => dispatch(id, true));
-    pops = pops.map(pop => ({ ...pop, life: pop.life - dt })).filter(pop => pop.life > 0);
-    if (phase === "playing" && running && queue.length === 0 && live.length === 0) {
-      running = false;
-      if (waveIndex >= waves.length - 1) phase = "won";
-      else { waveIndex += 1; status = `Workload cleared. Next: ${waves[waveIndex].name}. Retune routes before starting.`; }
-    }
+  function finish(next: "won" | "lost") { phase = next; if (timer) clearInterval(timer); }
+  function keyTask(event: KeyboardEvent, task: DispatchTask) {
+    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectTask(task); }
   }
-
-  function cardAt(task: LiveTask) { return { x: 42 + task.progress * 700, y: 57 + task.lane * 76, w: 170, h: 58 }; }
-  function boardClick(event: MouseEvent) {
-    if (!canvas || phase !== "playing") return;
-    const rect = canvas.getBoundingClientRect();
-    const x = (event.clientX - rect.left) * W / rect.width;
-    const y = (event.clientY - rect.top) * H / rect.height;
-    const hit = [...live].reverse().find(task => { const card = cardAt(task); return x >= card.x && x <= card.x + card.w && y >= card.y && y <= card.y + card.h; });
-    if (hit) { selectedId = hit.id; const route = resolveRoute(hit.type, control); status = `${hit.type} selected · ${route.label} → ${workerName(route.worker)} · ideal ${FIT_TABLE[hit.type].label}.`; }
-  }
-  function drawRoundRect(x: number, y: number, w: number, h: number, radius: number) { ctx?.beginPath(); ctx?.roundRect(x, y, w, h, radius); }
-  function draw() {
-    if (!ctx) return;
-    // Canvas literals mirror app.css: toy-cream #fffdf8, toy-dash #bbb7ac,
-    // toy-muted #716c62, toy-ink #20201d, toy-gold-soft #fff0b3,
-    // toy-red-ink #8c251d, toy-green-ink #126536, toy-gold-ink #7a5600.
-    ctx.clearRect(0, 0, W, H); ctx.fillStyle = "#fffdf8"; ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = "#bbb7ac"; ctx.lineWidth = 1; ctx.setLineDash([3, 8]);
-    for (let y = 86; y <= 238; y += 76) { ctx.beginPath(); ctx.moveTo(26, y); ctx.lineTo(862, y); ctx.stroke(); }
-    ctx.setLineDash([]); ctx.fillStyle = "#716c62"; ctx.font = "700 12px ui-monospace"; ctx.fillText("INCOMING", 22, 28); ctx.fillText("ROUTE →", 796, 28);
-    ctx.strokeStyle = "#20201d"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(854, 42); ctx.lineTo(854, 291); ctx.stroke();
-    for (const task of live) {
-      const meta = typeMeta[task.type]; const card = cardAt(task); drawRoundRect(card.x, card.y, card.w, card.h, 12);
-      ctx.fillStyle = selectedId === task.id ? "#fff0b3" : meta.color; ctx.fill();
-      ctx.strokeStyle = task.urgent ? "#8c251d" : selectedId === task.id ? "#20201d" : "#126536"; ctx.lineWidth = task.urgent || selectedId === task.id ? 3 : 1.5; ctx.stroke();
-      ctx.fillStyle = "#20201d"; ctx.font = "900 11px ui-monospace"; ctx.fillText(`${meta.icon} ${meta.short}`, card.x + 9, card.y + 19);
-      ctx.font = "10px system-ui"; const title = task.title.length > 27 ? `${task.title.slice(0, 27)}…` : task.title; ctx.fillText(title, card.x + 9, card.y + 41);
-      if (task.urgent) { ctx.fillStyle = "#8c251d"; ctx.font = "900 9px ui-monospace"; ctx.fillText("URGENT", card.x + 123, card.y + 17); }
-      else if (task.origin === "rework") { ctx.fillStyle = "#8c251d"; ctx.font = "900 9px ui-monospace"; ctx.fillText("REWORK", card.x + 121, card.y + 17); }
-    }
-    for (const pop of pops) {
-      ctx.globalAlpha = Math.min(1, pop.life * 1.4); ctx.fillStyle = pop.tone === "good-fit" ? "#126536" : pop.tone === "overkill" ? "#7a5600" : "#8c251d";
-      ctx.font = "900 12px system-ui"; ctx.fillText(pop.text, pop.x, pop.y - (2.6 - pop.life) * 20); ctx.globalAlpha = 1;
-    }
-  }
-
-  function runChallenge() {
-    testOutput = [];
-    try {
-      const factory = new Function("globalThis", "self", "window", "document", "fetch", "XMLHttpRequest", "WebSocket", "navigator", "location", "localStorage", "sessionStorage", `"use strict";\n${challengeCode}\nreturn typeof cacheReadCost === "function" ? cacheReadCost : null;`);
-      const fn = factory(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined) as null | ((a:number,b:number)=>unknown);
-      if (!fn) throw new Error("cacheReadCost was not defined");
-      const cases: [number, number, number][] = [[20_000,3,.006],[100_000,5,.05],[1_000_000,10,1]];
-      let ok = true;
-      testOutput = cases.map(([tok, rate, expected], index) => { const got = fn(tok, rate); const pass = typeof got === "number" && Number.isFinite(got) && Math.abs(got - expected) < 1e-9; ok &&= pass; return pass ? `✓ test ${index + 1} passed` : `✗ test ${index + 1}: expected ${expected}, got ${String(got)}`; });
-      challengePassed = ok;
-    } catch (error) { testOutput = [`✗ Build failed: ${error instanceof Error ? error.message : String(error)}`]; challengePassed = false; }
-  }
-  function revive() { spend = Math.min(spend, budget + allowance * .5); phase = "playing"; running = true; challengePassed = false; status = "Rehired! ☕ Retune the route before the next expensive task lands."; }
-
-  // Canvas is conditional. This effect owns exactly one RAF loop for exactly its mounted lifetime.
-  $effect(() => {
-    const activeCanvas = canvas;
-    if (!activeCanvas) { ctx = null; return; }
-    ctx = activeCanvas.getContext("2d"); lastFrame = 0;
-    const frame = (now: number) => { const dt = lastFrame ? (now - lastFrame) / 1000 : 0; lastFrame = now; tick(dt); draw(); raf = requestAnimationFrame(frame); };
-    raf = requestAnimationFrame(frame);
-    return () => { cancelAnimationFrame(raf); ctx = null; };
-  });
+  $effect(() => () => { if (timer) clearInterval(timer); });
 </script>
 
-<section class="td-shell">
-  <header class="topline"><button class="sketch toy-btn" onclick={onback}>← Map</button><div><h1>🎈 Tokenloons TD</h1><p>live task-routing economics</p></div><button class="sketch toy-btn" onclick={restart}>↻ Restart</button></header>
-  {#if phase === "title"}
-    <div class="title-card">
-      <div class="balloons" aria-hidden="true">🎈 🎈 🎈</div><h2>One very expensive default.</h2>
-      <p>Every task starts on the <b>MAIN AGENT: Opus · high</b>, hauling a <b>1M-token context</b>. Turn on subagents to route fresh, scoped work by type—without underpowering the jobs that need deep reasoning.</p>
-      <div class="lesson"><span>BAD ❌ → bug cascades</span><span>GOOD ✅ → clean savings</span><span>EXPENSIVE 💸 → wasted overpay</span></div>
-      <label class="mode"><input type="checkbox" bind:checked={sandboxMode}><span><b>Sandbox mode</b><small>No budget, no death. Same economics.</small></span></label>
-      {#if !sandboxMode}<label class="budget toy-range">Budget <b>{safeMoney(dailyBudget)}</b><input aria-label="Budget" type="range" min="10" max="100" step="5" bind:value={dailyBudget}></label><small class="overdraft-note">plus {safeMoney(dailyBudget * .35)} overdraft; revive in the mock IDE if it runs dry</small>{/if}
-      <button class="primary big toy-btn" onclick={startGame}>Clock in →</button>
-    </div>
-  {:else}
-    <div class="hud">
-      <div class="metric"><small>{sandboxMode ? "SPEND INCL. REWORK" : "SPEND / BUDGET"}</small><b class="toy-num">{safeMoney(spend)} {#if !sandboxMode}<em>/ {safeMoney(budget)}</em>{/if}</b>{#if !sandboxMode}<div class="bar"><i style={`width:${spentPct}%`}></i></div>{/if}</div>
-      <div class="metric rate"><small>LIVE TASK RATE · REPRICES NOW</small><b>{rateMoney(spendRate)}</b><span>{previewTask?.type ?? "waiting"} at current route</span></div>
-      <div class="metric"><small>DEFAULT WOULD COST</small><b>{safeMoney(baseline)}</b><span class:loss={delta < 0}>{delta >= 0 ? `${safeMoney(delta)} saved` : `${safeMoney(-delta)} worse`}</span></div>
-      <div class="metric"><small>QUALITY / REWORK</small><b><span class="green">{clean}✓</span> · <span class="red">{bad} bad</span></b><span>{safeMoney(reworkSpend)} rework</span></div>
-      <div class="metric"><small>OVERKILL</small><b>{overkill} tasks</b><span>{safeMoney(wasted)} avoidable</span></div>
-      {#if !sandboxMode}<div class="metric"><small>OVERDRAFT LEFT</small><b class:red={overdraft < allowance * .25}>{safeMoney(overdraft)}</b><span>after budget</span></div>{/if}
-    </div>
-    <div class="raw-hud"><RawDataModal title="Modeled game dispatch log" provenance={{ real: false }} rows={rawTurns} /></div>
-    <div class="wave-note"><b>{waveIndex + 1}/{waves.length} · {activeWave?.name}</b><span>{activeWave?.scenario.id === "debug-prod" ? "MOAB climax: hotfix + debugging + RCA + review + testing land together." : activeWave?.lesson}</span></div>
-    {#if moabSeen}<div class="moab-score"><b>🐛 MOAB INCIDENT</b><span>{moabScore.stagesResolved}/5 stages · actual {safeMoney(moabScore.actualUsd)} vs panic-default {safeMoney(moabScore.panicDefaultUsd)} · {moabScore.draggedStages} dragged</span>{#if moabScore.stagesResolved === 5}<strong>{moabScore.panicDefaulted ? "You panic-defaulted every stage." : moabScore.deltaUsd >= 0 ? `${safeMoney(moabScore.deltaUsd)} survived` : `${safeMoney(-moabScore.deltaUsd)} over panic cost`}</strong>{/if}</div>{/if}
-    <div class="config-rail" aria-label="Free global configuration"><strong>FREE GLOBAL CONFIG →</strong><span class="rail-check"><label><input type="checkbox" bind:checked={toggles.keepWarm}> ☕ keep-warm</label><ConfigHelp configId="keep-warm" /></span><div class="seg toy-seg"><button class:active={toggles.ttl === "5m"} onclick={() => toggles.ttl = "5m"}>TTL 5m</button><button class:active={toggles.ttl === "1h"} onclick={() => toggles.ttl = "1h"}>TTL 1h</button></div><ConfigHelp configId="ttl" /><div class="seg toy-seg"><button class:active={toggles.approval === "auto"} onclick={() => toggles.approval = "auto"}>auto-approve</button><button class:active={toggles.approval === "manual"} onclick={() => toggles.approval = "manual"}>manual</button></div><ConfigHelp configId="auto-approve" /><span class="rail-check"><label title="Compress history over 32k to an 8k working set; Haiku summary is charged"><input type="checkbox" bind:checked={toggles.autoCompact}> 🗜️ auto-compact</label><ConfigHelp configId="compact" /></span><span class="rail-check mcp"><label title="Load 14k tokens of skills and MCP schemas only on turns that invoke them"><input type="checkbox" bind:checked={toggles.lazyLoadTools}> 💤 lazy skills/MCPs</label><ConfigHelp configId="lazy" /></span><span class="rail-check"><label><input type="checkbox" bind:checked={toggles.docsSkill}> 📚 docs skill</label><ConfigHelp configId="docs-skill" /></span><span class="rail-check mcp"><label><input type="checkbox" bind:checked={toggles.alwaysLoadedMcp}> 🔌 extra MCP</label><ConfigHelp configId="extra-mcp" /></span></div>
-    <div class="config-setups" aria-label="Copy setup for game configuration">
-      {#each gameSetups as setup (`${setup.id}-${setup.label}`)}
-        <details>
-          <summary>⧉ Copy {setup.label} setup</summary>
-          <CopyButton recipe={recipeById[setup.id]} compact />
-        </details>
-      {/each}
-    </div>
+<section class:shake class="td-shell">
+  <header class="topbar">
+    <button class="back" onclick={onback} aria-label="Back to home">← map</button>
+    <div class="brand"><span class="toy-eyebrow">THE ROUTING ARCADE</span><strong>DISPATCH</strong></div>
+    {#if phase === "playing"}<div class="day">WAVE {wave + 1}/{WAVE_COUNTS.length}</div>{/if}
+  </header>
 
-    <div class="game-grid">
-      <main class="board-wrap">
-        <canvas bind:this={canvas} width={W} height={H} onclick={boardClick} aria-label="Live task routing lane; click a task to inspect it"></canvas>
-        <div class="status">✎ {status}</div>
-        <div class="controls"><button class="primary toy-btn" onclick={startWave} disabled={running || live.length > 0 || queue.length > 0 || phase !== "playing"}>▶ Start {activeWave?.name}</button><button class="sketch toy-btn" onclick={() => selectedTask && dispatch(selectedTask.id)} disabled={!selectedTask || phase !== "playing"}>Route selected now</button><button class="sketch toy-btn" onclick={() => running = !running} disabled={phase !== "playing" || (!running && !live.length && !queue.length)}>{running ? "Ⅱ Pause" : "▶ Resume"}</button><button class="sketch toy-btn" onclick={() => speed = speed === 1 ? 1.7 : 1}>{speed}×</button><span>{live.length} active · {queue.length} incoming</span></div>
-      </main>
-      <aside class="router">
-        <h3>MAIN AGENT <mark>1M context</mark></h3><p>Everything lands here while subagents are off.</p>
-        <div class="worker-selects"><div class="worker-field"><span>Model <ConfigHelp configId="route" /></span><select class="toy-select" aria-label="Main agent model" bind:value={control.main.model}>{#each MODELS as model}<option value={model}>{model}</option>{/each}</select></div><div class="worker-field"><span>Effort <ConfigHelp configId="effort" /></span><select class="toy-select" aria-label="Main agent effort" bind:value={control.main.effort}>{#each EFFORTS as effort}<option value={effort}>{effort}</option>{/each}</select></div></div>
-        <small class="rate-note">${MODEL_IN[control.main.model]}/M input · HUD rate changes immediately</small>
-        <details class="router-setup"><summary>⧉ Copy model + effort setup</summary><CopyButton recipe={recipeById.route} compact /></details>
-        <div class="sub-toggle"><label><input type="checkbox" bind:checked={control.useSubagents}><span><b>Use subagents</b><small>Fresh scoped context, routed by type</small></span></label><ConfigHelp configId="delegate" /></div>
-        <details class="router-setup"><summary>⧉ Copy subagent routing setup</summary><CopyButton recipe={recipeById.delegate} compact /></details>
-        {#if control.useSubagents}
-          <div class="routes"><div class="route-head"><b>TASK TYPE <ConfigHelp configId="route" /></b><b>MODEL</b><b>EFFORT</b></div>{#each ROUTABLE_TASK_TYPES as type}<div class="route-row"><span title={FIT_TABLE[type].label}>{typeMeta[type].icon} {type}</span><select class="toy-select" aria-label={`${type} model`} bind:value={control.routes[type].model}><option value="inherit">inherit ({control.main.model})</option>{#each MODELS as model}<option value={model}>{model}</option>{/each}</select><select class="toy-select" aria-label={`${type} effort`} bind:value={control.routes[type].effort}><option value="inherit">inherit ({control.main.effort})</option>{#each EFFORTS as effort}<option value={effort}>{effort}</option>{/each}</select></div><small class="fit">ideal: {FIT_TABLE[type].label}</small>{/each}</div>
-        {:else}<div class="default-route">plan, hotfix, debugging, RCA, review, testing, docs<br><b>↓ all MAIN AGENT</b></div>{/if}
-      </aside>
-    </div>
+  {#if phase === "intro"}
+    <main class="intro toycard">
+      <div class="stamp">INBOX<br>OPEN</div>
+      <p class="toy-eyebrow">A TINY WORKDAY WITH EXPENSIVE CONSEQUENCES</p>
+      <h1 class="toy-title">Right brain.<br><em>Right job.</em></h1>
+      <p>Route each ticket to the smallest brain that can nail it. Keep the shared context warm. Bank the difference.</p>
+      <label class="practice"><input type="checkbox" bind:checked={sandbox}> Practice mode <small>no budget, no fail</small></label>
+      <button class="toy-btn launch" onclick={start}>Clock in →</button>
+      <p class="hint">Keyboard friendly: Tab to a ticket, Enter to select, then Tab to a brain.</p>
+    </main>
+  {:else if phase === "playing"}
+    <main class="game">
+      <section class="hud toycard" aria-label="Workday dashboard">
+        <div><span>SPENT</span><strong class="toy-num">{money(score.spent)}</strong><small>{sandbox ? "practice" : `budget ${money(budget)}`}</small></div>
+        <div class:gain={savedVsPanic >= 0}><span>VS PANIC OPUS·HIGH</span><strong class="toy-num">{savedVsPanic >= 0 ? "+" : "−"}{money(Math.abs(savedVsPanic))}</strong><small>baseline {money(score.baseline)}</small></div>
+        <div class="jar"><span>🫙 SAVINGS JAR</span><strong class="toy-num">{money(score.banked)}</strong><small class:combo={score.combo > 1}>{score.combo > 1 ? `×${score.combo} COMBO!` : "make a good fit"}</small>{#each sparks as spark (spark.id)}<i class={spark.verdict}>{spark.text}</i>{/each}</div>
+      </section>
+
+      <section class="cache toycard">
+        <div class="cache-label"><strong>🔥 CACHE WARMTH</strong><span>{Math.round(cacheWarmth)}%</span></div>
+        <div class="heat"><b style={`width:${cacheWarmth}%`}></b></div>
+        <p class:event={cacheEvent}>{cacheEvent || (cacheWarmth < 55 ? "Cold prefix: input reads are spiking." : "Stable shared prefix = cheap reads.")}</p>
+        <button class="toy-btn warm" disabled={keepWarm || score.banked < KEEP_WARM_PRICE} onclick={buyKeepWarm}>{keepWarm ? "✓ Tended" : `🔥 Keep-warm · ${money(KEEP_WARM_PRICE)}`}</button>
+      </section>
+
+      <section class="conveyor toycard" aria-label="Incoming tasks">
+        <div class="belt-head"><span>INCOMING TICKETS</span><span>{tasks.length} LEFT</span></div>
+        <div class="belt" style={`--progress:${progress}%`}>
+          {#each tasks as task (task.id)}
+            {@const route = routeFor(task)}
+            <button class:selected={selectedId === task.id} class:rework={task.rework} class="ticket" onclick={() => selectTask(task)} onkeydown={(event) => keyTask(event, task)} aria-pressed={selectedId === task.id}>
+              <b class="icon">{icons[task.routeIndex]}</b><span><strong>{route.task}</strong><small>{task.rework ? "↩ REWORK" : task.urgent ? "⚡ URGENT" : "READY"}</small></span>
+              <span class="judgment"><small>JUDGMENT</small><i><b style={`width:${(task.routeIndex === 2 || task.routeIndex === 3 ? 96 : task.routeIndex === 0 ? 72 : task.routeIndex === 4 ? 55 : 28)}%`}></b></i></span>
+            </button>
+          {/each}
+        </div>
+      </section>
+
+      <section class="dispatch-panel">
+        <div class="effort toycard"><span class="toy-eyebrow">1. SET THINKING</span><div class="toy-seg">{#each EFFORTS as level}<button class:active={effort === level} onclick={() => effort = level}>{level}</button>{/each}</div></div>
+        <div class="brains"><span class="toy-eyebrow">2. HIRE A BRAIN FOR {selected ? routeFor(selected).task.toUpperCase() : "..."}</span>
+          <div class="brain-grid">{#each MODELS as model}<button class={`brain ${model}`} onclick={() => chooseBrain(model)} disabled={!selected}><span>{model === "haiku" ? "🫘" : model === "sonnet" ? "🧠" : model === "opus" ? "🧠✨" : "🔮"}</span><strong>{model}</strong><small>{personalities[model]}</small></button>{/each}</div>
+        </div>
+      </section>
+      <p class="feedback" role="status">{feedback}</p>
+    </main>
+  {:else}
+    <main class="result toycard">
+      <div class="confetti">✦　●　★　✦　●</div>
+      <p class="toy-eyebrow">{phase === "won" ? "SHIFT COMPLETE" : "BUDGET NEEDS A LITTLE NAP"}</p>
+      <h1>{phase === "won" ? `Grade ${gradeFor(score)}` : "Merge conflict: wallet"}</h1>
+      <p>{phase === "won" ? "The professor did not need to answer every email. Beautiful." : "You panic-hired a few too many professors. The tickets forgive you."}</p>
+      <div class="receipt"><span>You banked</span><strong>{money(Math.max(0, savedVsPanic))}</strong><small>vs panic-defaulting {money(score.baseline)} · {score.reworks} reworks</small></div>
+      <div class="result-actions"><button class="toy-btn" onclick={start}>↻ Try another shift</button><button class="toy-btn ghost" onclick={onback}>Back to map</button></div>
+    </main>
   {/if}
 </section>
 
-{#if phase === "dead" && !sandboxMode}<div class="scrim"><div class="ide"><div class="ide-top"><span class="dots">● ● ●</span><b>cache-rescue.ts — 1 problem</b><span>BUILD FAILED</span></div><div class="death-copy"><h2>💸 Out of tokens.</h2><p><b>Your boss is NOT happy.</b> Claude is asleep—write the function yourself to revive dispatch.</p></div><div class="editor"><div class="lines">1<br>2<br>3<br>4</div><textarea bind:value={challengeCode} spellcheck="false" aria-label="Cache cost coding challenge"></textarea></div><p class="spec">Return: <code>tokens × 0.1 × dollarPerMTok ÷ 1,000,000</code></p>{#if testOutput.length}<pre class:passing={challengePassed}>{testOutput.join("\n")}{challengePassed ? "\n\n✓ 3 passed. Rehire paperwork suspiciously fast." : "\n\nTests failed. The production fire remains employed."}</pre>{/if}{#if challengePassed}<div class="rehired">Rehired! ☕ Claude is awake again.</div>{/if}<div class="ide-actions"><button class="run" onclick={runChallenge}>▷ Run tests</button>{#if challengePassed}<button class="revive" onclick={revive}>Resume dispatch →</button>{/if}<button onclick={restart}>Start over</button></div></div></div>{/if}
-{#if phase === "won"}<div class="scrim"><div class="win-card"><div class="confetti">🎈 ✦ 🎈</div><h2>Workday routed.</h2><p>You spent <b class="toy-num">{safeMoney(spend)}</b>. Panic-defaulting the original work would cost <b>{safeMoney(baseline)}</b>.</p><div class:negative={delta < 0} class="saved-total">{delta >= 0 ? `You saved ${safeMoney(delta)}` : `You overspent by ${safeMoney(-delta)}`}</div><p>{bad ? `${bad} bad outputs created ${safeMoney(reworkSpend)} of rework.` : "No bad-output cascades. Nice judgment."}</p><button class="primary toy-btn" onclick={restart}>Route another day</button><button class="sketch toy-btn" onclick={onback}>Back to map</button></div></div>{/if}
-
 <style>
-  .raw-hud{display:flex;justify-content:flex-end;margin:-3px 0 7px}
-  .td-shell{font-family:var(--font-display);color:var(--toy-ink)}.topline{display:flex;align-items:center;gap:14px;margin-bottom:10px}.topline div{flex:1;text-align:center}.topline h1{margin:0;font-size:27px}.topline p{margin:1px;color:var(--toy-muted);font-size:12px}.sketch,.controls button,.win-card button{border:2px solid var(--toy-ink);background:var(--toy-paper);border-radius:9px;padding:7px 11px;font-weight:800;cursor:pointer;box-shadow:2px 2px 0 var(--toy-ink)}.sketch:disabled,.controls button:disabled{opacity:.4;cursor:not-allowed}.title-card{max-width:720px;margin:32px auto;padding:30px;text-align:center;background:var(--toy-cream);border:3px solid var(--toy-ink);border-radius:24px 17px 27px 19px;box-shadow:9px 10px 0 var(--toy-green)}.title-card h2{font-size:34px;margin:8px 0}.title-card>p{max-width:610px;margin:10px auto;line-height:1.55}.balloons{font-size:34px}.lesson{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:19px 0}.lesson span{padding:9px;border:1.5px dashed var(--toy-muted);border-radius:9px;background:var(--toy-paper)}.mode{display:flex;gap:10px;align-items:center;text-align:left;max-width:370px;margin:15px auto;padding:10px 13px;border:2px solid var(--toy-ink);border-radius:11px;background:var(--toy-green-soft)}.mode span,.mode small{display:block}.mode small{color:var(--toy-muted)}.budget{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:14px}.budget input{width:250px;accent-color:var(--toy-red)}.overdraft-note{display:block;color:var(--toy-muted)}.primary{border:2px solid var(--toy-ink)!important;background:var(--toy-gold)!important;color:var(--toy-ink)!important;box-shadow:3px 3px 0 var(--toy-ink)!important;font-weight:900}.primary.big{margin-top:18px;padding:11px 20px;border-radius:11px;font-size:16px;cursor:pointer}.hud{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:7px}.metric{min-width:0;padding:7px 9px;background:var(--toy-paper);border:2px solid var(--toy-ink);border-radius:10px;box-shadow:2px 2px 0 var(--toy-shadow)}.metric.rate{background:var(--toy-gold-soft);border-color:var(--toy-gold-ink)}.metric small{display:block;font:850 8px ui-monospace;letter-spacing:.04em;color:var(--toy-muted)}.metric b{display:block;font:850 15px ui-monospace;white-space:nowrap}.metric em{font-size:9px;color:var(--toy-muted)}.metric>span{display:block;margin-top:2px;font-size:8px;color:var(--toy-green-ink)}.metric>span.loss,.red{color:var(--toy-red-ink)}.green{color:var(--toy-green-ink)}.bar{height:5px;margin-top:4px;background:var(--toy-dash);border-radius:9px;overflow:hidden}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--toy-green),var(--toy-gold) 70%,var(--toy-red));transition:width .2s}.wave-note,.moab-score{display:flex;gap:10px;align-items:center;padding:6px 10px;border:2px dashed var(--toy-gold-ink);border-radius:9px;margin-bottom:7px;background:var(--toy-gold-soft)}.wave-note b,.moab-score b{white-space:nowrap}.wave-note span,.moab-score span{font-size:10px;color:var(--toy-muted)}.moab-score{border-color:var(--toy-red-ink);background:var(--toy-red-soft)}.moab-score strong{margin-left:auto;font-size:10px;color:var(--toy-red-ink)}.config-rail{display:flex;gap:7px;align-items:center;flex-wrap:wrap;padding:6px 8px;margin-bottom:7px;border:2px solid var(--toy-ink);border-radius:10px;background:var(--toy-blue-soft);font-size:10px}.config-rail>strong{font:900 10px ui-monospace}.rail-check{display:flex;align-items:center;gap:1px;padding-right:3px;background:var(--toy-paper);border:1px solid var(--toy-dash);border-radius:7px}.config-rail label{display:flex;align-items:center;gap:3px;padding:5px 4px 5px 7px;cursor:pointer}.config-rail .mcp{background:var(--toy-red-soft)}.seg{display:flex}.seg button{padding:5px 7px;border:1px solid var(--toy-muted);background:var(--toy-paper);font-size:10px;font-weight:750;cursor:pointer}.seg button:first-child{border-radius:7px 0 0 7px}.seg button:last-child{border-radius:0 7px 7px 0;border-left:0}.seg button.active{background:var(--toy-green-ink);color:var(--toy-paper)}.game-grid{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:9px}.board-wrap{min-width:0}canvas{display:block;width:100%;border:3px solid var(--toy-ink);border-radius:13px;background:var(--toy-cream);box-shadow:4px 4px 0 var(--toy-shadow);cursor:pointer;touch-action:manipulation}.status{min-height:20px;margin-top:7px;padding:6px 8px;background:var(--toy-paper);border-left:4px solid var(--toy-gold);font:10px/1.35 ui-monospace}.controls{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:5px}.controls button{font-size:10px;padding:6px 8px}.controls span{margin-left:auto;font-size:9px;color:var(--toy-muted)}.router{padding:10px;background:var(--toy-paper);border:2px solid var(--toy-ink);border-radius:12px;box-shadow:4px 4px 0 var(--toy-green);max-height:430px;overflow:auto}.router h3{margin:0 0 3px;font-size:15px}.router mark{float:right;padding:2px 5px;border-radius:5px;background:var(--toy-red-soft);font:800 9px ui-monospace}.router>p{margin:2px 0 8px;font-size:9px;color:var(--toy-muted)}.worker-selects{display:grid;grid-template-columns:1fr 1fr;gap:6px}.worker-field{font:800 9px ui-monospace}.router select{width:100%;min-width:0;padding:4px;border:1px solid var(--toy-muted);border-radius:5px;background:var(--toy-paper);font-size:10px}.rate-note{display:block;margin:5px 0 8px;color:var(--toy-muted)}.sub-toggle{display:flex;gap:7px;align-items:center;padding:8px;border:2px solid var(--toy-green-ink);border-radius:8px;background:var(--toy-green-soft)}.sub-toggle label{display:flex;gap:7px;align-items:center;flex:1;cursor:pointer}.sub-toggle span,.sub-toggle small{display:block}.sub-toggle small{font-size:8px;color:var(--toy-muted)}.routes{margin-top:8px}.route-head,.route-row{display:grid;grid-template-columns:1.25fr 1fr 1fr;gap:4px;align-items:center}.route-head{padding:0 2px 3px;font:800 8px ui-monospace;color:var(--toy-muted)}.route-row{padding-top:4px;border-top:1px dashed var(--toy-dash)}.route-row span{font-size:9px;font-weight:800}.fit{display:block;text-align:right;margin:1px 2px 3px;color:var(--toy-muted);font-size:7px}.default-route{margin-top:10px;padding:13px;text-align:center;background:var(--toy-gold-soft);border:1px dashed var(--toy-gold-ink);border-radius:8px;font-size:10px;line-height:1.6}.scrim{position:fixed;z-index:80;inset:0;display:flex;align-items:center;justify-content:center;padding:14px;background:rgba(23,20,17,.82)}.ide{width:min(720px,100%);max-height:95vh;overflow:auto;background:var(--toy-paper);color:var(--toy-ink);border:2px solid var(--toy-border);border-radius:10px;box-shadow:var(--toy-card-shadow);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.ide-top{display:flex;justify-content:space-between;background:var(--toy-blue-soft);padding:9px 12px;font-size:11px;color:var(--toy-muted)}.dots{color:var(--toy-red-ink);letter-spacing:3px}.death-copy{padding:16px 22px 6px}.death-copy h2{font-size:27px;margin:0;color:var(--toy-red-ink)}.death-copy p{font-family:var(--font-body)}.editor{display:flex;margin:6px 20px;background:var(--toy-cream);border:1px solid var(--toy-dash)}.lines{width:34px;padding:12px 8px;text-align:right;color:var(--toy-muted);line-height:1.5}.editor textarea{flex:1;min-height:118px;resize:vertical;border:0;outline:0;padding:12px;background:var(--toy-cream);color:var(--toy-green-ink);font:13px/1.5 ui-monospace}.spec{margin:10px 22px;font-size:11px}.spec code{color:var(--toy-gold-ink)}.ide pre{margin:10px 22px;padding:10px;background:var(--toy-red-soft);border-left:3px solid var(--toy-red);color:var(--toy-red-ink)}.ide pre.passing{background:var(--toy-green-soft);border-color:var(--toy-green);color:var(--toy-green-ink)}.rehired{margin:10px 22px;color:var(--toy-green-ink);font:bold 18px var(--font-body)}.ide-actions{display:flex;gap:8px;padding:12px 22px 20px}.ide-actions button{border:1px solid var(--toy-border);background:var(--toy-paper);color:var(--toy-ink);border-radius:5px;padding:8px 12px;font-weight:700;cursor:pointer}.ide-actions .run{background:var(--toy-green)}.ide-actions .revive{background:var(--toy-gold);color:var(--toy-ink)}.win-card{width:min(540px,100%);padding:30px;text-align:center;background:var(--toy-cream);border:3px solid var(--toy-ink);border-radius:22px;box-shadow:9px 9px 0 var(--toy-green)}.win-card h2{font-size:34px;margin:5px}.confetti{font-size:34px}.saved-total{margin:18px;font-size:24px;font-weight:900;color:var(--toy-green-ink)}.saved-total.negative{color:var(--toy-red-ink)}.win-card button{margin:5px}
-  .config-setups{display:flex;flex-wrap:wrap;gap:5px;margin:-2px 0 8px;padding:0 4px}.config-setups details,.router-setup{min-width:0}.config-setups summary,.router-setup summary{cursor:pointer;color:var(--toy-muted);font:800 9px/1.2 ui-monospace;text-decoration:underline;text-underline-offset:2px}.config-setups details[open]{flex:1 1 100%;min-width:0;padding:5px 7px;border:1px dashed var(--toy-dash);border-radius:8px;background:var(--toy-paper)}.router-setup{margin:5px 0 8px;padding-bottom:5px;border-bottom:1px dashed var(--toy-dash)}
-  @media(max-width:950px){.hud{grid-template-columns:repeat(3,1fr)}.game-grid{grid-template-columns:1fr}.router{max-height:none}.routes{display:grid;grid-template-columns:1fr 1fr;gap:0 8px}.route-head{display:none}.wave-note,.moab-score{align-items:flex-start;flex-direction:column;gap:2px}.moab-score strong{margin-left:0}.board-wrap{overflow-x:auto;padding-bottom:4px}.board-wrap canvas{width:max(100%,680px)}}
-  @media(max-width:560px){.topline h1{font-size:20px}.topline .sketch{font-size:9px;padding:6px}.title-card{padding:22px 14px;margin-top:12px}.lesson{grid-template-columns:1fr}.hud{grid-template-columns:1fr 1fr}.metric b{font-size:13px}.routes{grid-template-columns:1fr}.budget{flex-direction:column}.controls span{margin-left:0}.ide-actions{flex-wrap:wrap}}
+  :global(body:has(.td-shell)){background:var(--toy-cream)!important;color:var(--toy-ink)!important}
+  .td-shell{background:var(--toy-cream);min-height:100dvh;color:var(--toy-ink);font-family:var(--font-body);padding:clamp(12px,2vw,28px);box-sizing:border-box;overflow:hidden}
+  button{font:inherit;color:inherit}.topbar{max-width:1120px;margin:auto;display:flex;align-items:center;justify-content:space-between}.back{border:0;background:none;font-weight:800;cursor:pointer}.brand{text-align:center;line-height:1}.brand strong{display:block;font:900 clamp(24px,4vw,42px)/.9 var(--font-display);letter-spacing:.08em}.day{font-weight:900;border:2px solid var(--toy-ink);padding:7px 12px;border-radius:99px;background:var(--toy-gold-soft)}
+  .intro,.result{max-width:700px;margin:7vh auto 0;padding:clamp(28px,6vw,70px);text-align:center;position:relative;transform:rotate(-.5deg)}.intro h1{font-size:clamp(54px,10vw,104px);line-height:.78;margin:.25em 0}.intro em{color:var(--toy-green-ink);font-style:normal}.intro>p:not(.toy-eyebrow,.hint){font-size:clamp(17px,2vw,22px);max-width:530px;margin:25px auto}.stamp{position:absolute;right:30px;top:25px;border:3px solid var(--toy-red-ink);color:var(--toy-red-ink);padding:8px;transform:rotate(8deg);font-weight:900}.practice{display:block;margin:22px}.practice small{color:var(--toy-muted)}.launch{font-size:22px!important;padding:13px 30px!important;background:var(--toy-green)!important}.hint{font-size:12px;color:var(--toy-muted)}
+  .game{max-width:1120px;margin:18px auto}.hud{display:grid;grid-template-columns:repeat(3,1fr);padding:15px;margin-bottom:12px;background:var(--toy-paper);border:var(--toy-border-w) solid var(--toy-border);box-shadow:var(--toy-card-shadow)}.hud>div{padding:5px 18px;border-right:1px dashed var(--toy-dash);position:relative}.hud>div:last-child{border:0}.hud span,.hud small{display:block;font-size:11px;font-weight:800;color:var(--toy-muted)}.hud strong{font-size:clamp(24px,4vw,42px);color:var(--toy-ink)}.hud>div:nth-child(2):not(.gain) strong{color:var(--toy-red-ink)}.hud .gain strong{color:var(--toy-green-ink)}.jar{background:var(--toy-gold-soft);border-radius:var(--toy-radius)}.jar i{position:absolute;right:15px;top:5px;font-style:normal;font-weight:900;animation:coin .8s ease-out forwards}.jar i.good{color:var(--toy-green-ink)}.jar i.bad{color:var(--toy-red-ink)}.combo{color:var(--toy-green-ink)!important;animation:wiggle .35s}
+  .cache{padding:12px 150px 12px 16px;position:relative;margin-bottom:12px}.cache-label{display:flex;justify-content:space-between}.heat{height:12px;background:var(--toy-cream-2);border:2px solid var(--toy-ink);border-radius:99px;overflow:hidden}.heat b{display:block;height:100%;background:linear-gradient(90deg,var(--toy-red),var(--toy-gold),var(--toy-green));transition:width .5s}.cache p{margin:5px 0 0;font-size:12px}.cache p.event{color:var(--toy-red-ink);font-weight:900}.warm{position:absolute;right:12px;top:15px}.warm:disabled{opacity:.5}
+  .conveyor{padding:0;overflow:hidden}.belt-head{display:flex;justify-content:space-between;padding:10px 14px;border-bottom:2px solid var(--toy-ink);font-weight:900;font-size:12px}.belt{display:flex;gap:12px;padding:20px;overflow-x:auto;background:repeating-linear-gradient(100deg,var(--toy-cream-2) 0 24px,var(--toy-paper) 24px 48px)}.ticket{flex:0 0 205px;min-height:90px;border:2px solid var(--toy-ink);border-radius:10px;background:var(--toy-paper);box-shadow:3px 4px 0 var(--toy-ink);display:grid;grid-template-columns:42px 1fr;align-items:center;text-align:left;padding:10px;cursor:pointer;transition:.15s}.ticket:hover,.ticket.selected{transform:translateY(-5px) rotate(-1deg);background:var(--toy-blue-soft)}.ticket.selected{outline:4px solid var(--toy-gold)}.ticket.rework{background:var(--toy-red-soft);animation:bounce .5s}.ticket .icon{font-size:28px}.ticket small{display:block;font-size:9px;color:var(--toy-muted)}.judgment{grid-column:1/-1;display:flex;gap:7px;align-items:center}.judgment i{height:7px;flex:1;background:var(--toy-cream-2);border-radius:9px;overflow:hidden}.judgment i b{display:block;height:100%;background:var(--toy-blue)}
+  .dispatch-panel{display:grid;grid-template-columns:210px 1fr;gap:12px;margin-top:12px}.effort{padding:16px}.toy-seg{margin-top:12px}.toy-seg button{text-transform:capitalize}.brains{padding:8px}.brain-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:8px}.brain{min-height:104px;border:2px solid var(--toy-ink);border-radius:14px;background:var(--toy-paper);box-shadow:var(--card-shadow);cursor:pointer;transition:transform .13s,box-shadow .13s}.brain:hover:not(:disabled){transform:translateY(-7px) scale(1.03) rotate(1deg);box-shadow:6px 8px 0 var(--toy-ink)}.brain:active:not(:disabled){transform:translateY(2px)}.brain:disabled{opacity:.45}.brain span,.brain small{display:block}.brain span{font-size:28px}.brain strong{text-transform:capitalize;font:900 20px var(--font-display)}.brain.haiku{background:var(--toy-green-soft)}.brain.sonnet{background:var(--toy-blue-soft)}.brain.opus{background:var(--toy-gold-soft)}.brain.fable{background:var(--toy-red-soft)}.feedback{text-align:center;font-weight:800;min-height:24px}.result h1{font:900 clamp(50px,10vw,100px) var(--font-display);margin:.15em}.receipt{background:var(--toy-gold-soft);border:2px dashed var(--toy-ink);padding:20px;margin:25px}.receipt span,.receipt small{display:block}.receipt strong{font:900 55px var(--font-display);color:var(--toy-green-ink)}.result-actions{display:flex;gap:12px;justify-content:center}.ghost{background:var(--toy-paper)!important}.confetti{font-size:30px;color:var(--toy-gold-ink)}
+  @keyframes coin{to{transform:translate(-100px,65px) scale(.3);opacity:0}}@keyframes wiggle{50%{transform:scale(1.25) rotate(-4deg)}}@keyframes bounce{50%{transform:translateY(-8px)}}@keyframes shake{25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}.shake{animation:shake .12s 3}
+  @media(max-width:700px){.hud{grid-template-columns:1fr}.hud>div{border-right:0;border-bottom:1px dashed var(--toy-dash)}.cache{padding:12px}.warm{position:static;margin-top:8px}.dispatch-panel{grid-template-columns:1fr}.brain-grid{grid-template-columns:repeat(2,1fr)}.stamp{display:none}}
+  @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style>
