@@ -16,6 +16,16 @@ export type WorkRoute = {
 export type Effort = WorkRoute["effort"];
 export type RouteVerdict = "good" | "bad" | "expensive";
 export type MacroLabStrategy = "uniform" | "routed";
+export type MacroLoad = "light" | "normal" | "heavy";
+export interface MacroMonthConfig {
+  strategy: MacroLabStrategy;
+  model: Model;
+  effort: Effort;
+  load: MacroLoad;
+}
+export const DEFAULT_MACRO_MONTH: MacroMonthConfig = {
+  strategy: "routed", model: "opus", effort: "high", load: "normal",
+};
 export type MacroSpendClass = "input" | "cacheRead" | "cacheWrite" | "output";
 
 export interface MacroDay {
@@ -120,7 +130,7 @@ export function priceTaskChoice(route: WorkRoute, model: Model, effort: Effort):
 }
 
 /** A deterministic engineering month, priced through the shared task-choice path. */
-export function simulateMacroMonth(routed: boolean): MacroMonth {
+export function simulateMacroMonth(config: MacroMonthConfig): MacroMonth {
   const emptyModels = (): Record<Model, number> => ({ haiku: 0, sonnet: 0, opus: 0, fable: 0 });
   const emptyEfforts = (): Record<Effort, number> => ({ low: 0, medium: 0, high: 0 });
   const monthModels = emptyModels();
@@ -131,17 +141,22 @@ export function simulateMacroMonth(routed: boolean): MacroMonth {
     const day = index + 1;
     const weekday = day % 7;
     const weekend = weekday === 6 || weekday === 0;
-    const routeIndexes = incidentDays.has(day)
+    const baseRouteIndexes = incidentDays.has(day)
       ? [2, 3, 4, 5, 2]
       : weekend
         ? (day % 2 === 0 ? [6] : [1, 6])
         : Array.from({ length: 3 + (day % 3) }, (__, offset) => normalRouteIndexes[(day + offset * 2) % normalRouteIndexes.length]);
+    const loadScale: Record<MacroLoad, number> = { light: 0.6, normal: 1, heavy: 1.5 };
+    const taskCount = incidentDays.has(day) || weekend
+      ? baseRouteIndexes.length
+      : Math.max(1, Math.round(baseRouteIndexes.length * loadScale[config.load]));
+    const routeIndexes = Array.from({ length: taskCount }, (__, offset) => baseRouteIndexes[offset % baseRouteIndexes.length]);
     const byModel = emptyModels();
     const byEffort = emptyEfforts();
     const tasks = routeIndexes.map((routeIndex) => {
       const route = MACRO_ROUTES[routeIndex];
-      const model: Model = routed ? route.model : "opus";
-      const effort: Effort = routed ? route.effort : "high";
+      const model: Model = config.strategy === "routed" ? route.model : config.model;
+      const effort: Effort = config.strategy === "routed" ? route.effort : config.effort;
       const usd = priceTaskChoice(route, model, effort);
       byModel[model] += usd;
       byEffort[effort] += usd;

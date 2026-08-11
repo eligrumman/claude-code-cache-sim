@@ -1,11 +1,6 @@
 <script lang="ts">
   import LeverWidget from "./LeverWidget.svelte";
-  import MacroRouteWidget from "./MacroRouteWidget.svelte";
-  import MacroTaskPicker from "./MacroTaskPicker.svelte";
   import MacroMonthWidget from "./MacroMonthWidget.svelte";
-  import ContextCostWidget from "./ContextCostWidget.svelte";
-  import WorkdaySessionWidget from "./WorkdaySessionWidget.svelte";
-  import MacroLabWidget from "./MacroLabWidget.svelte";
   import { MODEL_IN, RATE } from "../engine/pricing.js";
   import {
     COMPACTION,
@@ -381,7 +376,6 @@
         <p class="section-prose">Plan, Hotfix, Debug, RCA, Code review, Tests, and Docs use the same task vocabulary as Tokenloons TD. Token Optimizer’s 80%+ cache-read volume and ~74% hit-rate findings are sourced context; the task mix, compaction effect, and every dollar below are engine-modeled.{#if expanded["macro-lab"]}<span data-testid="deep-dive"> Compare one model-and-effort route with the fit route for every task, then change workday volume and the retained context. The four-class receipt always reconciles to the selected total; at seven tasks with no compaction, the default strategies reconcile to the long-standing route widget.</span>{/if}</p>
         <button class="expand" aria-expanded={Boolean(expanded["macro-lab"])} onclick={() => toggle("macro-lab")}><b>&gt;</b> {expanded["macro-lab"] ? "Close detail" : "Deep dive"}</button>
       </div>
-      <MacroLabWidget />
       <div class="section-setup"><CopyButton recipe={recipeById.route} compact /></div>
     </section>
 
@@ -395,13 +389,9 @@
             <b>&gt;</b> {expanded[`macro-lab-${section.id}`] ? "Close detail" : "Deep dive"}
           </button>
         </div>
-        <MacroLabWidget highlight={section.highlight} />
         <div class="section-setup"><CopyButton recipe={recipeById[section.recipe]} compact /></div>
       </section>
     {/each}
-
-    <MacroRouteWidget />
-    <div class="macro-widget"><MacroTaskPicker /></div>
 
     <section class="lesson macro-lesson">
       <div class="section-copy">
@@ -423,8 +413,6 @@
             <b>&gt;</b> {expanded[`macro-${section.id}`] ? "Close detail" : "Deep dive"}
           </button>
         </div>
-        {#if section.id === "main-context"}<ContextCostWidget />{/if}
-        {#if section.id === "delegate"}<WorkdaySessionWidget />{/if}
         <div class="section-setup"><CopyButton recipe={articleRecipe(section.id)} compact /></div>
       </section>
     {/each}
@@ -496,7 +484,6 @@
   .article-intro{max-width:720px;margin:35px auto 70px;text-align:center}.article-intro small{color:#a85e13}.article-intro h2{font-size:clamp(2.3rem,6vw,4.6rem);line-height:.95;letter-spacing:-.05em;margin:12px 0 18px}.article-intro p{font-size:1.08rem;line-height:1.5;margin:0 auto;max-width:590px}
   .intro-links{display:flex;justify-content:center;flex-wrap:wrap;gap:10px;margin-top:20px}.intro-links button{border:0;background:none;color:#8c4a0a;font-weight:900;font-size:.82rem;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
   section.lesson{margin:80px 0 125px}.section-copy{max-width:680px;margin:0 0 24px 18px}.section-copy>small{color:#a85e13}.section-copy h2,.cta h2{font-size:clamp(2rem,5vw,3.6rem);line-height:1;letter-spacing:-.045em;margin:8px 0 12px}.section-copy>p,.cta p{font-size:1.05rem;line-height:1.5;margin:0;max-width:650px}.expand{display:flex;align-items:center;gap:8px;margin-top:14px;padding:5px 0;border:0;border-bottom:2px solid #20201d;background:transparent;font-size:.82rem;font-weight:900;cursor:pointer}.expand b{font:950 1rem/1 ui-monospace,monospace;color:#a85e13;transition:transform .15s}.expand[aria-expanded="true"] b{transform:rotate(90deg)}
-  .macro-widget{margin:28px 0 70px}
   .section-setup{max-width:680px;margin:24px 0 0 18px}
   .macro-lesson{margin:65px 0!important;border-bottom:2px dashed #d4d0c6}.macro-lesson .section-copy{margin-bottom:48px}.crosslink{display:block;margin:40px auto 90px;border:0;background:none;color:#8c4a0a;font-weight:950;font-size:1rem;text-decoration:underline;text-underline-offset:4px;cursor:pointer}
   .cta{margin:70px 0 100px;border:3px solid #20201d;border-radius:25px 19px 28px 18px;padding:34px;display:flex;align-items:center;gap:30px;background:#fff6c7;box-shadow:10px 11px 0 #f2c94c}.cta div{flex:1}.cta>button{border:2px solid #20201d;border-radius:14px;background:#20201d;color:white;padding:16px 20px;font-weight:900;cursor:pointer;white-space:nowrap;box-shadow:5px 5px 0 #e57970;transition:transform .2s}.cta>button:hover{transform:translate(-2px,-2px)}.cta>button span{font-size:1.4rem;margin-left:8px}.macro-cta{background:#eaf5ff;box-shadow:10px 11px 0 #9dccee}

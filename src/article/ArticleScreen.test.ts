@@ -43,13 +43,11 @@ describe("Micro and Macro articles", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Macro" }));
     expect(screen.getByRole("heading", { name: "Stop making one giant agent do everything." })).toBeInTheDocument();
-    expect(screen.getAllByTestId("macro-lab-widget")).toHaveLength(6);
-    expect(screen.getAllByTestId("macro-lab-widget").map((widget) => widget.getAttribute("data-highlight"))).toEqual([
-      "all", "strategy", "model", "effort", "volume", "compaction",
-    ]);
-    expect(screen.getByTestId("macro-route-widget")).toBeInTheDocument();
+    expect(screen.queryByTestId("macro-lab-widget")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("macro-route-widget")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("workday-session-widget")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("context-cost-widget")).not.toBeInTheDocument();
     expect(screen.getByTestId("macro-month-widget")).toBeInTheDocument();
-    expect(screen.getByTestId("workday-session-widget")).toBeInTheDocument();
     expect(screen.queryByTestId("spend-breakdown-task")).not.toBeInTheDocument();
     expect(screen.queryByTestId("route-rate-card-widget")).not.toBeInTheDocument();
 
@@ -186,13 +184,16 @@ describe("Micro and Macro articles", () => {
   });
 
   it("builds and renders a reconciling 30-day macro month", () => {
-    const routed = simulateMacroMonth(true);
-    const uniform = simulateMacroMonth(false);
+    const routed = simulateMacroMonth({ strategy: "routed", model: "opus", effort: "high", load: "normal" });
+    const uniform = simulateMacroMonth({ strategy: "uniform", model: "opus", effort: "high", load: "normal" });
+    const light = simulateMacroMonth({ strategy: "routed", model: "opus", effort: "high", load: "light" });
+    const heavy = simulateMacroMonth({ strategy: "routed", model: "opus", effort: "high", load: "heavy" });
     expect(routed.days).toHaveLength(30);
     expect(routed.totalUsd).toBeGreaterThan(0);
     expect(routed.totalUsd).toBeLessThan(uniform.totalUsd);
     expect(Object.values(routed.byModel).reduce((sum, value) => sum + value, 0)).toBeCloseTo(routed.totalUsd, 2);
     expect(Object.values(routed.byEffort).reduce((sum, value) => sum + value, 0)).toBeCloseTo(routed.totalUsd, 2);
+    expect(heavy.totalUsd).toBeGreaterThan(light.totalUsd);
     render(MacroMonthWidget);
     expect(screen.getAllByTestId("macro-month-day")).toHaveLength(30);
     expect(Number(screen.getByTestId("macro-month-total").getAttribute("data-value"))).toBeCloseTo(routed.totalUsd, 8);
@@ -228,7 +229,8 @@ describe("Micro and Macro articles", () => {
     renderArticle();
     await fireEvent.click(screen.getByRole("button", { name: "Macro" }));
     await fireEvent.click(screen.getAllByRole("button", { name: /Deep dive/ })[0]);
-    await fireEvent.click(screen.getByRole("button", { name: "Toggle routed workload" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Uniform" }));
+    await fireEvent.change(screen.getByLabelText("Month model"), { target: { value: "fable" } });
     expect(consoleError).not.toHaveBeenCalled();
   });
 });
