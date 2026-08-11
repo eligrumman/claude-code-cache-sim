@@ -37,7 +37,10 @@ describe("Micro and Macro articles", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Macro" }));
     expect(screen.getByRole("heading", { name: "Stop making one giant agent do everything." })).toBeInTheDocument();
-    expect(screen.getByTestId("macro-lab-widget")).toBeInTheDocument();
+    expect(screen.getAllByTestId("macro-lab-widget")).toHaveLength(6);
+    expect(screen.getAllByTestId("macro-lab-widget").map((widget) => widget.getAttribute("data-highlight"))).toEqual([
+      "all", "strategy", "model", "effort", "volume", "compaction",
+    ]);
     expect(screen.getByTestId("macro-route-widget")).toBeInTheDocument();
     expect(screen.getByTestId("workday-session-widget")).toBeInTheDocument();
     expect(screen.queryByTestId("spend-breakdown-task")).not.toBeInTheDocument();
@@ -45,6 +48,9 @@ describe("Micro and Macro articles", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Micro" }));
     expect(screen.getByRole("heading", { name: "Five minutes or one hour?" })).toBeInTheDocument();
+    expect(screen.queryByText("0 · SPEND ANATOMY")).not.toBeInTheDocument();
+    expect(screen.queryByText("0.1 · CACHE LIFECYCLE")).not.toBeInTheDocument();
+    expect(screen.queryByText("0.2 · OUTPUT")).not.toBeInTheDocument();
   });
 
   it("reveals and closes an individual deep dive while TL;DR is on", async () => {
@@ -113,14 +119,14 @@ describe("Micro and Macro articles", () => {
 
     await fireEvent.click(screen.getByRole("switch", { name: "TL;DR" }));
     expect(screen.getByRole("switch", { name: "TL;DR" })).toHaveAttribute("aria-checked", "false");
-    expect(screen.getAllByTestId("deep-dive")).toHaveLength(8);
+    expect(screen.getAllByTestId("deep-dive")).toHaveLength(5);
     expect(screen.getAllByRole("button", { name: /Close detail/ }).every((button) => button.getAttribute("aria-expanded") === "true")).toBe(true);
 
     await fireEvent.click(screen.getAllByRole("button", { name: /Close detail/ })[0]);
-    expect(screen.getAllByTestId("deep-dive")).toHaveLength(7);
+    expect(screen.getAllByTestId("deep-dive")).toHaveLength(4);
 
     await fireEvent.click(screen.getByRole("button", { name: "Macro" }));
-    expect(screen.getAllByTestId("deep-dive")).toHaveLength(6);
+    expect(screen.getAllByTestId("deep-dive")).toHaveLength(11);
 
     await fireEvent.click(screen.getByRole("switch", { name: "TL;DR" }));
     expect(screen.queryAllByTestId("deep-dive")).toHaveLength(0);

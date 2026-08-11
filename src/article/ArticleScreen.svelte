@@ -4,10 +4,7 @@
   import MacroTaskPicker from "./MacroTaskPicker.svelte";
   import ContextCostWidget from "./ContextCostWidget.svelte";
   import WorkdaySessionWidget from "./WorkdaySessionWidget.svelte";
-  import SpendBreakdownWidget from "./SpendBreakdownWidget.svelte";
   import MacroLabWidget from "./MacroLabWidget.svelte";
-  import CacheLifecycleWidget from "./CacheLifecycleWidget.svelte";
-  import OutputCostWidget from "./OutputCostWidget.svelte";
   import { MODEL_IN, RATE } from "../engine/pricing.js";
   import {
     COMPACTION,
@@ -270,6 +267,34 @@
     },
   ];
 
+  const macroLabFocusSections = [
+    {
+      id: "strategy", highlight: "strategy", eyebrow: "0.1 · STRATEGY", title: "Route the work—or route every task the same.", recipe: "route",
+      copy: "Switch only the routing strategy while model, effort, volume, and compaction stay fixed. The comparison exposes the cost of sending every task through one expensive default.",
+      deep: "Right-sizing is not shorthand for choosing the cheapest model. Each task keeps the least costly model-and-effort pairing that fits its judgment burden; the uniform side deliberately applies one selection to every task so the saved amount measures routing alone.",
+    },
+    {
+      id: "model", highlight: "model", eyebrow: "0.2 · MODEL", title: "Model price multiplies the whole receipt.", recipe: "route",
+      copy: "Change only the uniform model. The same seven tasks, high effort, full context, and billing buckets are repriced at that model’s engine rate.",
+      deep: "A cheaper model lowers every billed class, but that arithmetic says nothing about whether it can do the job. Use this control to see the rate effect in isolation, then use the task-routing guidance below to account for the cost of being wrong.",
+    },
+    {
+      id: "effort", highlight: "effort", eyebrow: "0.3 · EFFORT", title: "Effort changes how much work gets billed.", recipe: "route",
+      copy: "Hold Opus and the seven-task workload steady, then change effort. The model scales the task input and generated output before the shared pricing engine totals them.",
+      deep: "High effort is valuable when deeper search prevents rework; it is waste when tests or a narrow specification already make the answer easy to verify. This focused view isolates token-volume changes from model and routing changes.",
+    },
+    {
+      id: "volume", highlight: "volume", eyebrow: "0.4 · VOLUME", title: "A workday scales one task at a time.", recipe: "delegate",
+      copy: "Move only tasks per day. The workload repeats the documented task mix, so every added task contributes its own input, cached context, and output rather than multiplying a hardcoded dollar estimate.",
+      deep: "Volume makes a small per-task mismatch recur. After the seven named task types, later tasks repeat the same deterministic route cycle; the bar and total are recomputed from those rows through macroLabComparison.",
+    },
+    {
+      id: "compaction", highlight: "compaction", eyebrow: "0.5 · COMPACTION", title: "Carry less context into the next task.", recipe: "compact",
+      copy: "Change only the share of cached context dropped before later tasks. The readout compares the selected workload with and without that reduction.",
+      deep: "This teaching model reduces later cache-read prefixes; it does not claim measured savings or price the act of summarizing. The full compaction lesson below covers that purchase-and-break-even tradeoff.",
+    },
+  ] as const;
+
   function show(kind: "micro" | "macro") {
     article = kind;
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
@@ -282,9 +307,9 @@
   function toggleTldr() {
     tldr = !tldr;
     expanded = Object.fromEntries([
-      ...["spend", "lifecycle", "output"].map((id) => [`micro-${id}`, !tldr]),
       ...microSections.map((section) => [`micro-${section.id}`, !tldr]),
       ...["lab"].map((id) => [`macro-${id}`, !tldr]),
+      ...macroLabFocusSections.map((section) => [`macro-lab-${section.id}`, !tldr]),
       ...macroSections.map((section) => [`macro-${section.id}`, !tldr]),
     ]);
   }
@@ -326,39 +351,6 @@
       <p>Flip each lever, then click a message to see exactly why it cost what it did.</p>
       <RawDataModal title="A real Claude Code session — timestamped tape" provenance={REAL_SEGMENT_PROVENANCE} rows={REAL_SEGMENT_ROWS} prominent />
     </div>
-
-    <section class="lesson">
-      <div class="section-copy">
-        <small>0 · SPEND ANATOMY</small>
-        <h2>The repeated prefix becomes the workload.</h2>
-        <p class="section-prose">Token Optimizer reports that cache-reads make up 80%+ of real Claude Code token volume, with an average cache-hit rate around 74%. The source supplies that framing; the interactive dollars below are our engine’s deterministic model.{#if expanded["micro-spend"]}<span data-testid="deep-dive"> The first message writes its reusable prefix. Every later message reads the growing prefix at {RATE.read}× while still paying separately for fresh input and uncached output. Move the session-length control to watch repeated context overtake the one-time write.</span>{/if}</p>
-        <button class="expand" aria-expanded={Boolean(expanded["micro-spend"])} onclick={() => toggle("micro-spend")}><b>&gt;</b> {expanded["micro-spend"] ? "Close detail" : "Deep dive"}</button>
-      </div>
-      <SpendBreakdownWidget unit="message" />
-      <div class="section-setup"><CopyButton recipe={recipeById["large-context"]} compact /></div>
-    </section>
-
-    <section class="lesson">
-      <div class="section-copy">
-        <small>0.1 · CACHE LIFECYCLE</small>
-        <h2>Refresh the cheap read—or buy the write again.</h2>
-        <p class="section-prose">A warm prefix is read at {RATE.read}×. Once its selected TTL lapses, the same prefix must be written again at {RATE.w5m}× or {RATE.w1h}×.{#if expanded["micro-lifecycle"]}<span data-testid="deep-dive"> The head-to-head holds prefix size, model, and TTL constant, then prices the next touch through the same engine. Keep-warm is useful only when the pings needed to bridge a known pause cost less than the rewrite they avoid.</span>{/if}</p>
-        <button class="expand" aria-expanded={Boolean(expanded["micro-lifecycle"])} onclick={() => toggle("micro-lifecycle")}><b>&gt;</b> {expanded["micro-lifecycle"] ? "Close detail" : "Deep dive"}</button>
-      </div>
-      <CacheLifecycleWidget />
-      <div class="section-setup"><CopyButton recipe={recipeById["keep-warm"]} compact /></div>
-    </section>
-
-    <section class="lesson">
-      <div class="section-copy">
-        <small>0.2 · OUTPUT</small>
-        <h2>Generation has no warm-cache discount.</h2>
-        <p class="section-prose">Output is billed at {RATE.out}× the model’s input rate every time it is generated. Ask for a lean answer and the unchanged prefix still gets its read discount; only the output bucket shrinks.{#if expanded["micro-output"]}<span data-testid="deep-dive"> The toggle holds warm prefix and fresh input identical. Switching model reprices every bucket through MODEL_IN, while the verbose-to-lean saving comes entirely from fewer output tokens.</span>{/if}</p>
-        <button class="expand" aria-expanded={Boolean(expanded["micro-output"])} onclick={() => toggle("micro-output")}><b>&gt;</b> {expanded["micro-output"] ? "Close detail" : "Deep dive"}</button>
-      </div>
-      <OutputCostWidget />
-      <div class="section-setup"><CopyButton recipe={recipeById.route} compact /></div>
-    </section>
 
     {#each microSections as section}
       <section class="lesson">
@@ -405,6 +397,21 @@
       <MacroLabWidget />
       <div class="section-setup"><CopyButton recipe={recipeById.route} compact /></div>
     </section>
+
+    {#each macroLabFocusSections as section}
+      <section class="lesson macro-lesson">
+        <div class="section-copy">
+          <small>{section.eyebrow}</small>
+          <h2>{section.title}</h2>
+          <p class="section-prose">{section.copy}{#if expanded[`macro-lab-${section.id}`]}<span data-testid="deep-dive"> {section.deep}</span>{/if}</p>
+          <button class="expand" aria-expanded={Boolean(expanded[`macro-lab-${section.id}`])} onclick={() => toggle(`macro-lab-${section.id}`)}>
+            <b>&gt;</b> {expanded[`macro-lab-${section.id}`] ? "Close detail" : "Deep dive"}
+          </button>
+        </div>
+        <MacroLabWidget highlight={section.highlight} />
+        <div class="section-setup"><CopyButton recipe={recipeById[section.recipe]} compact /></div>
+      </section>
+    {/each}
 
     <MacroRouteWidget />
     <div class="macro-widget"><MacroTaskPicker /></div>

@@ -2,34 +2,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/svelte";
 import MacroLabWidget from "./MacroLabWidget.svelte";
 import { MACRO_ROUTES, macroLabComparison, priceMacroLab, priceTaskChoice, totalMacroRoutes } from "./macroPricing.js";
-import { lifecycleComparison, outputComparison, spendBreakdown } from "./spendModel.js";
 
 afterEach(cleanup);
 
 describe("article spend teaching models", () => {
   it("reconciles all four billed classes to the displayed total", () => {
-    const micro = spendBreakdown("message", 16);
-    expect(micro.usd.input + micro.usd.cacheRead + micro.usd.cacheWrite + micro.usd.output).toBeCloseTo(micro.totalUsd, 10);
-
     const macro = priceMacroLab({ strategy: "uniform", model: "opus", effort: "high", taskCount: 12, contextDropped: 30 });
     expect(macro.usd.input + macro.usd.cacheRead + macro.usd.cacheWrite + macro.usd.output).toBeCloseTo(macro.totalUsd, 10);
-  });
-
-  it("grows cache-read share as a message session lengthens", () => {
-    const shares = [1, 8, 20, 40].map((length) => spendBreakdown("message", length).cacheReadPercent);
-    for (let index = 1; index < shares.length; index += 1) expect(shares[index]).toBeGreaterThan(shares[index - 1]);
-  });
-
-  it("prices a keep-warm read below a lapsed rewrite", () => {
-    for (const ttl of ["5m", "1h"] as const) {
-      const result = lifecycleComparison(250_000, "opus", ttl);
-      expect(result.keepWarmUsd).toBeLessThan(result.lapseUsd);
-    }
-  });
-
-  it("prices verbose output above lean output", () => {
-    const result = outputComparison("opus", 180_000, 1_200, 2_400, 600);
-    expect(result.verboseUsd).toBeGreaterThan(result.leanUsd);
   });
 
   it("prices the same task lower on Haiku than Opus", () => {
@@ -58,5 +37,40 @@ describe("article spend teaching models", () => {
       Number(screen.getByTestId(`macrolab-${key}`).getAttribute("data-percent")),
     );
     expect(percentages.reduce((sum, value) => sum + value, 0)).toBeCloseTo(100, 8);
+  });
+
+  it("focuses strategy and summarizes the held parameters", () => {
+    render(MacroLabWidget, { highlight: "strategy" });
+    expect(screen.getByTestId("macrolab-control-strategy")).toHaveClass("focus-control");
+    expect(document.querySelector(".held-at")).toHaveTextContent("Held at: model opus · high · 7 tasks/day · 0% compaction");
+    expect(screen.queryByLabelText("Uniform model")).not.toBeInTheDocument();
+    expect(screen.getByTestId("macrolab-uniform-total")).toBeInTheDocument();
+    expect(screen.getByTestId("macrolab-routed-total")).toBeInTheDocument();
+  });
+
+  it("shows a with/without comparison when compaction is focused", () => {
+    render(MacroLabWidget, { highlight: "compaction" });
+    expect(screen.getByText("Without compaction")).toBeInTheDocument();
+    expect(screen.getByText("With 0% compaction")).toBeInTheDocument();
+    expect(screen.getByText("compaction saves")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Task type breakdown")).not.toBeInTheDocument();
+  });
+
+  it("keeps the full default controls and per-task table", () => {
+    render(MacroLabWidget);
+    expect(screen.getByTestId("macro-lab-widget")).toHaveAttribute("data-highlight", "all");
+    expect(screen.getByLabelText("Uniform model")).toBeInTheDocument();
+    expect(screen.getByLabelText("Uniform effort")).toBeInTheDocument();
+    expect(screen.getByLabelText("Task type breakdown")).toBeInTheDocument();
+    expect(screen.getAllByTestId("macrolab-verdict")).toHaveLength(7);
+  });
+
+  it("reconciles the four focused spend classes to its selected total", () => {
+    render(MacroLabWidget, { highlight: "model" });
+    const classes = ["input", "cacheRead", "cacheWrite", "output"].map((key) =>
+      Number(screen.getByTestId(`macrolab-${key}`).getAttribute("data-value")),
+    );
+    const total = Number(screen.getByTestId("macrolab-total").getAttribute("data-value"));
+    expect(classes.reduce((sum, value) => sum + value, 0)).toBeCloseTo(total, 10);
   });
 });
