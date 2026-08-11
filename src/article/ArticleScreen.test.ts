@@ -46,7 +46,8 @@ describe("Micro and Macro articles", () => {
 
   it("reveals and closes an individual deep dive while TL;DR is on", async () => {
     renderArticle();
-    const toggle = screen.getAllByRole("button", { name: /Deep dive/ })[0];
+    const lesson = screen.getByRole("heading", { name: "Five minutes or one hour?" }).closest(".lesson")!;
+    const toggle = lesson.querySelector<HTMLButtonElement>(".expand")!;
     expect(toggle).toHaveAttribute("aria-expanded", "false");
 
     await fireEvent.click(toggle);
@@ -77,7 +78,7 @@ describe("Micro and Macro articles", () => {
     renderArticle();
     const lessons = Array.from(document.querySelectorAll(".lesson"));
     for (const lesson of lessons) {
-      const widget = lesson.querySelector(".widget");
+      const widget = lesson.querySelector(".widget, .toycard");
       const setup = lesson.querySelector(".section-setup");
       expect(widget).not.toBeNull();
       expect(setup).not.toBeNull();
@@ -85,7 +86,8 @@ describe("Micro and Macro articles", () => {
     }
 
     const reporter = document.querySelector(".article-diagnose");
-    const lastSetup = document.querySelectorAll(".section-setup")[4];
+    const setups = document.querySelectorAll(".section-setup");
+    const lastSetup = setups[setups.length - 1];
     expect(lastSetup.compareDocumentPosition(reporter!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByText("npx github:eligrumman/claude-code-cache-sim cc-cache-report")).toBeInTheDocument();
     expect(screen.getByText("npm run report")).toBeInTheDocument();
@@ -94,7 +96,8 @@ describe("Micro and Macro articles", () => {
 
   it("explains cascading subagent cache misses in the same-prompt deep dive", async () => {
     renderArticle();
-    await fireEvent.click(screen.getAllByRole("button", { name: /Deep dive/ })[2]);
+    const lesson = screen.getByRole("heading", { name: "Give subagents one shared prefix." }).closest(".lesson")!;
+    await fireEvent.click(lesson.querySelector<HTMLButtonElement>(".expand")!);
     const detail = screen.getByTestId("deep-dive");
     expect(detail).toHaveTextContent("miss cascades");
     expect(detail).toHaveTextContent("skills block, tools block, and everything downstream");
@@ -107,14 +110,14 @@ describe("Micro and Macro articles", () => {
 
     await fireEvent.click(screen.getByRole("switch", { name: "TL;DR" }));
     expect(screen.getByRole("switch", { name: "TL;DR" })).toHaveAttribute("aria-checked", "false");
-    expect(screen.getAllByTestId("deep-dive")).toHaveLength(5);
+    expect(screen.getAllByTestId("deep-dive")).toHaveLength(8);
     expect(screen.getAllByRole("button", { name: /Close detail/ }).every((button) => button.getAttribute("aria-expanded") === "true")).toBe(true);
 
     await fireEvent.click(screen.getAllByRole("button", { name: /Close detail/ })[0]);
-    expect(screen.getAllByTestId("deep-dive")).toHaveLength(4);
+    expect(screen.getAllByTestId("deep-dive")).toHaveLength(7);
 
     await fireEvent.click(screen.getByRole("button", { name: "Macro" }));
-    expect(screen.getAllByTestId("deep-dive")).toHaveLength(5);
+    expect(screen.getAllByTestId("deep-dive")).toHaveLength(7);
 
     await fireEvent.click(screen.getByRole("switch", { name: "TL;DR" }));
     expect(screen.queryAllByTestId("deep-dive")).toHaveLength(0);

@@ -11,6 +11,10 @@ The real session was captured by a mitmproxy intercept of the authenticated `cla
 | Article micro: Same prompt | none — modeled by `src/sim/ledger.ts` | Engine simulation; no intercepted traffic. |
 | Article micro: Large context | none — modeled by `src/sim/ledger.ts` | Engine simulation; no intercepted traffic. |
 | Article micro: Auto-approve | none — modeled by `src/sim/ledger.ts` | Engine simulation; no intercepted traffic. |
+| Article micro + macro: Spend breakdown | none — modeled by `src/article/spendModel.ts` (engine-derived from Token Optimizer published multipliers) | **Modeled, not captured traffic.** Token Optimizer supplies the sourced 80%+ cache-read-volume and ~74% hit-rate framing; all dollar figures use this app's pricing engine. |
+| Article micro: Cache lifecycle | none — modeled by `src/article/spendModel.ts` (engine-derived from Token Optimizer published multipliers) | **Modeled, not captured traffic.** Prefix read/write alternatives are priced by `priceTokens`; no observed dollar values are imported. |
+| Article micro: Output cost | none — modeled by `src/article/spendModel.ts` (engine-derived from Token Optimizer published multipliers) | **Modeled, not captured traffic.** The output comparison holds input fixed and uses the engine's output multiplier. |
+| Article macro: Route rate cards | none — modeled by `src/article/macroPricing.ts` (engine-derived from Token Optimizer published multipliers) | **Modeled, not captured traffic.** Task vocabulary comes from `MACRO_ROUTES`; rate-card and aggregate dollars use the shared pricing engine. |
 | Article macro: Model + effort / task picker | none — modeled by `src/sim/scenarios.ts` and article pricing projections | Scenario model; no intercepted traffic. |
 | Article macro: Main-agent context | none — modeled by `src/sim/scenarios.ts` | Scenario model; no intercepted traffic. |
 | Article macro: Delegate | none — modeled by `src/sim/scenarios.ts` | Scenario model; no intercepted traffic. |

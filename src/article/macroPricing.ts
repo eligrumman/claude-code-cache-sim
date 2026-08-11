@@ -63,12 +63,17 @@ export function totalMacroRoutes(routed: boolean): number {
 }
 
 /** Price a teaching-widget choice through the same token buckets as the simulator. */
-export function priceTaskChoice(route: WorkRoute, model: Model, effort: Effort): number {
+export function taskChoiceBuckets(route: WorkRoute, effort: Effort) {
   const scale = EFFORT_TOKENS[effort];
-  return priceTokenBuckets({
+  return {
     cacheWrite: Math.round(route.input * scale.input),
     output: Math.round(route.output * scale.output),
-  }, { model, ttl: "1h" });
+  };
+}
+
+/** Price a teaching-widget choice through the same token buckets as the simulator. */
+export function priceTaskChoice(route: WorkRoute, model: Model, effort: Effort): number {
+  return priceTokenBuckets(taskChoiceBuckets(route, effort), { model, ttl: "1h" });
 }
 
 export function verdictForChoice(route: WorkRoute, model: Model, effort: Effort): RouteVerdict {

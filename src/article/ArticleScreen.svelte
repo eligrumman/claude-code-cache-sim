@@ -4,6 +4,10 @@
   import MacroTaskPicker from "./MacroTaskPicker.svelte";
   import ContextCostWidget from "./ContextCostWidget.svelte";
   import WorkdaySessionWidget from "./WorkdaySessionWidget.svelte";
+  import SpendBreakdownWidget from "./SpendBreakdownWidget.svelte";
+  import CacheLifecycleWidget from "./CacheLifecycleWidget.svelte";
+  import OutputCostWidget from "./OutputCostWidget.svelte";
+  import RouteRateCardWidget from "./RouteRateCardWidget.svelte";
   import { MODEL_IN, RATE } from "../engine/pricing.js";
   import {
     COMPACTION,
@@ -278,7 +282,9 @@
   function toggleTldr() {
     tldr = !tldr;
     expanded = Object.fromEntries([
+      ...["spend", "lifecycle", "output"].map((id) => [`micro-${id}`, !tldr]),
       ...microSections.map((section) => [`micro-${section.id}`, !tldr]),
+      ...["spend", "rate-card"].map((id) => [`macro-${id}`, !tldr]),
       ...macroSections.map((section) => [`macro-${section.id}`, !tldr]),
     ]);
   }
@@ -321,6 +327,39 @@
       <RawDataModal title="A real Claude Code session — timestamped tape" provenance={REAL_SEGMENT_PROVENANCE} rows={REAL_SEGMENT_ROWS} prominent />
     </div>
 
+    <section class="lesson">
+      <div class="section-copy">
+        <small>0 · SPEND ANATOMY</small>
+        <h2>The repeated prefix becomes the workload.</h2>
+        <p class="section-prose">Token Optimizer reports that cache-reads make up 80%+ of real Claude Code token volume, with an average cache-hit rate around 74%. The source supplies that framing; the interactive dollars below are our engine’s deterministic model.{#if expanded["micro-spend"]}<span data-testid="deep-dive"> The first message writes its reusable prefix. Every later message reads the growing prefix at {RATE.read}× while still paying separately for fresh input and uncached output. Move the session-length control to watch repeated context overtake the one-time write.</span>{/if}</p>
+        <button class="expand" aria-expanded={Boolean(expanded["micro-spend"])} onclick={() => toggle("micro-spend")}><b>&gt;</b> {expanded["micro-spend"] ? "Close detail" : "Deep dive"}</button>
+      </div>
+      <SpendBreakdownWidget unit="message" />
+      <div class="section-setup"><CopyButton recipe={recipeById["large-context"]} compact /></div>
+    </section>
+
+    <section class="lesson">
+      <div class="section-copy">
+        <small>0.1 · CACHE LIFECYCLE</small>
+        <h2>Refresh the cheap read—or buy the write again.</h2>
+        <p class="section-prose">A warm prefix is read at {RATE.read}×. Once its selected TTL lapses, the same prefix must be written again at {RATE.w5m}× or {RATE.w1h}×.{#if expanded["micro-lifecycle"]}<span data-testid="deep-dive"> The head-to-head holds prefix size, model, and TTL constant, then prices the next touch through the same engine. Keep-warm is useful only when the pings needed to bridge a known pause cost less than the rewrite they avoid.</span>{/if}</p>
+        <button class="expand" aria-expanded={Boolean(expanded["micro-lifecycle"])} onclick={() => toggle("micro-lifecycle")}><b>&gt;</b> {expanded["micro-lifecycle"] ? "Close detail" : "Deep dive"}</button>
+      </div>
+      <CacheLifecycleWidget />
+      <div class="section-setup"><CopyButton recipe={recipeById["keep-warm"]} compact /></div>
+    </section>
+
+    <section class="lesson">
+      <div class="section-copy">
+        <small>0.2 · OUTPUT</small>
+        <h2>Generation has no warm-cache discount.</h2>
+        <p class="section-prose">Output is billed at {RATE.out}× the model’s input rate every time it is generated. Ask for a lean answer and the unchanged prefix still gets its read discount; only the output bucket shrinks.{#if expanded["micro-output"]}<span data-testid="deep-dive"> The toggle holds warm prefix and fresh input identical. Switching model reprices every bucket through MODEL_IN, while the verbose-to-lean saving comes entirely from fewer output tokens.</span>{/if}</p>
+        <button class="expand" aria-expanded={Boolean(expanded["micro-output"])} onclick={() => toggle("micro-output")}><b>&gt;</b> {expanded["micro-output"] ? "Close detail" : "Deep dive"}</button>
+      </div>
+      <OutputCostWidget />
+      <div class="section-setup"><CopyButton recipe={recipeById.route} compact /></div>
+    </section>
+
     {#each microSections as section}
       <section class="lesson">
         <div class="section-copy">
@@ -356,8 +395,30 @@
       </div>
     </div>
 
+    <section class="lesson macro-lesson">
+      <div class="section-copy">
+        <small>0 · TASK SPEND ANATOMY</small>
+        <h2>The same meter, now at task granularity.</h2>
+        <p class="section-prose">Plan, Hotfix, Debug, RCA, Code review, Tests, and Docs use the same task vocabulary as the route table and Tokenloons TD balloons. Token Optimizer’s 80%+ cache-read volume and ~74% hit-rate findings are sourced context; these task dollars are engine-modeled.{#if expanded["macro-spend"]}<span data-testid="deep-dive"> Increase tasks per day to cycle the seven routes. The shared working prefix is written on first touch, then re-read as the task history grows; fresh task input and generated output remain separate billed classes.</span>{/if}</p>
+        <button class="expand" aria-expanded={Boolean(expanded["macro-spend"])} onclick={() => toggle("macro-spend")}><b>&gt;</b> {expanded["macro-spend"] ? "Close detail" : "Deep dive"}</button>
+      </div>
+      <SpendBreakdownWidget unit="task" />
+      <div class="section-setup"><CopyButton recipe={recipeById.route} compact /></div>
+    </section>
+
     <MacroRouteWidget />
     <div class="macro-widget"><MacroTaskPicker /></div>
+
+    <section class="lesson macro-lesson">
+      <div class="section-copy">
+        <small>0.1 · RATE CARDS</small>
+        <h2>Inspect one balloon before dispatch.</h2>
+        <p class="section-prose">Pick one of the seven tasks and hold its workload constant across every model rate card. The recommended fit buys enough judgment without paying for capacity the task cannot use.{#if expanded["macro-rate-card"]}<span data-testid="deep-dive"> Haiku is always the cheapest arithmetic rate and Fable the highest, but price alone is not routing. The verdict compares each card with the route’s required model and effort; the footer reconciles to the existing all-Opus and right-sized seven-task totals.</span>{/if}</p>
+        <button class="expand" aria-expanded={Boolean(expanded["macro-rate-card"])} onclick={() => toggle("macro-rate-card")}><b>&gt;</b> {expanded["macro-rate-card"] ? "Close detail" : "Deep dive"}</button>
+      </div>
+      <RouteRateCardWidget />
+      <div class="section-setup"><CopyButton recipe={recipeById.route} compact /></div>
+    </section>
 
     {#each macroSections as section}
       <section class="lesson macro-lesson">
