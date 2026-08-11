@@ -2,8 +2,26 @@
   import { onDestroy } from "svelte";
   import type { SetupRecipe } from "./recipes.js";
 
-  interface Props { recipe: SetupRecipe; compact?: boolean; }
-  let { recipe, compact = false }: Props = $props();
+  interface Props {
+    recipe?: SetupRecipe;
+    compact?: boolean;
+    snippet?: string;
+    title?: string;
+    caveat?: string;
+    id?: string;
+  }
+  let {
+    recipe,
+    compact = false,
+    snippet = "",
+    title = "command",
+    caveat = "",
+    id = "command",
+  }: Props = $props();
+  const resolvedSnippet = $derived(recipe?.snippet ?? snippet);
+  const resolvedTitle = $derived(recipe?.title ?? title);
+  const resolvedCaveat = $derived(recipe?.caveat ?? caveat);
+  const resolvedId = $derived(recipe?.id ?? id);
   let copied = $state(false);
   let unavailable = $state(false);
   let resetTimer: ReturnType<typeof setTimeout> | undefined;
@@ -14,7 +32,7 @@
       return;
     }
     try {
-      await navigator.clipboard.writeText(recipe.snippet);
+      await navigator.clipboard.writeText(resolvedSnippet);
       copied = true;
       unavailable = false;
       if (resetTimer) clearTimeout(resetTimer);
@@ -29,14 +47,14 @@
   });
 </script>
 
-<div class:compact class="copy-recipe" data-recipe-id={recipe.id}>
+<div class:compact class="copy-recipe" data-recipe-id={resolvedId}>
   <div class="snippet-row">
-    <pre><code>{recipe.snippet}</code></pre>
-    <button type="button" onclick={copySnippet} aria-label={`Copy ${recipe.title} setup snippet`}>
+    <pre><code>{resolvedSnippet}</code></pre>
+    <button type="button" onclick={copySnippet} aria-label={`Copy ${resolvedTitle} setup snippet`}>
       {copied ? "Copied ✓" : unavailable ? "Copy unavailable" : "Copy"}
     </button>
   </div>
-  <small>{recipe.caveat}</small>
+  {#if resolvedCaveat}<small>{resolvedCaveat}</small>{/if}
 </div>
 
 <style>

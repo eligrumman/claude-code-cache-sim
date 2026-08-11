@@ -1,6 +1,5 @@
 <script lang="ts">
   import CopyButton from "./CopyButton.svelte";
-  import EnvDiagnose from "./EnvDiagnose.svelte";
   import { recipes, type RecipeId, type SetupRecipe } from "./recipes.js";
 
   const microIds: readonly RecipeId[] = ["ttl", "keep-warm", "same-prompt", "large-context", "auto-approve"];
@@ -10,7 +9,6 @@
     { title: "Micro · keep the prefix warm", items: micro },
     { title: "Macro · carry less, route smarter", items: macro },
   ];
-  let showDiagnose = $state(false);
 </script>
 
 <section class="cheatsheet" aria-labelledby="cheatsheet-title">
@@ -38,18 +36,23 @@
     </section>
   {/each}
 
-  <div class="diagnose-entry">
-    <div>
-      <strong>Okay, but how good is <em>my</em> setup?</strong>
-      <span>Nine questions. A–F grade. Only the fixes you need.</span>
+  <div class="recipe-group toycard">
+    <div class="toycard__head toycard__head--green">
+      <div>
+        <strong class="toy-title">Measure your actual setup</strong>
+        <span>Run the local report against your Claude Code logs. Nothing leaves your machine.</span>
+      </div>
     </div>
-    <button type="button" aria-expanded={showDiagnose} onclick={() => (showDiagnose = !showDiagnose)}>
-      {showDiagnose ? "Hide setup check" : "Analyze my setup →"}
-    </button>
+    <div class="toycard__note">
+      <CopyButton
+        id="cache-report-npx"
+        title="cache report command"
+        snippet="npx github:eligrumman/claude-code-cache-sim cc-cache-report"
+        caveat="Opens a self-contained HTML report with your real cache-hit rate and estimated spend."
+        compact
+      />
+    </div>
   </div>
-  {#if showDiagnose}
-    <EnvDiagnose />
-  {/if}
 </section>
 
 <style>
@@ -66,10 +69,5 @@
   .recipe-heading strong { font: 800 1rem/1.2 var(--font-display); }
   .recipe-heading span { flex: 0 0 auto; color: var(--ink-soft, #67645c); font: 750 .58rem/1 var(--font-body); text-transform: uppercase; letter-spacing: .05em; }
   article > p { margin: .4rem 0; color: var(--ink-soft, #67645c); font: 500 .76rem/1.45 var(--font-body); }
-  .diagnose-entry { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-top: 2.5rem; padding: 1.1rem 1.25rem; border: 2px solid currentColor; border-radius: 16px; background: #c9ebd1; box-shadow: 5px 6px 0 currentColor; }
-  .diagnose-entry div { display: flex; flex-direction: column; gap: .2rem; }
-  .diagnose-entry strong { font: 800 1.05rem/1.25 var(--font-display); }
-  .diagnose-entry span { font: 600 .75rem/1.35 var(--font-body); }
-  .diagnose-entry button { flex: 0 0 auto; border: 1.5px solid currentColor; border-radius: 999px; padding: .65rem .9rem; background: #fffef9; color: inherit; cursor: pointer; font: 800 .74rem/1 var(--font-body); }
-  @media (max-width: 700px) { .recipe-grid { grid-template-columns: 1fr; } .diagnose-entry { align-items: stretch; flex-direction: column; } .diagnose-entry button { align-self: flex-start; } }
+  @media (max-width: 700px) { .recipe-grid { grid-template-columns: 1fr; } }
 </style>

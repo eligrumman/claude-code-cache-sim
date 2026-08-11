@@ -35,7 +35,7 @@ export default defineConfig({
     // touches the production single-file build (vite.config.js `build`
     // above has no test-only imports).
     environment: "jsdom",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "bin/**/*.test.ts"],
     setupFiles: ["src/test-setup.dom.ts"],
   },
 });

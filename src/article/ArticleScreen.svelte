@@ -20,7 +20,6 @@
   } from "./macroPricing.js";
   import type { Model } from "../engine/types.js";
   import CopyButton from "../setup/CopyButton.svelte";
-  import EnvDiagnose from "../setup/EnvDiagnose.svelte";
   import { recipeById, type RecipeId } from "../setup/recipes.js";
   import RawDataModal from "../components/RawDataModal.svelte";
   import { REAL_SEGMENT_PROVENANCE, REAL_SEGMENT_ROWS } from "../sim/captures/realSegments.js";
@@ -386,7 +385,50 @@
   <section class="article-diagnose">
     <small>YOUR TURN</small>
     <h2>How good is YOUR setup?</h2>
-    <EnvDiagnose />
+    <div class="section-copy">
+      <p class="section-prose">Stop guessing. Run this against your own Claude Code logs and it opens a report of your real cache-hit rate and spend — nothing leaves your machine.</p>
+      <CopyButton
+        id="cache-report-npx"
+        title="cache report command"
+        snippet="npx github:eligrumman/claude-code-cache-sim cc-cache-report"
+        caveat="Reads the last 30 days from ~/.claude/projects and opens one local HTML report."
+      />
+      <CopyButton
+        id="cache-report-local"
+        title="local cache report command"
+        snippet="npm run report"
+        caveat="Already cloned the repo? Run this from the project directory."
+        compact
+      />
+    </div>
+
+    <article class="toycard">
+      <div class="toycard__head toycard__head--green">
+        <div>
+          <span class="toy-eyebrow">Example — yours will use your real numbers</span>
+          <span class="toy-title">Your cache report</span>
+        </div>
+        <strong class="toy-num">84%</strong>
+      </div>
+      <div class="toycard__note">
+        <div class="toy-bar" style="height: 28px;">
+          <span class="toy-bar__seg input" style="width: 8%"></span>
+          <span class="toy-bar__seg read" style="width: 58%"></span>
+          <span class="toy-bar__seg write" style="width: 14%"></span>
+          <span class="toy-bar__seg output" style="width: 20%"></span>
+        </div>
+        <div class="toy-legend">
+          <span><i class="toy-swatch input"></i> Input</span>
+          <span><i class="toy-swatch read"></i> Cache read</span>
+          <span><i class="toy-swatch write"></i> Cache write</span>
+          <span><i class="toy-swatch output"></i> Output</span>
+        </div>
+      </div>
+      <div class="toycard__foot">
+        <div><span>Example insight</span><b>Most prefix tokens were served from cache.</b></div>
+        <strong class="toy-delta">Caching is working</strong>
+      </div>
+    </article>
   </section>
 </main>
 

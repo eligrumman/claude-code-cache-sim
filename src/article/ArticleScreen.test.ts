@@ -73,7 +73,7 @@ describe("Micro and Macro articles", () => {
     expect(container).not.toHaveTextContent(/\bhelpers?\b/i);
   });
 
-  it("puts each setup prompt after its interactive widget and the environment analyzer last", () => {
+  it("puts each setup prompt after its interactive widget and the real-usage report CTA last", () => {
     renderArticle();
     const lessons = Array.from(document.querySelectorAll(".lesson"));
     for (const lesson of lessons) {
@@ -84,9 +84,12 @@ describe("Micro and Macro articles", () => {
       expect(widget!.compareDocumentPosition(setup!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
 
-    const analyzer = document.querySelector(".article-diagnose");
+    const reporter = document.querySelector(".article-diagnose");
     const lastSetup = document.querySelectorAll(".section-setup")[4];
-    expect(lastSetup.compareDocumentPosition(analyzer!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(lastSetup.compareDocumentPosition(reporter!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("npx github:eligrumman/claude-code-cache-sim cc-cache-report")).toBeInTheDocument();
+    expect(screen.getByText("npm run report")).toBeInTheDocument();
+    expect(reporter).not.toHaveTextContent("A–F grade");
   });
 
   it("explains cascading subagent cache misses in the same-prompt deep dive", async () => {
