@@ -41,8 +41,6 @@
   const sonnetPrefixRebuild = priceTokens(260_000, "cacheWrite", { model: "sonnet", ttl: "1h" });
   const keepWarmPrefixRead = priceTokens(68_000, "cacheRead", { model: "sonnet", ttl: "5m" });
   const keepWarmPrefixRebuild = priceTokens(68_000, "cacheWrite", { model: "sonnet", ttl: "5m" });
-  const largePrefixRead = priceTokens(420_000, "cacheRead", { model: "sonnet", ttl: "1h" });
-  const largePrefixRebuild = priceTokens(420_000, "cacheWrite", { model: "sonnet", ttl: "1h" });
   const money = (value: number) => value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
   const exactMoney = (value: number) => `$${value.toFixed(3)}`;
   const routeCost = (task: string, model: Model, effort: Effort) => {
@@ -88,37 +86,29 @@
   ];
 
   const sharedHelperSession: ScriptedMessage[] = [
-    { id: "helper-api", role: "user", text: "Subagent API: inspect the pagination diff for contract regressions.", atMin: 0, subagent: true, prefixKey: "pagination-review" },
-    { id: "helper-api-result", role: "assistant", text: "API review: cursor encoding is stable; the empty-page response needs one assertion.", atMin: 1, subagent: true, prefixKey: "pagination-review" },
-    { id: "helper-db", role: "user", text: "Subagent DB: inspect query plans and migration compatibility.", atMin: 2, subagent: true, prefixKey: "pagination-review" },
-    { id: "helper-db-result", role: "assistant", text: "DB review: the composite index is used, but the down migration drops it in the wrong order.", atMin: 3, subagent: true, prefixKey: "pagination-review" },
-    { id: "helper-ui", role: "user", text: "Subagent UI: trace loading, empty, and retry states.", atMin: 4, subagent: true, prefixKey: "pagination-review" },
-    { id: "helper-ui-result", role: "assistant", text: "UI review: loading and retry are covered; keyboard focus is lost after appending a page.", atMin: 5, subagent: true, prefixKey: "pagination-review" },
-    { id: "helper-tests", role: "user", text: "Subagent tests: find missing boundary cases without duplicating existing coverage.", atMin: 6, subagent: true, prefixKey: "pagination-review" },
-    { id: "helper-tests-result", role: "assistant", text: "Test review: add empty cursor, deleted-row, and final-page cases; the rest is redundant.", atMin: 7, subagent: true, prefixKey: "pagination-review" },
-    { id: "helper-security", role: "user", text: "Subagent security: check cursor tampering and tenant isolation.", atMin: 8, subagent: true, prefixKey: "pagination-review" },
-    { id: "helper-security-result", role: "assistant", text: "Security review: tenant scope is preserved; malformed signed cursors correctly fail closed.", atMin: 9, subagent: true, prefixKey: "pagination-review" },
+    { id: "helper-hey-1", role: "user", text: "HEY — inspect the pagination diff for contract regressions.", atMin: 0, subagent: true, prefixKey: "hey-review", contextTok: 26_000 },
+    { id: "helper-hey-1-result", role: "assistant", text: "Review complete: cursor encoding is stable; the empty-page response needs one assertion.", atMin: 1, subagent: true, prefixKey: "hey-review" },
+    { id: "helper-hey-2", role: "user", text: "HEY — inspect the pagination diff for contract regressions.", atMin: 2, subagent: true, prefixKey: "hey-review", contextTok: 26_000 },
+    { id: "helper-hey-2-result", role: "assistant", text: "Second review complete: the shared prefix was read from cache; the same boundary case remains.", atMin: 3, subagent: true, prefixKey: "hey-review" },
   ];
-  const uniqueHelperSession = sharedHelperSession.map((message, index) => ({
-    ...message, prefixKey: `pagination-review-${index}`,
-  }));
+  const uniqueHelperSession: ScriptedMessage[] = [
+    ...sharedHelperSession.slice(0, 2),
+    { id: "helper-hello-2", role: "user", text: "HELLO — inspect the pagination diff for contract regressions.", atMin: 2, subagent: true, prefixKey: "hello-review", contextTok: 15_000 },
+    { id: "helper-hello-2-result", role: "assistant", text: "Second review complete: one changed opening word forced the large stable tail to be rewritten.", atMin: 3, subagent: true, prefixKey: "hello-review" },
+  ];
 
-  const largeContextSession: ScriptedMessage[] = [
-    { id: "ctx-map", role: "user", text: "Map the billing state machine and plan the invoice-ledger migration.", atMin: 0 },
-    { id: "ctx-plan", role: "assistant", text: "I traced six packages and two workers. The safe seam is the posting interface.", atMin: 3 },
-    { id: "ctx-contract", role: "user", text: "Define that interface without changing external invoice behavior.", atMin: 6 },
-    { id: "ctx-contract-done", role: "assistant", text: "Interface and compatibility adapter are in; typecheck catches direct legacy writes.", atMin: 10 },
-    { id: "ctx-core", role: "user", text: "Migrate the core posting path and its unit tests.", atMin: 14 },
-    { id: "ctx-core-done", role: "assistant", text: "Core path is migrated. Existing rounding and reversal fixtures remain green.", atMin: 19 },
-    { id: "ctx-workers", role: "user", text: "Move the retry and reconciliation workers onto the adapter.", atMin: 23 },
-    { id: "ctx-workers-done", role: "assistant", text: "Both workers now use idempotent postings; I found one retry test with a stale clock.", atMin: 28 },
-    { id: "ctx-integration", role: "user", text: "Fix the test, then run the cross-package integration suite.", atMin: 32 },
-    { id: "ctx-suite", role: "assistant", text: "Integration suite passes. No schema, event, or public API snapshots changed.", atMin: 39 },
-    { id: "ctx-review", role: "user", text: "Review the full diff for migration ordering and rollback risk.", atMin: 43 },
-    { id: "ctx-done", role: "assistant", text: "Review complete: migration is additive, rollback keeps the adapter, and the PR is ready.", atMin: 48 },
+  const stableMemorySession: ScriptedMessage[] = [
+    { id: "memory-session-1", role: "user", text: "Start from the stable CLAUDE.md and implement the first scoped change.", atMin: 0, prefixKey: "stable-memory", contextTok: 52_000 },
+    { id: "memory-session-1-result", role: "assistant", text: "Change complete. I left a short handoff note at the conversation tail.", atMin: 2, prefixKey: "stable-memory" },
+    { id: "memory-session-2", role: "user", text: "Continue from the tail handoff; keep CLAUDE.md byte-identical.", atMin: 12, prefixKey: "stable-memory", contextTok: 52_000 },
+    { id: "memory-session-2-result", role: "assistant", text: "The cached head was read warm; only this session-specific note is fresh input.", atMin: 14, prefixKey: "stable-memory" },
+    { id: "memory-session-3", role: "user", text: "Continue from the latest tail handoff without editing project memory.", atMin: 24, prefixKey: "stable-memory", contextTok: 52_000 },
+    { id: "memory-session-3-result", role: "assistant", text: "Third session complete. The stable prefix stayed reusable again.", atMin: 26, prefixKey: "stable-memory" },
   ];
-  const rebuiltLargeContextSession = largeContextSession.map((message, index) => ({
-    ...message, prefixKey: `billing-turn-${index}`,
+  const editedMemorySession: ScriptedMessage[] = stableMemorySession.map((message, index) => ({
+    ...message,
+    text: message.role === "user" ? "Edit CLAUDE.md with the last session note, then start today's work." : message.text,
+    prefixKey: `edited-memory-${Math.floor(index / 2)}`,
   }));
 
   const approvalSession: ScriptedMessage[] = [
@@ -183,28 +173,28 @@
       on: { ttl: "5m", model: "sonnet", prefixTok: 68_000, workInTok: 520, outputTok: 680, keepWarm: true },
     },
     {
-      id: "same-prompt", eyebrow: "3 · SAME PROMPT", title: "Give subagents one shared prefix.",
-      copy: "Subagents must share the same boilerplate prefix—system prompt, tools, skills, and project context—so it stays cached and is read cheaply instead of rebuilt.",
+      id: "same-prompt", eyebrow: "3 · SAME PROMPT", title: "One word can poison the shared prefix.",
+      copy: "An identical opening lets the whole shared prefix read cheaply; change one word near the front and the big stable tools, skills, and MCP block after it is re-written at full price.",
       deep: [
-        `Prompt caches match a prefix, not the intent behind it. The first subagent below writes the shared instructions at ${RATE.w1h}×; each later subagent with the same prefix reads those tokens at ${RATE.read}×. A different leading message invalidates the cache from the first byte of divergence, and the miss cascades: the skills block, tools block, and everything downstream must be written again at full price.`,
-        `That is a ${RATE.w1h / RATE.read}× cold-versus-warm gap before fresh task input and output are added. Keep the prefix byte-identical through the last shared breakpoint. Put the specific task last, after shared skills and tools, so a different tail never poisons the reusable head.`,
+        `In the real HEY-versus-HELLO experiment, two byte-identical subagent prompts made the second request a cheap cache read of the shared ~26K prefix. Changing only HEY to HELLO broke the prefix match at that word: only ~12K stayed reusable and about half the prefix—~15K tokens—had to be re-written, including the ~9–10K tools, skills, and MCP block after the message. A changed byte near the front poisons the otherwise stable tail.`,
+        `Keep the opening bytes identical across subagents, then put the variable task last, after shared skills and tools, so a different tail never poisons the reusable head. The sting is largest for heavy skills and MCP users: divergent chats or subagents otherwise pay to rewrite that large stable block every time.`,
       ],
       script: sharedHelperSession, offScript: uniqueHelperSession, onScript: sharedHelperSession,
       offLabel: "Unique prompts", onLabel: "Same prompt",
-      off: { ttl: "1h", model: "sonnet", prefixTok: 44_000, workInTok: 380, outputTok: 520 },
-      on: { ttl: "1h", model: "sonnet", prefixTok: 44_000, workInTok: 380, outputTok: 520 }, startOn: true,
+      off: { ttl: "1h", model: "opus", prefixTok: 26_000, workInTok: 180, outputTok: 260 },
+      on: { ttl: "1h", model: "opus", prefixTok: 26_000, workInTok: 180, outputTok: 260 }, startOn: true,
     },
     {
-      id: "large-context", eyebrow: "4 · LARGE CONTEXT", title: "Reuse the big prefix—or pay again.",
-      copy: "A large context magnifies both the first cold write and every saving after it.",
+      id: "memory-cost", eyebrow: "4 · MEMORY & CLAUDE.MD", title: "Updating CLAUDE.md isn't free.",
+      copy: "CLAUDE.md and memory files live in the stable cached prefix; editing them every session forces the whole prefix to be re-written at write price next run instead of read warm.",
       deep: [
-        `Context is input on every request; caching only changes which input bucket receives it. Sonnet's base input price is ${money(MODEL_IN.sonnet)} per million tokens, so the 420,000-token prefix below costs ${money(largePrefixRebuild)} as a one-hour cold write and ${money(largePrefixRead)} as a warm read. A larger prefix makes both numbers larger in direct proportion.`,
-        `Put stable system instructions, tool definitions, and repository context first, then append the changing task. That layout preserves a reusable prefix across turns. Cache eligibility thresholds are provider and model rules; because this pricing source declares no numeric minimum, the article does not fabricate one.`,
+        `Project memory and CLAUDE.md sit near the front of the prompt, inside the cached head. Edit them and, just like the same-prompt case, the cache breaks at the change: every stable token after it—tools, skills, and the rest of the context—is re-written at the write rate instead of read warm for roughly $0.10 on the dollar. A tiny daily “update your memory” ritual quietly re-pays the entire prefix every session.`,
+        `If context must carry forward, hand it off in the conversation tail: put a short handoff note or message at the end instead of rewriting the cached head. Keep CLAUDE.md byte-identical across sessions, let volatile session-specific notes live at the back where they cannot poison the reusable prefix, and batch genuine CLAUDE.md changes rather than editing it every run.`,
       ],
-      script: largeContextSession, offScript: rebuiltLargeContextSession, onScript: largeContextSession,
-      offLabel: "Rebuild each turn", onLabel: "Reuse prefix",
-      off: { ttl: "1h", model: "sonnet", prefixTok: 420_000, workInTok: 1_100, outputTok: 1_450 },
-      on: { ttl: "1h", model: "sonnet", prefixTok: 420_000, workInTok: 1_100, outputTok: 1_450 }, startOn: true,
+      script: stableMemorySession, offScript: editedMemorySession, onScript: stableMemorySession,
+      offLabel: "Edit memory each session", onLabel: "Stable memory + tail handoff",
+      off: { ttl: "1h", model: "sonnet", prefixTok: 52_000, workInTok: 220, outputTok: 300 },
+      on: { ttl: "1h", model: "sonnet", prefixTok: 52_000, workInTok: 220, outputTok: 300 }, startOn: true,
     },
     {
       id: "auto-approve", eyebrow: "5 · AUTO-APPROVE", title: "Fewer round-trips, fewer expiry chances.",

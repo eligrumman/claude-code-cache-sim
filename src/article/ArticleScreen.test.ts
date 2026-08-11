@@ -78,11 +78,12 @@ describe("Micro and Macro articles", () => {
     const { container } = renderArticle();
     const widgets = Array.from(document.querySelectorAll(".lesson .widget"));
     expect(widgets).toHaveLength(5);
-    expect(widgets.map((widget) => widget.querySelectorAll(".tick").length)).toEqual([12, 10, 10, 12, 12]);
+    expect(widgets.map((widget) => widget.querySelectorAll(".tick").length)).toEqual([12, 10, 4, 6, 12]);
     expect(screen.getAllByTestId("lever-scroll")).toHaveLength(5);
     expect(screen.getByText(/intermittent checkout timeout/)).toBeInTheDocument();
     expect(screen.getByText(/pagination diff for contract regressions/)).toBeInTheDocument();
-    expect(screen.getByText(/billing state machine/)).toBeInTheDocument();
+    expect(screen.getByText(/Start from the stable CLAUDE.md/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Updating CLAUDE.md isn't free." })).toBeInTheDocument();
     expect(screen.getByText(/flaky notification test/)).toBeInTheDocument();
     expect(container).not.toHaveTextContent(/\bhelpers?\b/i);
   });
@@ -109,12 +110,13 @@ describe("Micro and Macro articles", () => {
 
   it("explains cascading subagent cache misses in the same-prompt deep dive", async () => {
     renderArticle();
-    const lesson = screen.getByRole("heading", { name: "Give subagents one shared prefix." }).closest(".lesson")!;
+    const lesson = screen.getByRole("heading", { name: "One word can poison the shared prefix." }).closest(".lesson")!;
     await fireEvent.click(lesson.querySelector<HTMLButtonElement>(".expand")!);
     const detail = screen.getByTestId("deep-dive");
-    expect(detail).toHaveTextContent("miss cascades");
-    expect(detail).toHaveTextContent("skills block, tools block, and everything downstream");
-    expect(detail).toHaveTextContent("specific task last");
+    expect(detail).toHaveTextContent("HEY-versus-HELLO experiment");
+    expect(detail).toHaveTextContent("~15K tokens");
+    expect(detail).toHaveTextContent("~9–10K tools, skills, and MCP block");
+    expect(detail).toHaveTextContent("variable task last");
   });
 
   it("uses TL;DR as collapse-all / expand-all and preserves individual controls afterward", async () => {
