@@ -345,16 +345,18 @@
       <aside class="inspector legacy-inspector">
         <div class="inspector-title"><span>Message receipt</span><span class="inspector-actions"><span class="raw-corner" title="Raw logs"><span class="raw-label">raw logs</span><RawDataModal title="Modeled conversation ledger" provenance={{ real: false }} rows={modeledRawRows} /></span><button onclick={() => selectedId = null} aria-label="Close receipt">×</button></span></div>
         <p>{legacySelected.reason}</p>
-        <div class="prompt-stack" aria-label="Ordered modeled prompt segments and cache invalidation cursor">
-          {#each legacyPromptChunks as chunk (chunk.id)}
-            {#if chunk.cursor}<div class="cache-break">⟵ cache breaks here — everything below is re-written</div>{/if}
-            <div class="prompt-segment {chunk.tier}"><span>{chunk.label}</span><b>{tokens(chunk.tokens)} tok</b><small>{exactMoney(chunk.usd)} · {chunk.rate}×</small></div>
-          {/each}
-        </div>
+        {#if legacyPromptChunks.length}
+          <div class="prompt-stack" aria-label="Ordered modeled prompt segments and cache invalidation cursor">
+            {#each legacyPromptChunks as chunk (chunk.id)}
+              {#if chunk.cursor}<div class="cache-break">⟵ cache breaks here — everything below is re-written</div>{/if}
+              <div class="prompt-segment {chunk.tier}"><span>{chunk.label}</span><b>{tokens(chunk.tokens)} tok</b><small>{exactMoney(chunk.usd)} · {chunk.rate}×</small></div>
+            {/each}
+          </div>
+        {/if}
         <dl>
-          <dt>{legacySelected.warm ? "Cache read" : "Cache write"}</dt><dd>{legacySelected.buckets.prefix.tokens.toLocaleString()} tok</dd><dd>{legacyMoney(legacySelected.buckets.prefix.usd)}</dd>
-          <dt>Fresh input</dt><dd>{legacySelected.buckets.workIn.tokens.toLocaleString()} tok</dd><dd>{legacyMoney(legacySelected.buckets.workIn.usd)}</dd>
-          <dt>Output</dt><dd>{legacySelected.buckets.output.tokens.toLocaleString()} tok</dd><dd>{legacyMoney(legacySelected.buckets.output.usd)}</dd>
+          {#if legacySelected.buckets.prefix.tokens}<dt>{legacySelected.warm ? "Cache read" : "Cache write"}</dt><dd>{legacySelected.buckets.prefix.tokens.toLocaleString()} tok</dd><dd>{legacyMoney(legacySelected.buckets.prefix.usd)}</dd>{/if}
+          {#if legacySelected.buckets.workIn.tokens}<dt>Fresh input</dt><dd>{legacySelected.buckets.workIn.tokens.toLocaleString()} tok</dd><dd>{legacyMoney(legacySelected.buckets.workIn.usd)}</dd>{/if}
+          {#if legacySelected.buckets.output.tokens}<dt>Output</dt><dd>{legacySelected.buckets.output.tokens.toLocaleString()} tok</dd><dd>{legacyMoney(legacySelected.buckets.output.usd)}</dd>{/if}
           {#if legacySelected.buckets.keepWarm.tokens}<dt>Keep-warm</dt><dd>{legacySelected.buckets.keepWarm.tokens.toLocaleString()} tok</dd><dd>{legacyMoney(legacySelected.buckets.keepWarm.usd)}</dd>{/if}
           {#if legacySelected.buckets.compaction.tokens}<dt>Auto-compact (Haiku)</dt><dd>{legacySelected.buckets.compaction.tokens.toLocaleString()} tok</dd><dd>{legacyMoney(legacySelected.buckets.compaction.usd)}</dd>{/if}
           <dt class="receipt-dt">TOTAL</dt><dd class="receipt-dt"></dd><dd class="receipt-dt">{exactMoney(legacySelected.usd)}</dd>

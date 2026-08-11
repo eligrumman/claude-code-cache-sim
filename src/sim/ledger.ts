@@ -200,23 +200,43 @@ export function simulateMessageLedger(script: ScriptedMessage[], options: Messag
   const writeRate = options.ttl === "5m" ? RATE.w5m : RATE.w1h;
   let lastTouch = Number.NEGATIVE_INFINITY;
   let lastPrefixKey: string | undefined;
+  let requestIndex = 0;
   const contextStates = new Map<string, ContextLeverState>();
   const messages = script.map((message, index): MessageLedgerEntry => {
     const gapMin = index === 0 ? 0 : message.atMin - script[index - 1].atMin;
+    const isRequest = message.role === "user";
     const prefixKey = message.prefixKey ?? "main";
     const contextKey = message.contextKey ?? prefixKey;
+    const priorMessage = script[index - 1];
+    // Some request-only consumers seed the ledger with a zero-token assistant
+    // marker for an earlier request that happened outside the supplied script.
+    // Treat that timestamp as the omitted request's touch without billing the
+    // marker itself or letting ordinary assistant replies refresh the cache.
+    if (isRequest && !Number.isFinite(lastTouch) && priorMessage?.role === "assistant"
+      && priorMessage.contextTok === 0 && priorMessage.workInTok === 0 && priorMessage.outputTok === 0) {
+      lastTouch = priorMessage.atMin;
+      lastPrefixKey = priorMessage.prefixKey ?? "main";
+    }
     const samePrefix = lastPrefixKey === undefined || prefixKey === lastPrefixKey;
     const naturalWarm = samePrefix && message.atMin - lastTouch < ttlMin;
     let pingTokens = 0;
 
-    const workInTok = message.workInTok ?? options.workInTok;
-    const outputTok = message.outputTok ?? options.outputTok;
-    const contextTurn = options.contextLevers
+    const workInTok = isRequest ? message.workInTok ?? options.workInTok : 0;
+    const hasAssistantResponse = script[index + 1]?.role === "assistant";
+    // Request-only simulations keep their output on the request entry. In a
+    // conversation, the following assistant entry owns that same output cost.
+    const outputTok = isRequest
+      ? hasAssistantResponse ? 0 : message.outputTok ?? options.outputTok
+      : message.outputTok ?? options.outputTok;
+    const responseOutputTok = hasAssistantResponse
+      ? script[index + 1].outputTok ?? options.outputTok
+      : outputTok;
+    const contextTurn = isRequest && options.contextLevers
       ? applyContextLevers(
         contextStates.get(contextKey) ?? { conversationTok: 0 },
         {
           basePrefixTok: message.contextTok ?? options.prefixTok,
-          growthTok: message.contextGrowthTok ?? workInTok + outputTok,
+          growthTok: message.contextGrowthTok ?? workInTok + responseOutputTok,
           usesTools: Boolean(message.usesTools),
         },
         options.contextLevers,
@@ -225,14 +245,14 @@ export function simulateMessageLedger(script: ScriptedMessage[], options: Messag
     // When neither an explicit contextLever prefix nor an explicit per-message
     // contextTok is supplied, the cached prefix grows each turn: the prior turn's
     // user input and assistant output both become part of the cached context that
-    // the next turn re-reads, so turn N's flat-fallback prefix is the base prefix
-    // plus N * (workIn + output) rather than a constant.
+    // the next request re-reads, so request N's flat-fallback prefix is the base
+    // prefix plus N * (workIn + output) rather than a constant.
     const growthPerTurn = (options.workInTok || 0) + (options.outputTok || 0);
-    const flatFallback = options.prefixTok + index * growthPerTurn;
-    const prefixTok = contextTurn?.prefixTok ?? message.contextTok ?? flatFallback;
+    const flatFallback = options.prefixTok + requestIndex * growthPerTurn;
+    const prefixTok = isRequest ? contextTurn?.prefixTok ?? message.contextTok ?? flatFallback : 0;
     if (contextTurn) contextStates.set(contextKey, contextTurn.nextState);
 
-    if (options.keepWarm && samePrefix && Number.isFinite(lastTouch) && !naturalWarm) {
+    if (isRequest && options.keepWarm && samePrefix && Number.isFinite(lastTouch) && !naturalWarm) {
       const pingEvery = Math.max(1, ttlMin - 1);
       let pingAt = lastTouch + pingEvery;
       while (pingAt < message.atMin) {
@@ -253,19 +273,24 @@ export function simulateMessageLedger(script: ScriptedMessage[], options: Messag
     const compactionTokens = (contextTurn?.compactionInputTok ?? 0) + (contextTurn?.compactionOutputTok ?? 0);
     const compactionUsd = priceCompaction(contextTurn?.compactionInputTok ?? 0, contextTurn?.compactionOutputTok ?? 0);
     const prefixPrice = `$${prefixUsd.toFixed(3)}`;
-    const cacheReason = warm
+    const cacheReason = !isRequest
+      ? `assistant output: ${outputTok.toLocaleString()} tokens billed at the output rate`
+      : warm
       ? `${pingTokens ? "kept warm" : "warm read"}: prefix still live, ${prefixTok.toLocaleString()} × 0.1 × $${MODEL_IN[options.model]}/M = ${prefixPrice}`
       : !samePrefix
         ? `prompt changed: a different prefix must be written, ${prefixTok.toLocaleString()} tokens at ${writeRate}× = ${prefixPrice}`
-        : index === 0
+        : requestIndex === 0
           ? `first message: ${prefixTok.toLocaleString()}-tok prefix written at ${writeRate}× = ${prefixPrice}`
-          : `TTL expired: ${gapMin} min gap > ${ttlMin} min → ${prefixTok.toLocaleString()}-tok prefix rebuilt at ${writeRate}× = ${prefixPrice}`;
+          : `TTL expired: ${message.atMin - lastTouch} min gap > ${ttlMin} min → ${prefixTok.toLocaleString()}-tok prefix rebuilt at ${writeRate}× = ${prefixPrice}`;
     const reason = contextTurn?.compactedTok
       ? `Auto-compact summarized ${contextTurn.compactedTok.toLocaleString()} old context tokens for $${compactionUsd.toFixed(3)}. ${cacheReason}`
       : cacheReason;
 
-    lastTouch = message.atMin;
-    lastPrefixKey = prefixKey;
+    if (isRequest) {
+      lastTouch = message.atMin;
+      lastPrefixKey = prefixKey;
+      requestIndex += 1;
+    }
     const buckets = {
       prefix: { tokens: prefixTok, usd: prefixUsd },
       workIn: { tokens: workInTok, usd: workInUsd },
