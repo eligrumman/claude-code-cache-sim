@@ -22,8 +22,6 @@
   import type { Model } from "../engine/types.js";
   import CopyButton from "../setup/CopyButton.svelte";
   import { recipeById, type RecipeId } from "../setup/recipes.js";
-  import RawDataModal from "../components/RawDataModal.svelte";
-  import { REAL_SEGMENT_PROVENANCE, REAL_SEGMENT_ROWS } from "../sim/captures/realSegments.js";
 
   interface Props {
     onback: () => void;
@@ -319,10 +317,10 @@
   }
 </script>
 
-<svelte:head><title>Claude Code — Explained</title></svelte:head>
+<svelte:head><title>Claude Code Costs - Explained</title></svelte:head>
 
 <main class="article">
-  <nav><button onclick={onback}>← Back to map</button><span>CLAUDE CODE — EXPLAINED</span></nav>
+  <nav><button onclick={onback}>← Back to map</button><span>CLAUDE CODE COSTS - EXPLAINED</span></nav>
 
   <header>
     <button
@@ -334,9 +332,10 @@
       onclick={toggleTldr}
     ><span>TL;DR</span><i></i></button>
     <span class="doodle" aria-hidden="true">$</span>
-    <p>AN INTERACTIVE FIELD GUIDE</p>
-    <h1>Claude Code<br/><em>— Explained</em></h1>
+    <p class="article-kicker">AN INTERACTIVE FIELD GUIDE</p>
+    <h1 aria-label="Claude Code Costs - Explained">Claude Code Costs -<br/><em>Explained</em></h1>
     <div>First inspect one message. Then zoom out and route the whole workday.</div>
+    <p class="article-overview">This article breaks down where the money goes when you run Claude Code. In MICRO, we go message by message through a single session and watch the prompt cache make each turn cheaper—or, when it expires, suddenly expensive. In MACRO, we zoom out to a month of work and see how your choice of model and reasoning effort per task adds up over 30 days.</p>
     <div class="article-switch" aria-label="Choose article">
       <button class:active={article === "micro"} aria-pressed={article === "micro"} onclick={() => show("micro")}>Micro</button>
       <button class:active={article === "macro"} aria-pressed={article === "macro"} onclick={() => show("macro")}>Macro</button>
@@ -346,10 +345,6 @@
   {#if article === "micro"}
     <div class="article-intro">
       <small>MICRO · MESSAGE BY MESSAGE</small>
-      <h2 class="micro-hook">The surprisingly expensive pause.</h2>
-      <h2>Which caching configs spend the fewest tokens?</h2>
-      <p>Flip each lever, then click a message to see exactly why it cost what it did.</p>
-      <RawDataModal title="A real Claude Code session — timestamped tape" provenance={REAL_SEGMENT_PROVENANCE} rows={REAL_SEGMENT_ROWS} prominent />
     </div>
 
     {#each microSections as section}
@@ -491,13 +486,12 @@
 
 <style>
   .article{width:min(940px,calc(100% - 28px));margin:0 auto;padding-bottom:80px;color:var(--toy-ink);background:var(--toy-paper);box-shadow:0 0 0 100vmax var(--toy-paper);clip-path:inset(0 -100vmax);font-family:var(--font-body)}
-  h1,h2,.article>header>p,.section-copy>small,.article-intro>small,.cta small{font-family:var(--font-display)}
+  h1,h2,.article-kicker,.section-copy>small,.article-intro>small,.cta small{font-family:var(--font-display)}
   button{font:inherit;color:inherit}nav{display:flex;justify-content:space-between;align-items:center;padding:18px 0;border-bottom:2px solid #20201d;font-size:.72rem;font-weight:900;letter-spacing:.12em}nav button{border:0;background:none;cursor:pointer;letter-spacing:0}
-  header{min-height:510px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;position:relative}header>p,.section-copy>small,.article-intro>small,.cta small{font-weight:950;letter-spacing:.13em;font-size:.72rem}h1{font-size:clamp(3rem,9vw,6.3rem);line-height:.86;letter-spacing:-.065em;margin:16px 0 26px}h1 em{font-style:normal;text-decoration:underline wavy #f2c94c 5px;text-underline-offset:8px}header>div:not(.article-switch){max-width:560px;font-size:1.12rem;line-height:1.5}.doodle{position:absolute;right:10%;top:15%;width:55px;height:55px;border:3px solid #20201d;border-radius:50% 45% 52% 46%;display:grid;place-items:center;font:900 2rem serif;transform:rotate(12deg);background:#9ce5bd;box-shadow:5px 5px 0 #20201d}
+  header{min-height:510px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;position:relative}.article-kicker,.section-copy>small,.article-intro>small,.cta small{font-weight:950;letter-spacing:.13em;font-size:.72rem}h1{font-size:clamp(3rem,9vw,6.3rem);line-height:.86;letter-spacing:-.065em;margin:16px 0 26px}h1 em{font-style:normal}header>div:not(.article-switch){max-width:560px;font-size:1.12rem;line-height:1.5}.article-overview{max-width:720px;margin:24px auto 0;font-size:1rem;line-height:1.6;color:#4f4b43}.doodle{position:absolute;right:10%;top:15%;width:55px;height:55px;border:3px solid #20201d;border-radius:50% 45% 52% 46%;display:grid;place-items:center;font:900 2rem serif;transform:rotate(12deg);background:#9ce5bd;box-shadow:5px 5px 0 #20201d}
   .article-switch{display:grid;grid-template-columns:1fr 1fr;margin-top:32px;border:2px solid #20201d;border-radius:999px;background:#f1efe9;padding:4px;box-shadow:4px 4px 0 #20201d}.article-switch button{min-width:110px;border:0;border-radius:999px;background:transparent;padding:10px 20px;font-weight:950;cursor:pointer}.article-switch button.active{background:#20201d;color:#fff}
   .reading-mode{position:absolute;top:18px;right:0;z-index:5;display:flex;align-items:center;gap:7px;padding:5px 6px 5px 9px;border:2px solid #20201d;border-radius:999px;background:#fff;font-size:.72rem;font-weight:950;letter-spacing:.06em;cursor:pointer;box-shadow:3px 3px 0 #f2c94c}.reading-mode i{display:block;width:25px;height:15px;border:1.5px solid #20201d;border-radius:999px;background:#8ec5ef;position:relative}.reading-mode i::after{content:"";position:absolute;top:2px;left:2px;width:9px;height:9px;border:1px solid #20201d;border-radius:50%;background:#fff;transition:transform .18s}.reading-mode.on i{background:#62d39a}.reading-mode.on i::after{transform:translateX(10px)}
   .article-intro{max-width:720px;margin:35px auto 70px;text-align:center}.article-intro small{color:#a85e13}.article-intro h2{font-size:clamp(2.3rem,6vw,4.6rem);line-height:.95;letter-spacing:-.05em;margin:12px 0 18px}.article-intro p{font-size:1.08rem;line-height:1.5;margin:0 auto;max-width:590px}
-  .article-intro .micro-hook{font-size:1rem;letter-spacing:0;margin:12px 0 24px;color:#716c62;font-weight:750}
   .intro-links{display:flex;justify-content:center;flex-wrap:wrap;gap:10px;margin-top:20px}.intro-links button{border:0;background:none;color:#8c4a0a;font-weight:900;font-size:.82rem;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
   section.lesson{margin:80px 0 125px}.section-copy{max-width:680px;margin:0 0 24px 18px}.section-copy>small{color:#a85e13}.section-copy h2,.cta h2{font-size:clamp(2rem,5vw,3.6rem);line-height:1;letter-spacing:-.045em;margin:8px 0 12px}.section-copy>p,.cta p{font-size:1.05rem;line-height:1.5;margin:0;max-width:650px}.expand{display:flex;align-items:center;gap:8px;margin-top:14px;padding:5px 0;border:0;border-bottom:2px solid #20201d;background:transparent;font-size:.82rem;font-weight:900;cursor:pointer}.expand b{font:950 1rem/1 ui-monospace,monospace;color:#a85e13;transition:transform .15s}.expand[aria-expanded="true"] b{transform:rotate(90deg)}
   .macro-widget{margin:28px 0 70px}

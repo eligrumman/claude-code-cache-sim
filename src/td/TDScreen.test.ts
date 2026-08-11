@@ -168,7 +168,7 @@ describe("Tokenloons live routing screen", () => {
   it("smoke-loads the Article and its shared-engine Sandbox handoff", async () => {
     render(App);
     await fireEvent.click(screen.getByRole("button", { name: /The Article/ }));
-    expect(screen.getByRole("heading", { name: /The surprisingly.*expensive pause/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Claude Code Costs - Explained" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: /Open the Sandbox/ }));
     expect(screen.getByRole("heading", { name: "Conversation playground" })).toBeInTheDocument();
   });

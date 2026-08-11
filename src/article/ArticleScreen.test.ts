@@ -33,7 +33,11 @@ function renderArticle() {
 describe("Micro and Macro articles", () => {
   it("switches between both articles in-screen", async () => {
     renderArticle();
-    expect(screen.getByRole("heading", { name: "Which caching configs spend the fewest tokens?" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Claude Code Costs - Explained" })).toBeInTheDocument();
+    expect(screen.getByText(/This article breaks down where the money goes/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Five minutes or one hour?" })).toBeInTheDocument();
+    expect(screen.queryByText("The surprisingly expensive pause.")).not.toBeInTheDocument();
+    expect(screen.queryByText("This is real. Here's the tape.")).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: "Macro" }));
     expect(screen.getByRole("heading", { name: "Stop making one giant agent do everything." })).toBeInTheDocument();
