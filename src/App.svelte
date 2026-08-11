@@ -58,9 +58,9 @@
         <span class="number">03</span>
         <span class="icon" aria-hidden="true">🎈</span>
         <span class="card-copy">
-          <strong>Dispatch</strong>
-          <span class="hook">Right brain. Right job.</span>
-          <small>Race the inbox, keep the cache warm, and bank the difference.</small>
+          <strong>Don't Get Replaced</strong>
+          <span class="hook">Tickets pile up. The clock races.</span>
+          <small>Right-size the brain, keep cache warm, and bank what panic-Opus would burn — before the automation notice lands.</small>
         </span>
         <span class="arrow" aria-hidden="true">→</span>
       </button>
