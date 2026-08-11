@@ -1,0 +1,2397 @@
+# OBJECT_MODEL.md
+
+> Canonical shared vocabulary for all `claude-code-cache-sim` level specifications. A level specification references the stable names defined here and supplies only level-specific values, ordering, copy, and gates.
+>
+> Numbers are measured constants when a `C` citation is present. Calibrated simulation values are marked `[FICTION]`; proposed presentation timings and dimensions are marked `[ESTIMATE]`.
+
+## 1. Core invariants
+
+1. **Determinism.** Given a `seed`, initial `LevelDef`, and ordered `Action[]`, replay produces byte-identical `ReducerState`, ledger, wallet, and result.
+2. **One ledger row per request.** Every priced request produces exactly one `LedgerRow`; every tape row corresponds to exactly one ledger row.
+3. **No hidden economics.** UI components display prices but never calculate authoritative cost. Pricing belongs to `PricingFunction`.
+4. **Exact engine, rounded display.** State stores unrounded USD values. UI rounds only for display.
+5. **No false zero.** Any positive cost that would render as `$0.0000` uses a more precise representation such as `$0.00003` or `<$0.0001`.
+6. **Prefix ordering matters.** Cache reuse is based on the longest byte-identical prefix, not semantic similarity.
+7. **TTL is idle time.** A live cache expires when `clock.min - lastTouchMin >= ttlMin`. A cache read refreshes `lastTouchMin`.
+8. **Context isolation.** Main sessions and subagents never share cache entries unless a scenario explicitly models a shared subagent prefix pool.
+9. **Prediction precedes revelation but is never punitive.** A reveal requiring prediction cannot execute until a prediction has been committed. Prediction correctness cannot affect score, stars, wallet, failure, or gate passage.
+10. **Failure is local and economically true.** Teaching failures freeze at the decisive event and rewind to the nearest checkpoint without replaying mastered setup. A freeze may punish a route only when the visible ledger shows that route is more expensive than the valid alternative.
+11. **Gates measure demonstrated behavior.** Passing cannot depend on budget alone where the level teaches a causal decision. Every gate observes at least one post-evidence player action.
+12. **Post-attempt comparisons are informational only.** Reference and anti-pattern runs remain hidden until the player has completed an attempt. `FREEZE_FAILURE` must never be dispatched while processing `REQUEST_COUNTERFACTUAL`, `REVEAL_COUNTERFACTUAL`, or a reference/counterfactual reveal event; only an economic action in the player’s actual attempt may cause a punitive freeze.
+13. **One authoritative value per quantity.** A level contains exactly one implementable value for each request count, token count, cost, threshold, and result total. Historical or superseded alternatives do not appear in an implementation specification.
+14. **Core decisions require live tradeoffs.** A level’s central choice cannot be a dial-to-maximum, a strictly dominant option, an unreachable failure branch, or a blind guess without inferable evidence.
+15. **Truthful visual weight.** Tape bar and segment widths include output cost and all other priced buckets; hiding a label may not remove that bucket’s visual weight.
+
+---
+
+## 2. Primitive objects
+
+### 2.1 `Token`
+
+The smallest priced text unit.
+
+```ts
+type TokenId = string;
+
+interface Token {
+  id: TokenId;
+  ordinal: number;
+  text?: string;
+  byteHash: string;
+  sourceBlockId: PrefixBlockId;
+}
+```
+
+`byteHash` represents exact serialized identity. Cache matching uses ordered token hashes, never displayed wording or semantic equivalence. UI may aggregate tokens; the engine may represent them as counts plus deterministic hashes rather than allocate individual objects.
+
+### 2.2 `TokenCount`
+
+```ts
+type TokenCount = number; // non-negative safe integer
+```
+
+All token buckets must be non-negative integers:
+
+- `readTok`: cached prefix read at `0.1x`.
+- `inputTok`: uncached input not written to a cache breakpoint, at `1x`.
+- `writeTok`: prefix written at the selected cache tier.
+- `outTok`: generated output, at `5x`.
+
+A token may belong to exactly one input-side bucket in a single request: `readTok`, `inputTok`, or `writeTok`. Output is a separate bucket.
+
+### 2.3 `PrefixBlockKind`
+
+The complete reusable prefix vocabulary:
+
+```ts
+type PrefixBlockKind =
+  | "system"
+  | "tools"
+  | "instructions"
+  | "skills"
+  | "memory"
+  | "mcp"
+  | "history"
+  | "current";
+```
+
+Stable display order:
+
+1. `system`
+2. `tools`
+3. `instructions`
+4. `skills`
+5. `memory`
+6. `mcp`
+7. `history`
+8. `current`
+
+| Kind | Stable name | Meaning | Typical stability |
+|---|---|---|---|
+| `system` | `PB_SYSTEM` | Model/system bootstrap text | Stable |
+| `tools` | `PB_TOOLS` | Built-in tool definitions | Stable until tool configuration changes |
+| `instructions` | `PB_INSTRUCTIONS` | Project and session instructions | Usually stable |
+| `skills` | `PB_SKILLS` | Skill catalog or invoked skill bodies | Configuration-dependent |
+| `memory` | `PB_MEMORY` | Always-loaded memory files | Stable until files change |
+| `mcp` | `PB_MCP` | Enabled MCP tool schemas | Stable until server selection/schema changes |
+| `history` | `PB_HISTORY` | Prior conversation and tool traffic | Grows during a main session |
+| `current` | `PB_CURRENT` | Current user/task payload | Normally fresh and should be late |
+
+### 2.4 `PrefixBlock`
+
+```ts
+type PrefixBlockId = string;
+
+interface PrefixBlock {
+  id: PrefixBlockId;
+  kind: PrefixBlockKind;
+  label: string;
+  tokenCount: TokenCount;
+  identityHash: string;
+  order: number;
+  cacheable: boolean;
+  breakpointAfter: boolean;
+  stability: "stable" | "session" | "volatile";
+  requiredCapability?: string;
+  source?: string;
+}
+```
+
+Contracts:
+
+- Blocks are serialized in ascending `order`.
+- `identityHash` changes if any byte in the serialized block changes.
+- A mismatch in block `i` prevents reuse of block `i` and every later block until a valid later breakpoint is modeled.
+- `current` is present exactly once and last unless a level intentionally teaches harmful ordering.
+- A cache breakpoint requires at least `MIN_CACHEABLE_PREFIX = 1,024` tokens (`C26`).
+- At most `MAX_BREAKPOINTS = 4` breakpoints may be active (`C26`).
+- Missing required capabilities may fail work; therefore minimizing prefix size is constrained by task sufficiency.
+
+### 2.5 `PrefixStack`
+
+```ts
+interface PrefixStack {
+  blocks: PrefixBlock[];
+  totalTok: TokenCount;
+  firstMismatchBlockId: PrefixBlockId | null;
+  matchedPrefixTok: TokenCount;
+  invalidatedSuffixTok: TokenCount;
+}
+```
+
+Derived invariants:
+
+```ts
+totalTok = sum(block.tokenCount)
+matchedPrefixTok = sum(blocks before first mismatch that belong to a live entry)
+invalidatedSuffixTok = cacheable suffix after first mismatch
+```
+
+Stable name: `PREFIX_STACK`.
+
+### 2.6 `Request`
+
+One model invocation and the sole source of one priced ledger row.
+
+```ts
+type RequestId = string;
+type Model = "sonnet" | "opus" | "fable";
+type WriteTier = "5m" | "1h";
+
+interface Request {
+  id: RequestId;
+  unitId: string;
+  sequence: number;
+  context: ExecutionContext;
+  model: Model;
+  prefix: PrefixStack;
+  freshInputTok: TokenCount;
+  expectedOutputTok: TokenCount;
+  writeTier: WriteTier;
+  sentAtMin: number;
+  cachePolicy: "read-write" | "bypass";
+}
+```
+
+Resolution yields:
+
+```ts
+interface PricedRequest {
+  request: Request;
+  readTok: TokenCount;
+  inputTok: TokenCount;
+  writeTok: TokenCount;
+  outTok: TokenCount;
+  cold: boolean;
+  cacheEntryId: CacheEntryId | null;
+  usd: number;
+}
+```
+
+### 2.7 `CacheEntry` and `CacheState`
+
+```ts
+type CacheEntryId = string;
+
+interface CacheEntry {
+  id: CacheEntryId;
+  ownerContextId: string;
+  prefixHash: string;
+  tokenCount: TokenCount;
+  tier: WriteTier;
+  ttlMin: 5 | 60;
+  createdAtMin: number;
+  lastTouchMin: number;
+  expiresAtMin: number;
+  breakpointOrdinal: number;
+}
+
+interface CacheState {
+  entries: Record<CacheEntryId, CacheEntry>;
+}
+```
+
+`CacheState` is used by `ReducerState.cache`. An implementation adapter may translate the repository’s compact engine cache rows into this canonical shape.
+
+Tier contracts:
+
+| Tier | Stable name | Write multiplier | TTL |
+|---|---|---:|---:|
+| `5m` | `CACHE_TIER_5M` | `1.25x` | 5 minutes |
+| `1h` | `CACHE_TIER_1H` | `2x` | 60 minutes |
+
+```ts
+expiresAtMin = lastTouchMin + ttlMin
+isLive(entry, clock) = clock.min < entry.expiresAtMin
+remainingMin = max(0, expiresAtMin - clock.min)
+remainingRatio = remainingMin / ttlMin
+```
+
+A successful read updates `lastTouchMin` and `expiresAtMin`. Expiry does not delete historical ledger evidence.
+
+### 2.8 `ExecutionContext`
+
+```ts
+type ExecutionContext =
+  | MainSessionContext
+  | SubagentContext;
+
+interface MainSessionContext {
+  kind: "main";
+  id: string;
+  sessionId: string;
+  cacheNamespace: string;
+  ttlTier: "1h";
+  historyMode: "growing";
+}
+
+interface SubagentContext {
+  kind: "subagent";
+  id: string;
+  parentSessionId: string;
+  subagentId: string;
+  sharedPrefixPoolId?: string;
+  cacheNamespace: string;
+  ttlTier: "5m";
+  historyMode: "bounded";
+}
+```
+
+#### `MAIN_SESSION_CONTEXT`
+
+- Carries growing history.
+- Uses the 60-minute main-cache lifetime (`C1`).
+- Repeated work may reread an increasingly large history prefix.
+- New sessions use new cache namespaces unless a scenario explicitly says otherwise.
+- The measured reusable main “hey” prefix is `MAIN_PREFIX_HEY = 34,738` tokens (`C34`).
+
+#### `SUBAGENT_CONTEXT`
+
+- Has an isolated, bounded context.
+- Uses the 5-minute cache lifetime (`C1`, `C27`).
+- May reuse an identical shared spawn prefix through `sharedPrefixPoolId`.
+- Does not inherit the main session’s cache entry.
+- The measured identical spawn prefix is `26,237` tokens (`C10`).
+
+### 2.9 `WireSegment`
+
+A visual subdivision of a request; it is not independently priced.
+
+```ts
+type WireSegmentKind = "read" | "input" | "write" | "output";
+
+interface WireSegment {
+  id: string;
+  requestId: RequestId;
+  kind: WireSegmentKind;
+  tokenCount: TokenCount;
+  multiplier: 0.1 | 1 | 1.25 | 2 | 5;
+  usd: number;
+  colorRole: "read-blue" | "write-red" | "output-violet";
+  startRatio: number;
+  widthRatio: number;
+}
+```
+
+`input` and `write` use the red family because both represent newly paid input-side work. `read` uses blue and output uses violet. Every non-zero bucket, including output, contributes its authoritative USD share to segment width:
+
+```ts
+segment.widthRatio = segment.usd / row.usd
+segment.startRatio = sum(previousSegment.usd) / row.usd
+```
+
+### 2.10 `LedgerRow`
+
+```ts
+interface LedgerRow {
+  requestId: string;
+  unitId: string;
+  tMin: number;
+  agent: "main" | string;
+  model: Model;
+  readTok: number;
+  inputTok: number;
+  writeTok: number;
+  outTok: number;
+  writeTier: WriteTier;
+  cold: boolean;
+  usd: number;
+}
+```
+
+Contracts:
+
+- `usd > 0` for every real request.
+- Token buckets and `usd` match `PricingFunction`.
+- `cold === true` when no reusable live prefix exists for the request’s required base.
+- The tape renders rows in ledger order.
+- `lastRequests` is the exact contiguous subset produced by the latest unit action.
+
+### 2.11 `Wallet` and `Budget`
+
+The canonical wallet and budget forms are scalar unrounded USD values:
+
+```ts
+type Wallet = number; // remaining USD; may be negative
+type Budget = number; // initial attempt cap in USD
+```
+
+They are stored only as `ReducerState.wallet` and `ReducerState.budget`. No object form such as `wallet.remainingUsd`, `wallet.spentUsd`, or `budget.capUsd` exists.
+
+The authoritative spend derivation is:
+
+```ts
+spentUsd = state.budget - state.wallet
+walletAfter = walletBefore - pricedRequest.usd
+```
+
+`AttemptMetrics.spentUsd` and `AttemptResult.spentUsd` are reducer-maintained snapshots of this derivation, never independent economic inputs. Budget failure alone must not substitute for a behavioral gate. A hidden-loss total is not a wallet or budget value.
+
+### 2.12 `Clock`
+
+```ts
+interface Clock {
+  min: number;
+  startMin: number;
+  endMin: number;
+  dayLengthMin: number;
+  frozen: boolean;
+}
+```
+
+- Unit: simulated minutes.
+- Default work block: `DAY_LEN_MIN = 300` (`C31`, `[FICTION]`).
+- `ReducerState.clockMin`, `endMin`, `dayLen`, and `clockFrozen` are the reducer-owned scalar storage for this view.
+- `ADVANCE` changes only `clockMin`; liveness is derived.
+- Wall-clock animation never mutates simulation time directly.
+- A UI drain animation batches committed whole simulated minutes into an `ADVANCE` action.
+
+### 2.13 `Checkpoint`
+
+```ts
+interface Checkpoint {
+  id: string;
+  actionIndex: number;
+  stateHash: string;
+  reason: "prediction" | "decision" | "unit-start" | "level-start";
+}
+```
+
+A checkpoint identifies a deterministic replay boundary. Rewind reconstructs state from the initial seed and actions before `actionIndex`; it does not mutate a past state snapshot in place.
+
+---
+
+## 3. Pricing engine
+
+### 3.1 `RateTier`
+
+The four input-side rate tiers requested by the curriculum are:
+
+| Stable name | Bucket | Multiplier | Sonnet $/M | Opus $/M | Fable $/M |
+|---|---|---:|---:|---:|---:|
+| `RATE_INPUT` | Fresh input | `1x` | 3.00 | 5.00 | 10.00 |
+| `RATE_CACHE_READ` | Cache read | `0.1x` | 0.30 | 0.50 | 1.00 |
+| `RATE_CACHE_WRITE_5M` | 5-minute write | `1.25x` | 3.75 | 6.25 | 12.50 |
+| `RATE_CACHE_WRITE_1H` | 1-hour write | `2x` | 6.00 | 10.00 | 20.00 |
+
+Output is a separate generated-token rate:
+
+| Stable name | Bucket | Multiplier | Sonnet $/M | Opus $/M | Fable $/M |
+|---|---|---:|---:|---:|---:|
+| `RATE_OUTPUT` | Output | `5x` | 15.00 | 25.00 | 50.00 |
+
+Rate multipliers are `C1`; model bases are Sonnet `3`, Opus `5`, Fable `10` USD/M (`C2–C4`). The 1-hour-write-to-read ratio is `2 / 0.1 = 20x` (`C5`).
+
+### 3.2 `PriceTable`
+
+```ts
+interface PriceRow {
+  input: number;
+  read: number;
+  w5m: number;
+  w1h: number;
+  out: number;
+}
+
+function priceTable(model: Model): PriceRow;
+```
+
+```ts
+priceTable(model) = {
+  input: base,
+  read: base * 0.1,
+  w5m: base * 1.25,
+  w1h: base * 2,
+  out: base * 5
+}
+```
+
+### 3.3 `PricingFunction`
+
+Stable name: `PRICE_REQUEST`.
+
+```ts
+function priceRequest(args: {
+  model: Model;
+  readTok: number;
+  inputTok: number;
+  writeTok: number;
+  outTok: number;
+  writeTier: WriteTier;
+}): number;
+
+type PricingFunction = typeof priceRequest;
+```
+
+Canonical equation:
+
+```text
+base = MODEL_IN[model]
+
+readUsd   = readTok  × 0.1                          × base / 1,000,000
+inputUsd  = inputTok × 1                            × base / 1,000,000
+writeUsd  = writeTok × (writeTier=="1h" ? 2 : 1.25) × base / 1,000,000
+outputUsd = outTok   × 5                            × base / 1,000,000
+
+totalUsd = readUsd + inputUsd + writeUsd + outputUsd
+```
+
+No rounding occurs inside `PRICE_REQUEST`.
+
+### 3.4 `PrefixResolution`
+
+Stable name: `RESOLVE_PREFIX`.
+
+```ts
+interface PrefixResolution {
+  cacheEntryId: string | null;
+  firstMismatchBlockId: string | null;
+  readTok: number;
+  inputTok: number;
+  writeTok: number;
+  invalidatedSuffixTok: number;
+  cold: boolean;
+}
+```
+
+Resolution order:
+
+1. Select only live entries in the request’s cache namespace.
+2. Find the longest byte-identical cacheable prefix.
+3. Allocate matched tokens to `readTok`.
+4. Allocate the cacheable unmatched prefix or suffix to `writeTok`.
+5. Allocate non-cacheable fresh material to `inputTok`.
+6. Create or refresh the appropriate `CacheEntry`.
+7. Price the resolved buckets with `PRICE_REQUEST`.
+
+---
+
+## 4. Constants and fixture registry
+
+This registry is the canonical meaning of every numbered citation used by the game. A level may cite a `C` number but must not redefine it.
+
+| ID | Stable constant or fact | Canonical value | Provenance |
+|---|---|---:|---|
+| `C1` | `CACHE_RATE_AND_TTL` | Input `1x`; read `0.1x`; 5m write `1.25x`; 1h write `2x`; output `5x`; TTLs `5m`/`60m` | Measured pricing rules |
+| `C2` | `OPUS_BASE_PRICE` | `$5/M` input; `$0.50/M` read; `$6.25/M` 5m write; `$10/M` 1h write; `$25/M` output | Derived from `C1` |
+| `C3` | `SONNET_BASE_PRICE` | `$3/M` input; `$0.30/M` read; `$3.75/M` 5m write; `$6/M` 1h write; `$15/M` output | Derived from `C1` |
+| `C4` | `FABLE_BASE_PRICE` | `$10/M` input; `$1/M` read; `$12.50/M` 5m write; `$20/M` 1h write; `$50/M` output | Derived from `C1` |
+| `C5` | `REBUILD_TO_READ_RATIO_1H` | `20x` (`2 / 0.1`) | Derived |
+| `C6` | `MAIN_PREFIX_MEASUREMENT` | System `2,750`; messages `15,693`; complete main “hey” prefix `34,738` tokens | Measured |
+| `C7` | `FULL_SKILLS_CATALOG` | `13,083` tokens for 150 entries | Measured |
+| `C8` | `CACHE_IDENTITY_RULE` | Reuse requires byte-identical ordered prefix content | Measured behavior; no scalar |
+| `C9` | `PREFIX_INVALIDATION_RULE` | First mismatch invalidates the cacheable suffix after it | Measured behavior; no scalar |
+| `C10` | `IDENTICAL_SUBAGENT_PREFIX` | First spawn writes `26,237`; later warm identical spawns read `26,237` | Measured |
+| `C11` | `ONE_WORD_VARIATION` | `11,602` read + `14,623` rewrite per varied spawn | Measured |
+| `C12` | `CACHE_TOUCH_RULE` | A cache hit refreshes idle TTL | Measured behavior; no scalar |
+| `C13` | `IDLE_REBUILD_COUNT` | `272` rebuilds/month in the reference audit workload | Measured audit fixture |
+| `C14` | `IDLE_REBUILD_COST` | `$575/month` in the reference audit workload | Derived from audit fixture |
+| `C15` | `FLEET_ROLLUP_RULE` | Per-developer ledgers sum into fleet totals | Scenario rule; no scalar |
+| `C16` | `HIDDEN_COST_DECOMPOSITION` | Hidden losses are stored by named causal bucket | Scenario rule; no scalar |
+| `C17` | `AUDIT_REFERENCE_TOTALS` | `$692` hidden total; `$575` idle is the dominant bucket; ordering `idle > delegate > 5m-band > MCP` | Reference audit fixture |
+| `C18` | `FLEET_ARCHETYPE_SET` | Five developer loss archetypes in the fleet scenario | `[FICTION]` calibrated fixture |
+| `C19` | `KEEP_WARM_BREAK_EVEN` | 1h tier `20h`; 5m tier `(1.25×5)/6 ≈ 1.04h` | Derived |
+| `C20` | `KEEP_WARM_DECISION_RULE` | Ping only when ping total is below avoided rewrite cost | Derived behavior; no scalar |
+| `C21` | `ONE_HOUR_BREAK_EVEN` | `(2−1.25)/(1.25−0.1) = 0.652173…` | Derived |
+| `C22` | `SESSIONSTART_PREFIX_POSITION` | Volatile early hook content invalidates later stable content | Measured behavior; no scalar |
+| `C23` | `HOOK_POISON` | `24,300` rewritten tokens per poisoned session start | Measured |
+| `C24` | `TOOLS_BASE` | Main tool definitions `16,295` tokens; MCP fixture `[6,295, 4,000, 3,000, 3,000]` | Measured total; fixture split `[FICTION]` |
+| `C25` | `SUBAGENT_TOOLSET_RULE` | Subagents use a reduced toolset already represented in the `26,237` base | Measured/model rule; no additive scalar |
+| `C26` | `CACHE_BREAKPOINT_LIMITS` | Minimum cacheable prefix `1,024`; maximum breakpoints `4` | Platform limit |
+| `C27` | `SUBAGENT_WARM_WAVES` | About `90s` per spawn; `5m` TTL; `3` serial waves stay warm | Measured/calibrated |
+| `C28` | `DEV_WORKLOAD` | `WORK_IN=6,000`; `WORK_OUT=44,000` tokens/task | `[FICTION]` calibrated |
+| `C29` | `INLINE_HISTORY_GROWTH` | `INLINE_B0=34,000`; growth `22,000` tokens/task | `[FICTION]` anchored to `C6` |
+| `C30` | `SCOPE_SCALE` | Session `1`; week `3.9`; month `14.2` | `[FICTION]` calibrated |
+| `C31` | `SCOPE_ECONOMY` | Budgets `$12/$30/$90`; days `1/5/22`; day length `300m`; manual multiplier `6`; tedium `8×unitHours` | `[FICTION]` |
+| `C32` | `CATALOG_PER_ENTRY` | `13,083 / 150 = 87.22` tokens/entry; invoked body approximately `1,744` tokens | Derived from `C7` |
+| `C33` | `L11_FIXED_BASE` | `SYSTEM_BASE + CATALOG_RESIDUE = 2,750 + 2,610 = 5,360` tokens | Derived from measured `C6`/`C7` components |
+| `C34` | `MAIN_PREFIX_HEY` | `34,738` tokens | Measured complete main-context prefix from `C6` |
+| `C35` | `L3_HISTORY_FIXTURE` | `13,083` tokens | `[FICTION]` L3 conversation-history block fixture; numerically equal to `C7` but semantically unrelated |
+
+Canonical named constants:
+
+```ts
+SYSTEM_BASE = 2_750;                         // C6
+MESSAGES_BASE = 15_693;                     // C6
+CATALOG_FULL = 13_083;                      // C7
+CATALOG_RESIDUE = MESSAGES_BASE
+                - CATALOG_FULL;             // 2,610
+L11_FIXED_BASE = SYSTEM_BASE
+               + CATALOG_RESIDUE;           // 5,360, C33
+MAIN_PREFIX_HEY = 34_738;                   // C34
+L3_HISTORY_FIXTURE = 13_083;                // [FICTION], C35
+
+MEMORY_PER_FILE = 400;                      // [FICTION]
+FANOUT_BUDGET = 15;                         // [FICTION]
+MCP_SIZES = [6_295, 4_000, 3_000, 3_000]; // [FICTION] split, C24 total
+N_DEV = 3;                                  // [FICTION]
+BUDGET_MONTHLY = 90;                        // [FICTION], C31
+```
+
+`CATALOG_RESIDUE` is the real engine constant for the `2,610` non-catalog message residue. The L11 fixed base is the distinct `L11_FIXED_BASE = 5,360` constant (`C33`). L11 cites `C33`, while L2/L3 cite `C34`; neither cites composite measurement `C6` as though it were the desired scalar.
+
+Fixture-provenance rules:
+
+- A citation is valid only when the cited constant’s semantic role matches the authored quantity’s semantic role.
+- Numerical equality does not establish provenance. A measured skills-catalog size cannot be cited as a conversation-history size, an MCP schema size, or another unrelated fixture.
+- Every calibrated gameplay fixture not already represented by a semantically matching constant must receive a distinct stable fixture ID and `[FICTION]` registration in this section or in `ScenarioData.fixtures`.
+- Reusing the same numeric value for two unrelated semantic roles requires two independently named registrations.
+- `L3_HISTORY_FIXTURE` (`C35`) is the canonical L3 history-block fixture. L3 must not cite `CATALOG_FULL` (`C7`) for that block.
+- `[ESTIMATE]` is reserved for presentation timing, dimensions, and other non-economic presentation values; it cannot disguise a gameplay fixture.
+- If implementation evidence does not provide a scalar for a behavioral `C` entry, level copy must cite the behavior without inventing a number.
+
+---
+
+## 5. Reducer model
+
+### 5.1 `ReducerState`
+
+This supersedes the existing `GameState` name while retaining its fields for compatibility.
+
+```ts
+interface ReducerState {
+  seed: number;
+  scope: "session" | "week" | "month";
+
+  clockMin: number;
+  endMin: number;
+  dayLen: number;
+  clockFrozen: boolean;
+
+  wallet: Wallet;
+  budget: Budget;
+  manualHours: number;
+  tedium: number;
+
+  cfg: Config;
+  cache: CacheState;
+
+  units: UnitInstance[];
+  idx: number;
+  standup?: UnitInstance;
+
+  bugsOpen: number;
+  ledger: LedgerRow[];
+  lastRequests: LedgerRow[];
+
+  prng: { s0: number; s1: number };
+
+  idleLog: IdleLogEntry[];
+  hidden: HiddenCosts;
+  counts: Counts;
+  sessionStarts: number;
+  ratioNum: number;
+  ratioDen: number;
+  ended: GameEnd | null;
+
+  phase: LevelPhase;
+  prediction: PredictionState | null;
+  checkpoints: Checkpoint[];
+  frozenFailure: FrozenFailure | null;
+  localAttemptFailure: LocalAttemptFailure | null;
+
+  prefixStacks: Record<string, PrefixStack>;
+  cacheEntries: Record<string, CacheEntry>;
+  selectedLoadout: LoadoutState;
+  markerInventories: Record<string, LimitedMarkerInventoryState>;
+
+  auditRanking: string[];
+  auditValueMatching: AuditValueMatchingState;
+
+  evidence: EvidenceState;
+  attemptEvidence: AttemptEvidenceState;
+  attemptMetrics: AttemptMetrics;
+  attemptResult: AttemptResult | null;
+
+  completedEventIds: string[];
+  acknowledgedExplanationIds: string[];
+  completedTransferIds: string[];
+  attempt: number;
+  actionIndex: number;
+}
+```
+
+```ts
+type LevelPhase =
+  | "cold-open"
+  | "predict"
+  | "act"
+  | "reveal"
+  | "explain"
+  | "transfer"
+  | "result";
+
+interface PredictionState {
+  promptId: string;
+  optionId: string | null;
+  committed: boolean;
+  correctOptionId?: string;
+  revealed: boolean;
+}
+
+interface FrozenFailure {
+  failureId: string;
+  decisiveActionIndex: number;
+  causeCode: string;
+  message: string;
+  checkpointId: string;
+}
+
+interface LocalAttemptFailure {
+  outcomeId: string;
+  causeCode: string;
+  message: string;
+  stoppedAtEventId: string;
+  checkpointId: string;
+  missingCapabilityIds: string[];
+}
+
+type PlanDepth = "shallow" | "balanced" | "deep";
+
+interface AttemptMetrics {
+  spentUsd: number;
+  requestCount: number;
+  completedUnitCount: number;
+  completedDepth: PlanDepth | null;
+  tailNormalizationActions: number;
+  passingLedgerUsd: number | null;
+  passingRequestCount: number | null;
+}
+
+interface AttemptResult {
+  outcome: "passed" | "gate-failed" | "local-failed";
+  passed: boolean;
+  stars: 0 | 1 | 2 | 3;
+  spentUsd: number;
+  requestCount: number;
+  completedUnitCount: number;
+  completedDepth: PlanDepth | null;
+  tailNormalizationActions: number;
+  passingLedgerUsd: number | null;
+  passingRequestCount: number | null;
+  localFailureId: string | null;
+}
+```
+
+`attemptMetrics` is the mutable aggregate for the current branch. It initializes with zeros and nulls, and the reducer updates it atomically with the underlying ledger, unit, or normalization action. `spentUsd` always equals `budget - wallet`; `requestCount` always equals the current attempt’s priced-request count.
+
+For L5, `passingLedgerUsd` and `passingRequestCount` remain `null` until the authored passing request set has resolved, then snapshot the exact ledger subtotal and request count at that boundary. `tailNormalizationActions` counts accepted `NORMALIZE_PROMPTS { taskPointerPosition: "tail" }` actions in the current attempt.
+
+`attemptResult` remains `null` until `COMPLETE_ATTEMPT`. Completion copies every named field from `attemptMetrics`, adds the gate outcome and stars, and produces an immutable result snapshot. No `attemptMetrics.*` or `attemptResult.*` wildcard fields exist beyond those declared above.
+
+`LocalAttemptFailure` is a nonterminal, non-freezing failed-attempt outcome. It is neither `FrozenFailure` nor `GameEnd`: `clockFrozen` remains false, `frozenFailure` remains null, and `ended` remains null. It supports L11’s missing-capability stop without inventing a priced request or an economically false freeze.
+
+New fields must be initialized explicitly; they may not be inferred from view-local component state.
+
+### 5.2 Supporting state types
+
+```ts
+type UnitKind =
+  | "PLAN"
+  | "DEV"
+  | "CODE_REVIEW"
+  | "ADDRESS_REVIEW"
+  | "RE_REVIEW"
+  | "WRITE_TESTS"
+  | "CI_RUN"
+  | "CI_FIX"
+  | "QA"
+  | "DEPLOY"
+  | "POSTDEPLOY_BUG"
+  | "DEBUG"
+  | "HOTFIX"
+  | "TASK"
+  | "STANDUP";
+
+type UnitStatus = "queued" | "ready" | "done" | "handcoded";
+type ReworkCause = "plan-quality" | "dev-quality" | "scripted";
+type ReworkTag = "review" | "ci" | "bug";
+type Ticket = 1 | 2 | 3;
+
+interface UnitInstance {
+  id: string;
+  kind: UnitKind;
+  ticket: Ticket;
+  deps: string[];
+  status: UnitStatus;
+  hours: number;
+  outTok: TokenCount;
+  workIn: TokenCount;
+  cause?: ReworkCause | null;
+  fan?: boolean;
+  free?: boolean;
+  rework?: ReworkTag;
+  scripted?: boolean;
+  label?: string | null;
+  growthTok?: TokenCount;
+  anyOrder?: boolean;
+}
+```
+
+`UnitInstance` is used by `ReducerState.units` and optional `standup`; it is the mutable runtime form of a `UnitSeed`.
+
+```ts
+interface Counts {
+  reviewRounds: number;
+  ciFixes: number;
+  bugs: number;
+  handCoded: number;
+  spawns: number;
+  coldSpawns: number;
+  sessions: number;
+  idleGaps: number;
+  keepWarmPings: number;
+  pingsByGap: Record<string, number>;
+  loadoutSubmissionsByFingerprint: Record<string, number>;
+}
+```
+
+`Counts` is used by `ReducerState.counts` for deterministic behavioral and report counters.
+
+- `keepWarmPings` counts every real priced keep-warm ping.
+- `pingsByGap[gapId]` counts pings targeted at that exact `GapSeed.id`; all authored gap IDs initialize to `0`.
+- `sum(Object.values(pingsByGap)) === keepWarmPings`.
+- `loadoutSubmissionsByFingerprint[fingerprint]` counts submissions of the same canonical sorted loadout fingerprint, enabling a narrow repeated-bloat failure rule without view-local history.
+
+```ts
+interface IdleLogEntry {
+  startMin: number;
+  gapMin: number;
+  pinged: boolean;
+  rebuiltTok: TokenCount;
+}
+```
+
+`IdleLogEntry` is appended to `ReducerState.idleLog` when an idle gap resolves.
+
+```ts
+interface HiddenCosts {
+  reworkUsd: number;
+  idleRebuildUsd: number;
+  flagDeltaUsd: number;
+  hookUsd: number;
+  eagerSkillsUsd: number;
+  inlineRereadUsd: number;
+  delegateUsd: number;
+  fiveMinuteBandUsd: number;
+  mcpUsd: number;
+}
+```
+
+`HiddenCosts` is used by `ReducerState.hidden`, `FailLesson.bucket`, and fleet-audit decomposition. Every field is initialized to zero.
+
+```ts
+interface GameEnd {
+  result: "win" | "loss";
+  lossId?: string;
+}
+```
+
+`GameEnd` is stored in `ReducerState.ended` only after terminal campaign/game evaluation. A local attempt failure does not set it.
+
+```ts
+interface LoadoutState {
+  skillIds: string[];
+  skillsMode: "eager" | "invoke";
+  memoryIds: string[];
+  mcpServerIds: string[];
+  confirmedCapabilityIds: string[];
+  submittedTicketId: string | null;
+}
+```
+
+`LoadoutState` is used by L11’s single compound loadout-packer control and capability evaluation.
+
+```ts
+interface LimitedMarkerPlacement {
+  markerId: string;
+  targetId: string;
+  atMin: number | null;
+}
+
+interface LimitedMarkerInventoryState {
+  id: string;
+  capacity: number;
+  markerIds: string[];
+  placements: LimitedMarkerPlacement[];
+  locked: boolean;
+}
+```
+
+`LimitedMarkerInventoryState` is reducer-owned state for the `limited-marker-inventory` pattern, including L7’s finite keep-warm markers.
+
+```ts
+interface AuditValueMatchingState {
+  assignmentsByValueId: Record<string, AuditCauseId | null>;
+  locked: boolean;
+}
+```
+
+`assignmentsByValueId` stores L13’s post-reveal player mapping from each unlabeled authored `valueId` to one `AuditCauseId`. Values are matched by IDs rather than floating-point equality. Before the reveal, this state is empty and inaccessible; after submission it is locked.
+
+```ts
+interface L12EvidenceState {
+  dynamicStatusEnabled: boolean;
+  fullStableReadCount: number;
+  invalidatedRepeatCount: number;
+  statusBeforeStableBoundary: boolean;
+  statusAfterStableBoundary: boolean;
+  transferReportAfterBoundary: boolean;
+}
+
+interface EvidenceState {
+  l12: L12EvidenceState;
+}
+
+interface L12AttemptEvidenceState {
+  harmfulCompletedRuns: number;
+}
+
+interface AttemptEvidenceState {
+  l12: L12AttemptEvidenceState;
+}
+```
+
+These names are the canonical L12 gate paths. L12 may read only:
+
+- `evidence.l12.dynamicStatusEnabled`
+- `evidence.l12.fullStableReadCount`
+- `evidence.l12.invalidatedRepeatCount`
+- `evidence.l12.statusBeforeStableBoundary`
+- `evidence.l12.statusAfterStableBoundary`
+- `evidence.l12.transferReportAfterBoundary`
+- `attemptEvidence.l12.harmfulCompletedRuns`
+
+No alternate `scenario.*`, view-local evidence, or undeclared evidence path is valid.
+
+### 5.3 Declarative predicates and triggers
+
+```ts
+type JsonPrimitive = string | number | boolean | null;
+type JsonValue =
+  | JsonPrimitive
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+type StatePath = string;
+type StateCompareOp = "eq" | "neq" | "lt" | "lte" | "gt" | "gte";
+
+type StatePredicate =
+  | {
+      id: string;
+      kind: "compare";
+      path: StatePath;
+      op: StateCompareOp;
+      value: JsonPrimitive;
+      observedAfterEventId?: string;
+    }
+  | {
+      id: string;
+      kind: "includes";
+      path: StatePath;
+      value: JsonPrimitive;
+      observedAfterEventId?: string;
+    }
+  | {
+      id: string;
+      kind: "event-completed";
+      eventId: string;
+    }
+  | {
+      id: string;
+      kind: "action-observed";
+      actionType: Action["type"];
+      afterEventId: string;
+      match?: Record<string, JsonValue>;
+    }
+  | {
+      id: string;
+      kind: "all";
+      predicates: StatePredicate[];
+    }
+  | {
+      id: string;
+      kind: "any";
+      predicates: StatePredicate[];
+    }
+  | {
+      id: string;
+      kind: "not";
+      predicate: StatePredicate;
+    };
+```
+
+The complete legal `StatePredicate` kind registry is:
+
+```ts
+"compare"
+| "includes"
+| "event-completed"
+| "action-observed"
+| "all"
+| "any"
+| "not"
+```
+
+The complete legal `op` registry is exactly:
+
+```ts
+"eq" | "neq" | "lt" | "lte" | "gt" | "gte"
+```
+
+No other `op` is legal. In particular, `op: "contains"` is forbidden. Array or set membership must use:
+
+```ts
+{ id, kind: "includes", path, value }
+```
+
+`StatePredicate` is the serializable predicate language used by event preconditions, failures, gates, stars, and QA. It cannot contain executable closures.
+
+```ts
+type PlayerTrigger = {
+  kind: "player";
+  actionType: Action["type"];
+  controlId?: ControlId;
+  afterEventId?: string;
+};
+
+type SystemTrigger = {
+  kind: "system";
+  event:
+    | "level-enter"
+    | "action-reduced"
+    | "event-completed"
+    | "request-resolved"
+    | "clock-reached"
+    | "attempt-completed";
+  afterEventId?: string;
+  predicate?: StatePredicate;
+};
+
+type ToastTrigger = PlayerTrigger | SystemTrigger;
+```
+
+`PlayerTrigger` and `SystemTrigger` select when `LevelEventDef` and `ToastDef` instances fire. A trigger observes reducer evidence; it never depends on arbitrary wall-clock animation time.
+
+```ts
+interface StateMutationExpectation {
+  path: StatePath;
+  op: "set" | "increment" | "decrement" | "append" | "remove";
+  value: JsonValue;
+}
+```
+
+`StateMutationExpectation` is used by `LevelEventDef.mutations` for deterministic QA assertions.
+
+### 5.4 Existing configuration
+
+```ts
+interface Config {
+  orchestratorModel: Model;
+  planModel: Model;
+  devModel: Model;
+  who: "inline" | "subagent";
+  prompts: "identical" | "pointer" | "varied";
+  width: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+  oneHourFlag: boolean;
+  keepWarm: boolean;
+  keepWarmMin: number;
+  hook: "none" | "dynamic" | "static";
+  skills: number;
+  skillsMode: "eager" | "invoke";
+  memoryFiles: number;
+  mcp: [boolean, boolean, boolean, boolean];
+}
+```
+
+### 5.5 Complete `Action` union
+
+```ts
+type Action =
+  // Existing engine actions
+  | { type: "RUN_UNIT"; unitId: string }
+  | { type: "HAND_CODE"; unitId: string }
+  | { type: "IDLE_RESOLVE"; choice: "die" | "nothing" }
+  | { type: "SET_CFG"; patch: Partial<Config> }
+  | { type: "TICK_REPLAY" }
+  | { type: "ADVANCE"; min: number }
+
+  // Redesigned discovery loop
+  | { type: "ENTER_LEVEL"; levelId: LevelId }
+  | { type: "CREATE_CHECKPOINT"; checkpointId: string; reason: Checkpoint["reason"] }
+  | { type: "OPEN_PREDICTION"; promptId: string }
+  | { type: "SELECT_PREDICTION"; promptId: string; optionId: string }
+  | { type: "COMMIT_PREDICTION"; promptId: string }
+  | { type: "REVEAL_PREDICTION"; promptId: string; correctOptionId: string }
+  | { type: "ACK_EXPLANATION"; explanationId: string }
+  | { type: "BEGIN_TRANSFER"; challengeId: string }
+
+  // Prefix/cache manipulation
+  | { type: "SET_PREFIX_BLOCKS"; contextId: string; blocks: PrefixBlock[] }
+  | { type: "REORDER_PREFIX_BLOCK"; contextId: string; blockId: string; toIndex: number }
+  | { type: "SET_PREFIX_BLOCK_ENABLED"; contextId: string; blockId: string; enabled: boolean }
+  | {
+      type: "SET_PREFIX_BLOCK_CONTENT";
+      contextId: string;
+      blockId: string;
+      identityHash: string;
+      tokenCount: number;
+    }
+  | { type: "SET_BREAKPOINT"; contextId: string; blockId: string; enabled: boolean }
+  | {
+      type: "NORMALIZE_PROMPTS";
+      templateId: string;
+      taskPointerPosition: "front" | "tail";
+    }
+  | { type: "DISCARD_CONTEXT"; contextId: string }
+  | { type: "SEND_REQUEST"; request: Request }
+
+  // Scheduling and routing
+  | { type: "SCHEDULE_UNIT"; unitId: string; startMin: number }
+  | { type: "SET_FANOUT_WIDTH"; width: number }
+  | { type: "ROUTE_UNIT"; unitId: string; contextKind: "main" | "subagent" }
+  | { type: "PLACE_KEEP_WARM_PING"; gapId: string; atMin: number }
+  | { type: "SELECT_WRITE_TIER"; blockId: string; tier: WriteTier }
+  | {
+      type: "CHOOSE_MODEL";
+      workloadId: string;
+      role: "orchestrator" | "plan" | "dev";
+      model: Model;
+    }
+  | { type: "CHOOSE_PLAN_DEPTH"; depth: PlanDepth }
+
+  // Limited inventory
+  | {
+      type: "PLACE_LIMITED_MARKER";
+      inventoryId: string;
+      markerId: string;
+      targetId: string;
+      atMin?: number;
+    }
+  | {
+      type: "REMOVE_LIMITED_MARKER";
+      inventoryId: string;
+      markerId: string;
+    }
+  | { type: "LOCK_LIMITED_MARKERS"; inventoryId: string }
+
+  // Loadout and audit
+  | { type: "SET_SKILL_LOADOUT"; skillIds: string[]; mode: "eager" | "invoke" }
+  | { type: "SET_MEMORY_LOADOUT"; memoryIds: string[] }
+  | { type: "SET_MCP_LOADOUT"; serverIds: string[] }
+  | { type: "SUBMIT_LOADOUT"; ticketId: string }
+  | { type: "SET_AUDIT_RANKING"; causeIds: string[] }
+  | { type: "SUBMIT_AUDIT_RANKING" }
+  | { type: "SET_AUDIT_VALUE_MATCH"; valueId: string; causeId: AuditCauseId }
+  | { type: "SUBMIT_AUDIT_VALUE_MATCHES" }
+  | {
+      type: "APPLY_REMEDIATION";
+      target: "developer" | "fleet";
+      targetId?: string;
+      remediationId: string;
+    }
+
+  // Failure, rewind, comparison, completion
+  | { type: "FREEZE_FAILURE"; failure: Omit<FrozenFailure, "decisiveActionIndex"> }
+  | { type: "STOP_LOCAL_ATTEMPT"; failure: LocalAttemptFailure }
+  | { type: "REWIND_TO_CHECKPOINT"; checkpointId: string }
+  | { type: "REQUEST_COUNTERFACTUAL"; comparisonId: string }
+  | { type: "REVEAL_COUNTERFACTUAL"; comparisonId: string }
+  | { type: "COMPLETE_ATTEMPT" }
+  | { type: "RESTART_LEVEL" };
+```
+
+### 5.6 Action contracts
+
+#### Existing actions
+
+- `RUN_UNIT`: Requires a ready, unfinished `unitId` and non-frozen state. Resolves every request generated by that unit, appends rows atomically, updates caches, wallet, attempt metrics, counts, unit status, queue index, clock, hidden costs, and `lastRequests`.
+- `HAND_CODE`: Completes an eligible unit without model requests; increments `manualHours` and `tedium` using `C31`. It may violate a star or behavioral gate.
+- `IDLE_RESOLVE`: Resolves a pending idle decision. `"die"` records work loss/manual consequence; `"nothing"` accepts no extra consequence. It cannot advance time twice.
+- `SET_CFG`: Applies only unlocked, non-locked keys. Invalid or hidden keys are rejected atomically.
+- `TICK_REPLAY`: Advances one deterministic replay step; never reads wall-clock time.
+- `ADVANCE`: Requires finite integer `min >= 0`; updates only simulation time and derived expiry visibility.
+
+#### Discovery actions
+
+- `ENTER_LEVEL`: Builds initial state from `LevelDef`, resets attempt-local fields, and creates the level-start checkpoint.
+- `CREATE_CHECKPOINT`: Records the current action boundary; duplicate IDs are invalid.
+- `OPEN_PREDICTION`: Enters `"predict"` and prevents the gated reveal.
+- `SELECT_PREDICTION`: Changes an uncommitted selection.
+- `COMMIT_PREDICTION`: Requires a selection and locks it.
+- `REVEAL_PREDICTION`: Requires a committed prediction; records correctness and enters `"reveal"`.
+- `ACK_EXPLANATION`: Marks the concise named rule as seen only after causal evidence is visible.
+- `BEGIN_TRANSFER`: Requires preceding evidence and starts a novel application.
+- Prediction selection, commitment, and correctness never change wallet, score, stars, gate passage, or failure state.
+
+#### Prefix/cache actions
+
+- `SET_PREFIX_BLOCKS`: Scenario initialization or explicit puzzle setup only; validates the complete block set.
+- `REORDER_PREFIX_BLOCK`: Moves one block without changing its identity or size.
+- `SET_PREFIX_BLOCK_ENABLED`: Toggles optional content; required content cannot be disabled.
+- `SET_PREFIX_BLOCK_CONTENT`: Models a byte-level change and recomputes the stack’s mismatch boundary.
+- `SET_BREAKPOINT`: Enforces `C26`.
+- `NORMALIZE_PROMPTS`: Moves task variation into a shared template’s tail or front; it does not silently change task meaning. A successful tail action increments `attemptMetrics.tailNormalizationActions`.
+- `DISCARD_CONTEXT`: Invalidates only the named context namespace and creates no ledger row.
+- `SEND_REQUEST`: Runs `RESOLVE_PREFIX`, `PRICE_REQUEST`, cache mutation, ledger append, wallet deduction, and tape payload creation atomically. It also refreshes `attemptMetrics.spentUsd` and `attemptMetrics.requestCount`.
+
+#### Scheduling actions
+
+- `SCHEDULE_UNIT`: Places a unit at a valid time without executing it.
+- `SET_FANOUT_WIDTH`: Requires an integer in the level’s allowed range and recomputes deterministic waves, including any authored width overhead or serial constraint.
+- `ROUTE_UNIT`: Selects main or fresh subagent context; execution remains separate.
+- `PLACE_KEEP_WARM_PING`: Requires a permitted gap; the ping is a real priced request. It increments both `counts.keepWarmPings` and `counts.pingsByGap[gapId]`.
+- `SELECT_WRITE_TIER`: Selects 5m or 1h before the applicable write.
+- `CHOOSE_MODEL`: Changes only the stated workload role.
+- `CHOOSE_PLAN_DEPTH`: Validates the calibrated planning branch and writes the chosen depth to `attemptMetrics.completedDepth`. `COMPLETE_ATTEMPT` copies that exact value to `attemptResult.completedDepth`; downstream rework remains labeled `[FICTION]`.
+
+#### Limited-inventory actions
+
+- `PLACE_LIMITED_MARKER` consumes one unplaced marker and assigns it to one valid unresolved target.
+- `REMOVE_LIMITED_MARKER` is valid only before the inventory locks or its target resolves.
+- `LOCK_LIMITED_MARKERS` prevents further placement changes and lets the level convert placements into their authored real actions.
+- A finite-marker level cannot expose an “always” action that creates more effects than the inventory capacity.
+
+#### Loadout and audit actions
+
+- Loadout setters validate available items and do not run work.
+- `SUBMIT_LOADOUT` validates the selected loadout, increments its canonical fingerprint count, then checks capability sufficiency.
+- When a capability is missing, `SUBMIT_LOADOUT` creates no request for the blocked ticket and may dispatch `STOP_LOCAL_ATTEMPT`; it must not dispatch `FREEZE_FAILURE` merely for missing capability.
+- A capability-complete but bloated submission may execute normally. A separately authored `FailureRuleDef` may freeze only after a repeated, visibly more expensive, uncorrected bloat choice satisfies its exact predicate.
+- `SET_AUDIT_RANKING` stores an ordered permutation.
+- `SUBMIT_AUDIT_RANKING` locks it before dollar values or remedies are exposed.
+- `SET_AUDIT_VALUE_MATCH` writes `auditValueMatching.assignmentsByValueId[valueId] = causeId`. Each cause and each value may be used once.
+- `SUBMIT_AUDIT_VALUE_MATCHES` requires a complete bijection and sets `auditValueMatching.locked = true`.
+- `APPLY_REMEDIATION` applies only an unlocked remedy to an explicit target and records collateral cost.
+
+#### Failure and completion actions
+
+- `FREEZE_FAILURE`: Sets `clockFrozen = true`, records the decisive action index, and blocks economic actions. Its rule must identify a visible, genuinely more expensive result than the valid route.
+- `FREEZE_FAILURE` is invalid while a counterfactual/reference request or reveal event is being processed. Reference and counterfactual state is informational and cannot mutate `clockFrozen`, `frozenFailure`, wallet, ledger, or actual-attempt result.
+- `STOP_LOCAL_ATTEMPT`: Stores `localAttemptFailure`, leaves `clockFrozen = false`, leaves `frozenFailure = null` and `ended = null`, and stops the current attempt without fabricating economic evidence.
+- `REWIND_TO_CHECKPOINT`: Deterministically replays actions before the checkpoint and starts a new branch. Attempt count is retained.
+- `REQUEST_COUNTERFACTUAL`: Valid only after an attempt-relevant action.
+- `REVEAL_COUNTERFACTUAL`: Requires the corresponding request and shows reference/anti results without replacing actual state.
+- `COMPLETE_ATTEMPT`: Evaluates post-evidence behavioral gates and stars, then snapshots every declared `AttemptResult` field. If `localAttemptFailure` exists, the snapshot uses `outcome: "local-failed"` and `localFailureId`.
+- `RESTART_LEVEL`: Reinitializes from seed, increments attempt, and removes attempt-local predictions, checkpoints, metrics, result, and local failure.
+
+### 5.7 Save and replay
+
+```ts
+interface SaveFile {
+  v: 1;
+  seed: number;
+  mode: "session" | "week" | "month";
+  actions: Action[];
+}
+```
+
+Ephemeral animation progress, hover state, and DOM focus are never persisted.
+
+---
+
+## 6. Reusable UI components
+
+### 6.1 `TapeRenderer`
+
+Stable name: `UI_TAPE_RENDERER`.
+
+```ts
+interface TapeRendererOpts {
+  domTooltip?: boolean;
+  onHover?: (hover: TapeHover | null) => void;
+  labelFor?: (row: LedgerRow) => string | null | undefined;
+}
+
+interface TapeHover {
+  lines: string[];
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+```
+
+Contract:
+
+- Consumes `LedgerRow[]`; owns no economics.
+- Draws via Canvas2D, DPR-aware.
+- Rows are ordered by request time and ledger order.
+- Every non-zero `readTok`, `inputTok`, `writeTok`, and `outTok` bucket contributes to visual weight.
+- Read is blue; fresh input and writes are red; output is violet.
+- A scan head reveals rows left-to-right.
+- Duration is `min(1600ms, 500ms + rows×260ms)` `[ESTIMATE inherited from renderer]`.
+- Reduced motion draws the complete final frame immediately.
+- Final colors and prices must be drawn at animation completion without requiring hover.
+- Hover supplies time, each non-zero bucket equation, total, and write TTL.
+- `destroy()` cancels animation, observer, and event listeners; later calls become no-ops.
+- Empty state says that running a unit will produce requests; it must not resemble a zero-cost request.
+
+Canonical visual-weight formula:
+
+```ts
+function tapeWeight(row: LedgerRow): number {
+  const base = MODEL_IN[row.model];
+  const writeMultiplier = row.writeTier === "1h" ? 2 : 1.25;
+
+  return base * (
+    row.readTok * 0.1
+    + row.inputTok
+    + row.writeTok * writeMultiplier
+    + row.outTok * 5
+  );
+}
+
+rowWidthRatio =
+  tapeWeight(row) / max(visibleRows.map(tapeWeight));
+
+readSegmentRatio =
+  (MODEL_IN[row.model] * row.readTok * 0.1) / tapeWeight(row);
+
+inputSegmentRatio =
+  (MODEL_IN[row.model] * row.inputTok) / tapeWeight(row);
+
+writeSegmentRatio =
+  (MODEL_IN[row.model] * row.writeTok
+    * (row.writeTier === "1h" ? 2 : 1.25)) / tapeWeight(row);
+
+outputSegmentRatio =
+  (MODEL_IN[row.model] * row.outTok * 5) / tapeWeight(row);
+```
+
+The omitted `/ 1,000,000` factor cancels during normalization. Equivalently, row length is proportional to `row.usd`, and each segment occupies its bucket’s share of `row.usd`. Output-heavy levels therefore render output as their dominant visual weight.
+
+An event may delay teaching labels for output pricing, but it may not omit output from bar or segment geometry.
+
+### 6.2 `TTLDrainBar`
+
+Stable name: `UI_TTL_DRAIN_BAR`.
+
+```ts
+interface TTLDrainBarProps {
+  cacheEntry: CacheEntry | null;
+  clock: Clock;
+  label: string;
+  dangerThresholdRatio?: number; // default 0.2 [ESTIMATE]
+}
+```
+
+States:
+
+- `absent`: no saved prefix.
+- `warm`: remaining ratio above warning threshold.
+- `danger`: nearing expiry; pulse disabled under reduced motion.
+- `expired`: exactly zero, visually cracks or fades once.
+- `frozen`: unchanged during a failure freeze.
+
+It displays absolute expiry (`expires 11:02`) and remaining duration. It does not mutate time.
+
+### 6.3 `MainCachePanel`
+
+Stable name: `UI_MAIN_CACHE_PANEL`.
+
+```ts
+interface MainCachePanelProps {
+  context: MainSessionContext;
+  entries: CacheEntry[];
+  clock: Clock;
+  highlightedEntryId?: string;
+  visibility: "compact" | "expanded";
+}
+```
+
+Shows:
+
+- `MAIN CACHE` label.
+- Saved token count.
+- Write tier.
+- Warm/expired status.
+- `UI_TTL_DRAIN_BAR`.
+- Last touch and expiry on hover/focus.
+- A visible empty/cleared state after `DISCARD_CONTEXT`.
+
+It must not imply that subagent entries live in the main cache.
+
+### 6.4 `HoverPriceCalculator`
+
+Stable name: `UI_HOVER_PRICE_CALCULATOR`.
+
+```ts
+interface HoverPriceCalculatorProps {
+  row: LedgerRow;
+  anchor: { x: number; y: number; w: number; h: number };
+}
+```
+
+Line format:
+
+```text
+read: 26,237 tok × 0.1x × $3/M = $0.0079
+write: 26,237 tok × 1.25x × $3/M = $0.0984
+total: $0.0984
+```
+
+Rules:
+
+- Omit zero buckets.
+- Display the actual model base and multiplier.
+- Include output whenever `outTok > 0`.
+- Clamp to viewport or panel bounds.
+- Support pointer hover and keyboard focus.
+- Do not recompute authoritative row total; component calculations are explanatory assertions against `row.usd`.
+
+### 6.5 `ToastSystem`
+
+Stable name: `UI_TOAST_SYSTEM`.
+
+```ts
+interface ToastDef {
+  id: string;
+  trigger: ToastTrigger;
+  copy: string;
+  vocabulary?: string;
+  priority: "teaching" | "cause" | "status";
+  durationMs?: number;
+  dedupe: "attempt" | "level" | "never";
+  actionLabel?: string;
+}
+```
+
+Contracts:
+
+- Maximum one teaching toast at once.
+- Queue cause toasts ahead of status toasts.
+- A toast fires from state/action evidence, never arbitrary elapsed wall time.
+- Vocabulary appears only at first need.
+- Default duration `3,500ms` `[ESTIMATE]`; cause toasts remain while frozen.
+- Toasts never cover the decisive tape row or active control.
+- Screen-reader announcements use `aria-live="polite"`, except decisive failure uses `"assertive"`.
+
+### 6.6 `PredictionPromptWidget`
+
+Stable name: `UI_PREDICTION_PROMPT`.
+
+```ts
+interface PredictionPromptDef {
+  id: string;
+  question: string;
+  options: Array<{ id: string; label: string }>;
+  revealId: string;
+  explanationId: string;
+}
+```
+
+State sequence:
+
+```text
+unanswered → selected → committed → revealed
+```
+
+Rules:
+
+- Two or three mutually exclusive options.
+- No option styling reveals correctness before commitment.
+- Committing dispatches `COMMIT_PREDICTION`.
+- The gated event or reveal remains disabled until commitment.
+- After reveal, show the player’s choice, correct result, and one causal sentence.
+- Predictions are not punitive. A wrong prediction produces evidence only: it never deducts score, spends wallet, freezes the level, removes a star, or fails a gate.
+- A gate measures an action taken after the relevant evidence is visible, such as a transfer choice, prompt normalization, remediation, scheduling decision, loadout correction, or explanation choice.
+- `COMMIT_PREDICTION`, the selected prediction option, and equality between `optionId` and `correctOptionId` are forbidden as gate or star evidence.
+- Each `GateDef.evidenceRevealEventIds` names the evidence boundary, and each gate’s `postEvidenceActionRequirements` must use `action-observed.afterEventId` at or after that boundary.
+
+### 6.7 `ResultScreen`
+
+Stable name: `UI_RESULT_SCREEN`.
+
+```ts
+interface ResultSummary {
+  passed: boolean;
+  stars: 0 | 1 | 2 | 3;
+  spentUsd: number;
+  budgetUsd: number;
+  behavioralEvidence: string[];
+  keyComparison?: CounterfactualResult;
+  nextLevelId?: LevelId;
+}
+```
+
+Must show:
+
+- Clear pass/fail identity.
+- Wallet delta and compact request composition.
+- Explicit post-evidence behavioral gate evidence.
+- Stars and why each was or was not earned.
+- Post-attempt counterfactual when unlocked.
+- Local unsuccessful-attempt cause when `AttemptResult.outcome === "local-failed"`.
+- Retry/rewind and continue actions.
+- Celebratory motion/color for passing, respecting reduced motion.
+
+A 3-star result must not resemble an error dialog.
+
+### 6.8 `RewindControl`
+
+Stable name: `UI_REWIND_CONTROL`.
+
+```ts
+interface RewindControlProps {
+  checkpoint: Checkpoint;
+  label: string;
+  enabled: boolean;
+}
+```
+
+- Appears immediately on a frozen failure or local failed-attempt result.
+- Dispatches `REWIND_TO_CHECKPOINT`.
+- Restores the moment before the decisive choice.
+- Does not replay the cold-open, completed predictions, or mastered setup unless they occurred after the checkpoint.
+- Describes the destination: “Try the standup again,” not merely “Undo.”
+
+### 6.9 `PrefixStackVisualizer`
+
+Stable name: `UI_PREFIX_STACK_VISUALIZER`.
+
+```ts
+interface PrefixStackVisualizerProps {
+  stack: PrefixStack;
+  mode: "assemble" | "inspect" | "reorder" | "diff";
+  showTokenCounts: boolean;
+  revealBoundary: boolean;
+}
+```
+
+Visual grammar:
+
+- One ordered block per `PrefixBlock`.
+- Stable matched prefix: blue.
+- First mismatch: high-contrast marker.
+- Invalidated suffix: red propagation.
+- Fresh `current`: neutral/red hatch distinct from invalidation.
+- Breakpoints: vertical notch or flag.
+- Block width represents token count with a minimum accessible width.
+- Dragging is mirrored by keyboard move-left/move-right controls.
+- `revealBoundary=false` before prediction commitment.
+- Diff mode identifies the first mismatching token or block and concrete invalidated token count.
+
+### 6.10 `CounterfactualOverlay`
+
+Stable name: `UI_COUNTERFACTUAL_OVERLAY`.
+
+```ts
+interface CounterfactualResult {
+  actualLabel: string;
+  counterfactualLabel: string;
+  actualUsd: number;
+  counterfactualUsd: number;
+  deltaUsd: number;
+  requestPairs: Array<{
+    actualRequestId?: string;
+    counterfactualRequestId?: string;
+    cause: string;
+  }>;
+}
+```
+
+It may appear only after an attempt. It pairs requests causally and must distinguish measured economics from `[FICTION]` pipeline outcomes. It is informational: rendering or revealing it cannot dispatch `FREEZE_FAILURE` or mutate actual-attempt economics.
+
+---
+
+## 7. Named reusable interaction patterns
+
+Interaction-pattern IDs use kebab-case everywhere. Persisted level data, `LevelDef.interactionPatterns`, QA, and documentation use only this union:
+
+```ts
+type InteractionPatternId =
+  | "predict-before-reveal"
+  | "fail-freeze-rewind"
+  | "just-in-time-toast"
+  | "counterfactual-after-attempt"
+  | "limited-marker-inventory";
+
+interface InteractionPatternDef {
+  id: InteractionPatternId;
+  state: string[];
+  actions: Action["type"][];
+  rules: string[];
+}
+```
+
+Uppercase `PATTERN_*` strings are not aliases and are not valid IDs.
+
+### 7.1 `predict-before-reveal`
+
+Sequence:
+
+1. Establish an unresolved situation.
+2. Dispatch `CREATE_CHECKPOINT`.
+3. Dispatch `OPEN_PREDICTION`.
+4. Player selects and commits.
+5. Execute the hidden event.
+6. Dispatch `REVEAL_PREDICTION`.
+7. Animate the actual state change.
+8. Ask for or show one concise causal explanation.
+9. Continue to a novel post-evidence transfer action.
+
+Never reveal the correct option in title, objective, diagram, color, disabled control, or pre-play comparison. The prediction unlocks evidence; it never satisfies or fails the gate.
+
+### 7.2 `fail-freeze-rewind`
+
+Sequence:
+
+1. Execute the decisive player action in the actual attempt.
+2. Render the resulting request, cache, and clock mutation.
+3. Verify that the resulting route is visibly more expensive than the valid alternative.
+4. At the exact causal frame, dispatch `FREEZE_FAILURE`.
+5. Freeze clock and economic controls.
+6. Highlight the cause, not merely the budget symptom.
+7. Present one-line causal copy.
+8. Offer `UI_REWIND_CONTROL`.
+9. Dispatch `REWIND_TO_CHECKPOINT`.
+10. Resume directly before the decision.
+
+Failure copy template:
+
+```text
+<Concrete event>. <Mechanism> caused <visible consequence>.
+```
+
+Example: “Job 4 arrived at 6:00. The shared prefix expired at 5:00, so it rewrote.”
+
+A harmless or cheaper route may be an observed teaching beat, but cannot trigger this pattern. Neither a counterfactual/reference reveal nor any action executed inside such a reveal may trigger this pattern.
+
+### 7.3 `just-in-time-toast`
+
+Sequence:
+
+1. Detect the first action whose interpretation requires a term.
+2. Complete the visible event.
+3. Fire a short toast anchored near the evidence.
+4. Name only the required term.
+5. Deduplicate for the configured scope.
+
+Do not introduce output pricing before output affects a decision, subagent TTL before subagents appear, or prefix mismatch before the stack is visible.
+
+### 7.4 `counterfactual-after-attempt`
+
+Sequence:
+
+1. Player completes a meaningful attempt.
+2. Persist actual ledger and choices.
+3. Dispatch `REQUEST_COUNTERFACTUAL`.
+4. Run reference or anti-pattern deterministically off-screen from the same seed.
+5. Dispatch `REVEAL_COUNTERFACTUAL`.
+6. Pair causal request differences.
+7. Show delta and one transferable rule.
+
+The counterfactual may confirm discovery; it may not serve as a pre-play answer key. It is strictly informational and may not dispatch `FREEZE_FAILURE`, set `clockFrozen`, replace `attemptResult`, or mutate the actual wallet or ledger.
+
+### 7.5 `limited-marker-inventory`
+
+Canonical pattern object:
+
+```ts
+const limitedMarkerInventoryPattern: InteractionPatternDef = {
+  id: "limited-marker-inventory",
+
+  state: [
+    "ReducerState.markerInventories[inventoryId].capacity",
+    "ReducerState.markerInventories[inventoryId].markerIds",
+    "ReducerState.markerInventories[inventoryId].placements",
+    "ReducerState.markerInventories[inventoryId].locked"
+  ],
+
+  actions: [
+    "PLACE_LIMITED_MARKER",
+    "REMOVE_LIMITED_MARKER",
+    "LOCK_LIMITED_MARKERS"
+  ],
+
+  rules: [
+    "Exactly capacity unique marker IDs exist at attempt start.",
+    "One marker can occupy at most one unresolved target.",
+    "One target accepts at most one marker unless the level explicitly declares stacking.",
+    "Placement consumes no economic effect until markers lock or the target resolves.",
+    "Removing a marker before lock returns it to inventory.",
+    "After lock, each placement deterministically creates its authored effect.",
+    "No shortcut may create more effects than the finite inventory permits.",
+    "Restart and checkpoint rewind restore marker state deterministically."
+  ]
+};
+```
+
+For L7, each marker represents one real keep-warm ping. A three-marker inventory can therefore create at most three pings. An “always ping” choice, if retained, means “place all remaining markers on eligible gaps,” not an uncapped schedule.
+
+### 7.6 Composition recipes that are not pattern IDs
+
+A blind A/B reveal may compose `predict-before-reveal` with `counterfactual-after-attempt`:
+
+1. Obtain a committed prediction.
+2. Execute A and B without “good/bad” labels.
+3. Reveal both tapes.
+4. Ask which mechanism caused the difference.
+5. Attach configuration labels and dollar delta only after the attempt.
+
+An explain-then-transfer flow may compose a post-reveal explanation with the gate contract:
+
+1. Ask the player to select or construct the causal explanation after evidence.
+2. Name the rule in one sentence.
+3. Present a new configuration with different surface details.
+4. Gate completion on applying the same rule.
+
+These recipes introduce no additional `InteractionPatternId` values.
+
+---
+
+## 8. Canonical `LevelDef` schema
+
+The redesigned schema extends the repository’s existing `LevelDef`; deprecated pre-play `learn` data is retained only for migration and must not render before an attempt.
+
+### 8.1 Level and concept identity registries
+
+```ts
+type LevelId =
+  | "01-red-or-blue"
+  | "02-beat-the-clock"
+  | "03-build-the-prefix"
+  | "04-five-minute-race"
+  | "05-one-word"
+  | "06-buy-more-time"
+  | "07-keep-it-alive"
+  | "08-growing-pains"
+  | "09-model-the-work"
+  | "10-plan-once-pay-later"
+  | "11-pack-the-context"
+  | "12-stable-at-the-front"
+  | "13-fleet-audit";
+
+type ConceptId =
+  | "write-vs-read"
+  | "cache-expiry"
+  | "prefix-reuse"
+  | "shared-subagent-window"
+  | "byte-identical-prefix"
+  | "ttl-tier-tradeoff"
+  | "keep-warm-breakeven"
+  | "inline-vs-subagent-routing"
+  | "workload-cost-mix"
+  | "plan-depth-downstream-cost"
+  | "prefix-loadout-sizing"
+  | "volatile-prefix-position"
+  | "fleet-leak-triage";
+```
+
+There is exactly one canonical `concept.id` per level:
+
+| Level | `LevelId` | Canonical `concept.id` | Exact intended prerequisites |
+|---:|---|---|---|
+| 1 | `01-red-or-blue` | `write-vs-read` | `[]` |
+| 2 | `02-beat-the-clock` | `cache-expiry` | `["write-vs-read"]` |
+| 3 | `03-build-the-prefix` | `prefix-reuse` | `["write-vs-read", "cache-expiry"]` |
+| 4 | `04-five-minute-race` | `shared-subagent-window` | `["cache-expiry", "prefix-reuse"]` |
+| 5 | `05-one-word` | `byte-identical-prefix` | `["prefix-reuse", "shared-subagent-window"]` |
+| 6 | `06-buy-more-time` | `ttl-tier-tradeoff` | `["write-vs-read", "cache-expiry"]` |
+| 7 | `07-keep-it-alive` | `keep-warm-breakeven` | `["cache-expiry", "ttl-tier-tradeoff"]` |
+| 8 | `08-growing-pains` | `inline-vs-subagent-routing` | `["prefix-reuse", "shared-subagent-window"]` |
+| 9 | `09-model-the-work` | `workload-cost-mix` | `["write-vs-read"]` |
+| 10 | `10-plan-once-pay-later` | `plan-depth-downstream-cost` | `["workload-cost-mix"]` |
+| 11 | `11-pack-the-context` | `prefix-loadout-sizing` | `["prefix-reuse", "workload-cost-mix"]` |
+| 12 | `12-stable-at-the-front` | `volatile-prefix-position` | `["prefix-reuse", "byte-identical-prefix", "prefix-loadout-sizing"]` |
+| 13 | `13-fleet-audit` | `fleet-leak-triage` | all twelve earlier concept IDs, in level order |
+
+L13’s exact prerequisites are:
+
+```ts
+[
+  "write-vs-read",
+  "cache-expiry",
+  "prefix-reuse",
+  "shared-subagent-window",
+  "byte-identical-prefix",
+  "ttl-tier-tradeoff",
+  "keep-warm-breakeven",
+  "inline-vs-subagent-routing",
+  "workload-cost-mix",
+  "plan-depth-downstream-cost",
+  "prefix-loadout-sizing",
+  "volatile-prefix-position"
+]
+```
+
+```ts
+type ConceptScope =
+  | {
+      kind: "single";
+      reusedConceptIds: [];
+    }
+  | {
+      kind: "capstone-integration";
+      reusedConceptIds: ConceptId[];
+    };
+```
+
+Contracts:
+
+- A level’s `concept.id` is the registry value on its row.
+- A level’s `prerequisiteConceptIds` is exactly the ordered list on its row.
+- Every prerequisite resolves to an earlier level.
+- No filename, `LevelId`, legacy concept name, display title, or future concept may appear in `prerequisiteConceptIds`.
+- The resulting graph is acyclic and compiles as `ConceptId[]`.
+- Levels 1–12 use `conceptScope: { kind: "single", reusedConceptIds: [] }` and teach one new concept.
+- L13 is the sole capstone exemption to the ordinary one-concept-per-level rule. It uses `kind: "capstone-integration"` and may exercise multiple concepts only from its declared prerequisite list.
+- L13 still has exactly one new canonical concept, `fleet-leak-triage`; the exemption permits integrated application of mastered concepts, including the collateral-targeting sub-beat, but does not permit an undeclared new concept.
+- The capstone exemption does not relax surprise protection, prediction non-punishment, causal failure, economic truth, post-evidence gating, or live-tradeoff invariants.
+
+### 8.2 Control and scenario IDs
+
+```ts
+type ToolId =
+  | "run" | "devModel" | "planModel" | "who" | "prompts" | "width"
+  | "oneHourFlag" | "keepWarm" | "hook" | "skills" | "mcp"
+  | "fleet" | "audit" | "prefix" | "route" | "planDepth";
+
+type ControlId =
+  | "run" | "handCode"
+  | "devModel" | "planModel" | "orchestratorModel"
+  | "who" | "prompts" | "width"
+  | "keepWarm" | "keepWarmMin" | "stepAway"
+  | "oneHourFlag"
+  | "hook" | "skills" | "skillsMode" | "memoryFiles" | "mcp"
+  | "fleet" | "audit" | "advanceTime"
+  | "prefixBlocks" | "breakpoints" | "route" | "planDepth"
+  | "limitedMarkers";
+
+type ScenarioId =
+  | "default" | "dev-only" | "dev-marathon"
+  | "fanout8" | "fanout8-slow"
+  | "gaps" | "two-halves" | "week7starts"
+  | "spawn12" | "mcp-required" | "l1-onboarding"
+  | "prefix-builder" | "prompt-normalizer"
+  | "mixed-routing" | "fleet-audit-v2";
+```
+
+### 8.3 `LevelDef`
+
+```ts
+interface LevelDef {
+  // Identity
+  id: LevelId;
+  tier: 1 | 2 | 3;
+  title: string;
+  objective: string;
+  concept: ConceptDef;
+  conceptScope: ConceptScope;
+  prerequisiteConceptIds: ConceptId[];
+
+  // Progressive disclosure
+  unlocks: ToolId;
+  introducedControls: ControlId[];
+  cfgLocked?: (keyof Config)[];
+
+  // Deterministic scenario
+  scope: "session" | "week" | "month";
+  seed: number;
+  budgetUsd: number;
+  clockCapMin?: number;
+  cfgOverride: Partial<Config>;
+  scenario: ScenarioId;
+  scenarioData: ScenarioData;
+
+  // Discovery sequence
+  coldOpen: ColdOpenDef;
+  sequence: LevelEventDef[];
+  predictions: PredictionPromptDef[];
+  toasts: ToastDef[];
+  interactionPatterns: InteractionPatternId[];
+
+  // Failure and rewind
+  failLesson: FailLesson;
+  failureRules: FailureRuleDef[];
+  checkpoints: CheckpointDef[];
+
+  // Understanding gates and stars
+  gate: GateDef;
+  pass(st: ReducerState): GateResult;
+  star2?: StarDef;
+  star3?: StarDef;
+
+  // Post-attempt comparison
+  referenceCfg: Partial<Config>;
+  antiCfg: Partial<Config>;
+  counterfactuals: CounterfactualDef[];
+
+  // Presentation and verification
+  tape: TapeSpec;
+  result: ResultSpec;
+  vocabulary: VocabularyDef[];
+  qa: QaAssertion[];
+
+  // Migration only; never shown pre-attempt
+  learn?: DeprecatedLearnBeat;
+}
+```
+
+### 8.4 Identity fields and authoring rules
+
+```ts
+interface ConceptDef {
+  id: ConceptId;
+  privateDesignerSummary: string;
+  postRevealRule: string;
+  solutionVocabulary: string[];
+}
+```
+
+- `title`: protects the surprise; it cannot state the answer.
+- `objective`: states the problem, not its solution.
+- `privateDesignerSummary`: exact single new concept for authors and QA, not player-facing.
+- `postRevealRule`: the concise rule shown only after evidence.
+- `solutionVocabulary`: private case-insensitive mechanic/answer words and phrases that would leak the discovery if used in `title` or `objective`.
+- `prerequisiteConceptIds`: the exact earlier-concept list in §8.1.
+- `title` and `objective` must contain no item from `concept.solutionVocabulary`, including obvious inflections or hyphenation variants. Situation framing is allowed; pre-announcing the mechanic, answer, winning order, boundary, tier, or route is not.
+- Cold-open copy is governed separately by §8.6 and may not disclose the solution even if it avoids the literal registered words.
+- L13’s `privateDesignerSummary` still names one new capstone concept; its `conceptScope.reusedConceptIds` names the mastered concepts it integrates.
+
+### 8.5 Scenario fields and seed family
+
+```ts
+interface UnitSeed {
+  id: string;
+  kind: UnitKind;
+  ticket: Ticket;
+  deps: string[];
+  hours: number;
+  outTok: TokenCount;
+  workIn: TokenCount;
+  cause?: ReworkCause | null;
+  fan?: boolean;
+  free?: boolean;
+  rework?: ReworkTag;
+  scripted?: boolean;
+  label?: string | null;
+  growthTok?: TokenCount;
+  anyOrder?: boolean;
+}
+```
+
+`UnitSeed` initializes a queued `UnitInstance`; runtime `status` is derived from dependency satisfaction.
+
+```ts
+type ContextSeed =
+  | {
+      kind: "main";
+      id: string;
+      sessionId: string;
+      cacheNamespace: string;
+      initialPrefixStackId: string;
+    }
+  | {
+      kind: "subagent";
+      id: string;
+      parentSessionId: string;
+      subagentId: string;
+      cacheNamespace: string;
+      sharedPrefixPoolId?: string;
+      initialPrefixStackId: string;
+    };
+```
+
+`ContextSeed` initializes the main or subagent `ExecutionContext` objects available to a scenario.
+
+```ts
+interface GapSeed {
+  id: string;
+  contextId: string;
+  startMin: number;
+  durationMin: number;
+  permitsKeepWarm: boolean;
+  markerTargetId?: string;
+}
+```
+
+`GapSeed` defines deterministic idle windows used by expiry, tier, and keep-warm levels. Every `GapSeed.id` initializes one `counts.pingsByGap` key.
+
+```ts
+interface WorkloadSeed {
+  id: string;
+  label: string;
+  role: "orchestrator" | "plan" | "dev";
+  unitIds: string[];
+  inputTok: TokenCount;
+  outTok: TokenCount;
+  requiredCapabilityIds: string[];
+  allowedModels: Model[];
+}
+```
+
+`WorkloadSeed` defines the priced input/output mix and capability constraints for model-choice and planning scenarios.
+
+```ts
+interface CapabilitySeed {
+  id: string;
+  label: string;
+  providedBy: Array<{
+    kind: "skill" | "memory" | "mcp";
+    itemId: string;
+  }>;
+  requiredByWorkloadIds: string[];
+}
+```
+
+`CapabilitySeed` connects ticket needs to loadout items without revealing sufficiency before evidence allows it. Multiple providers may plausibly advertise related capabilities; only the declared `providedBy` links satisfy the exact capability, allowing decoys without view-local exceptions.
+
+```ts
+type AuditCauseId = string;
+
+interface AuditCauseSeed {
+  id: AuditCauseId;
+  valueId: string;
+  label: string;
+  developerId: string;
+  bucket: keyof HiddenCosts;
+  lossUsd: number;
+  evidenceRequestIds: string[];
+  remediationIds: string[];
+  cite: string;
+}
+```
+
+`AuditCauseSeed` defines one rankable fleet loss cause, its exact hidden-loss bucket, evidence, and valid remedies. `valueId` is the opaque identifier used when L13 reveals dollar values without cause labels and asks the player to match value to cause.
+
+```ts
+interface PrefixStackSeed {
+  id: string;
+  contextId: string;
+  blocks: PrefixBlock[];
+  initialCacheEntry?: {
+    id: CacheEntryId;
+    prefixHash: string;
+    tokenCount: TokenCount;
+    tier: WriteTier;
+    createdAtMin: number;
+    lastTouchMin: number;
+    breakpointOrdinal: number;
+  };
+}
+```
+
+`PrefixStackSeed` initializes an ordered prefix and optional live cache entry; `ttlMin` and `expiresAtMin` derive from `tier`.
+
+```ts
+interface ScenarioFixtureDef {
+  id: string;
+  label: string;
+  semanticRole: string;
+  value: number;
+  unit: "tok" | "usd" | "min" | "ratio" | "count";
+  tag: "[FICTION]";
+}
+
+interface ScenarioEstimateDef {
+  label: string;
+  value: number;
+  tag: "[ESTIMATE]";
+}
+```
+
+```ts
+interface ScenarioData {
+  units: UnitSeed[];
+  contexts: ContextSeed[];
+  prefixStacks?: PrefixStackSeed[];
+  gaps?: GapSeed[];
+  workloads?: WorkloadSeed[];
+  capabilities?: CapabilitySeed[];
+  auditCauses?: AuditCauseSeed[];
+  markerInventories?: Array<{
+    id: string;
+    capacity: number;
+    markerIds: string[];
+    targetIds: string[];
+  }>;
+  allowedCfg?: Partial<Record<keyof Config, readonly unknown[]>>;
+  fixtures?: ScenarioFixtureDef[];
+  estimates?: ScenarioEstimateDef[];
+}
+```
+
+Every gameplay number not supported by a semantically matching constants-registry entry must appear once in `fixtures` with a stable ID, exact semantic role, unit, and `[FICTION]` tag. Presentation-only estimates appear in `estimates`. A fixture may not borrow a measured citation solely because its number matches. `markerIds.length` must equal `capacity`, and all referenced IDs must resolve within the same `ScenarioData`.
+
+### 8.6 Cold open
+
+```ts
+interface ColdOpenDef {
+  maxInstructionCards: 0 | 1;
+  beats: Array<{
+    atSec: number;
+    actor: "system" | "player" | "wire" | "cache";
+    copy?: string;
+    action?: Action;
+    focusObject?: string;
+  }>;
+  firstInteractiveBySec: number;
+}
+```
+
+`firstInteractiveBySec` should be at most `2` seconds `[ESTIMATE]`. Cold-open copy cannot use unrevealed vocabulary or disclose the solution.
+
+### 8.7 Event sequence
+
+```ts
+interface LevelEventDef {
+  id: string;
+  ordinal: number;
+  trigger: PlayerTrigger | SystemTrigger;
+  action: Action;
+  preconditions: StatePredicate[];
+  mutations: StateMutationExpectation[];
+  numbers: NumberCitation[];
+  renderedBy: string[];
+  predictionId?: string;
+  toastIds?: string[];
+  checkpointId?: string;
+  failureRuleId?: string;
+  ahaFrame?: boolean;
+  comparisonReveal?: boolean;
+}
+```
+
+Each event identifies:
+
+- What happens.
+- Which reducer action represents it.
+- Which objects change.
+- Exact numeric effects and citations.
+- Which component renders the evidence.
+- Whether prediction, toast, checkpoint, failure, or aha behavior attaches.
+
+```ts
+interface NumberCitation {
+  expression: string;
+  expected: number;
+  unit: "tok" | "usd" | "min" | "ratio" | "count";
+  cites: string[];
+  tag?: "[ESTIMATE]" | "[FICTION]";
+}
+```
+
+A `NumberCitation` supplies one authoritative expected value for its expression. Each citation must satisfy the fixture-provenance rules in §4.
+
+An event with `comparisonReveal: true`, or an event whose action is `REQUEST_COUNTERFACTUAL` or `REVEAL_COUNTERFACTUAL`, is informational. Such an event cannot name `failureRuleId`, dispatch `FREEZE_FAILURE`, or mutate actual-attempt economic or failure state.
+
+### 8.8 Fail lesson and failure rules
+
+```ts
+interface FailLesson {
+  bucket: keyof HiddenCosts | "none";
+  cite: string;
+  line: string;
+}
+
+interface FailureRuleDef {
+  id: string;
+  predicate: StatePredicate;
+  decisiveEventId: string;
+  causeCode: string;
+  message: string;
+  checkpointId: string;
+  highlightObjectIds: string[];
+  actualUsd: number;
+  validAlternativeUsd: number;
+}
+```
+
+Contracts:
+
+- `message` names the concrete cause and consequence in one line.
+- `actualUsd > validAlternativeUsd`.
+- The decisive frame visibly renders both the punished cost and enough comparison evidence to establish the difference.
+- If the route is harmless, equal, or cheaper, it may not freeze.
+- A failure predicate may not inspect prediction correctness.
+- `decisiveEventId` must belong to the player’s actual attempt.
+- A `FailureRuleDef` may not attach to a reference, anti-pattern, alternate-choice, counterfactual request, or counterfactual reveal event.
+- Informational comparison evidence may explain an already-completed actual attempt, but it cannot retroactively freeze that attempt.
+- A missing capability with no overpriced request uses `LocalAttemptFailure`, not `FailureRuleDef`.
+
+```ts
+interface CheckpointDef {
+  id: string;
+  createBeforeEventId: string;
+  reason: Checkpoint["reason"];
+  resumeLabel: string;
+}
+```
+
+`CheckpointDef` declares where a runtime `Checkpoint` is created and the destination named by rewind UI.
+
+### 8.9 Gate and stars
+
+```ts
+interface GateResult {
+  pass: boolean;
+  reason: string;
+  evidence: string[];
+}
+
+interface GateDef {
+  predicateId: string;
+  evidenceRevealEventIds: [string, ...string[]];
+  postEvidenceActionRequirements: [StatePredicate, ...StatePredicate[]];
+  behavioralRequirements: [StatePredicate, ...StatePredicate[]];
+  budgetRequirement?: StatePredicate;
+  explanationRequirement?: StatePredicate;
+  transferRequirement?: StatePredicate;
+}
+
+interface StarDef {
+  label: string;
+  predicate: StatePredicate;
+  reason: string;
+}
+```
+
+Rules:
+
+- `gate.behavioralRequirements` cannot be empty.
+- `postEvidenceActionRequirements` contains one or more `action-observed` predicates whose `afterEventId` is an `evidenceRevealEventId` or a later event.
+- A qualifying action demonstrates understanding after evidence: for example transfer choice, normalization, remediation, explanation choice, rerouting, rescheduling, corrected loadout, or audit value-to-cause matching.
+- `COMMIT_PREDICTION`, prediction option identity, and prediction correctness cannot appear in a gate, star, failure, budget mutation, or `pass(st)` decision.
+- A wrong prediction never deducts score and never fails a gate.
+- A budget predicate may supplement but not replace behavioral evidence.
+- `pass(st)` is pure.
+- Gate and star paths must resolve to fields declared in `ReducerState` and its supporting types.
+- Wallet predicates read scalar `wallet`; spend predicates read `attemptMetrics.spentUsd` before completion or `attemptResult.spentUsd` after completion. `wallet.spentUsd` is invalid.
+- L10 completion predicates read `attemptResult.completedDepth`; in-progress branch predicates read `attemptMetrics.completedDepth`.
+- Membership predicates use `kind: "includes"`; `op: "contains"` is invalid.
+- Default legacy star behavior, if explicitly retained:
+  - 2 stars: spend at most `85%` of budget.
+  - 3 stars: spend at most `70%` and hand-code zero units.
+- Redesigned levels should prefer concept-specific `StarDef`s based on post-evidence behavior.
+- Exact floating-point equality is forbidden for cost thresholds; use `lte` or `gte` against one authoritative threshold.
+- Every `StarDef` threshold must have a meaningful `label` and one-line `reason`; a naked numeric threshold is invalid.
+
+### 8.10 Counterfactuals
+
+```ts
+interface CounterfactualDef {
+  id: string;
+  unlockAfterEventId: string;
+  kind: "reference" | "anti-pattern" | "alternate-choice";
+  cfg: Partial<Config>;
+  scenarioPatch?: Partial<ScenarioData>;
+  comparisonQuestion: string;
+  revealCopy: string;
+}
+```
+
+The same seed and unaffected scenario inputs must be used. Any calibrated-fiction delta is labeled. A counterfactual cannot unlock before a meaningful attempt. A counterfactual is informational and cannot cause or dispatch `FREEZE_FAILURE`.
+
+### 8.11 Tape specification
+
+```ts
+interface TapeSpec {
+  rowSource: "ledger" | "lastRequests";
+  labels: Record<string, string>;
+  revealGroups: Array<{
+    id: string;
+    requestIds: string[];
+    gatedByPredictionId?: string;
+  }>;
+  ahaRequestId: string;
+  hoverEnabled: true;
+  explainOutputPricingFromEventId?: string;
+}
+```
+
+`explainOutputPricingFromEventId` affects teaching labels only. Output contributes to tape geometry from the first rendered request. QA requires exact equality between selected source rows and rendered tape rows.
+
+### 8.12 Result specification
+
+```ts
+interface ResultSpec {
+  headlinePass: string;
+  headlineFail: string;
+  evidenceLines: string[];
+  comparisonIds: string[];
+  continueLabel: string;
+  retryLabel: string;
+}
+```
+
+Result copy may state the discovered rule because the attempt is complete. Prediction correctness is not a result criterion. A local failed-attempt result must name its concrete missing capability or other local cause without presenting it as `GameEnd` or a punitive freeze.
+
+### 8.13 Vocabulary
+
+```ts
+interface VocabularyDef {
+  term: string;
+  definition: string;
+  firstNeededEventId: string;
+  toastId: string;
+}
+```
+
+A term cannot appear in player-facing copy before `firstNeededEventId`.
+
+### 8.14 QA assertions
+
+```ts
+type QaAssertion =
+  | { kind: "state"; afterEventId: string; predicate: StatePredicate }
+  | { kind: "pricing"; requestId: string; expectedUsd: number; cites: string[] }
+  | { kind: "render"; assertion: string }
+  | { kind: "accessibility"; assertion: string }
+  | { kind: "replay"; assertion: string }
+  | { kind: "winnable"; referenceCfg: Partial<Config> }
+  | { kind: "anti-fails"; antiCfg: Partial<Config> }
+  | {
+      kind: "identity-no-solution-vocabulary";
+      forbiddenTerms: string[];
+      assertion: "title and objective contain no solution vocabulary";
+    };
+```
+
+Mandatory assertions for every level:
+
+1. Every request yields one ledger row and one tape row.
+2. Every real request cost is positive.
+3. No positive cost displays as `$0.0000`.
+4. Pricing matches `PRICE_REQUEST`.
+5. Reference configuration passes from the fixed seed.
+6. Anti-pattern fails the intended behavioral gate.
+7. A reveal cannot occur before prediction commitment.
+8. A wrong prediction changes no score, star, wallet, failure, or gate result.
+9. The gate observes at least one player action after its evidence reveal.
+10. Rewind restores the specified checkpoint deterministically.
+11. Every freeze has `actualUsd > validAlternativeUsd` and displays the decisive economic difference.
+12. Static final tape bars render without hover.
+13. Tape width and segment geometry include `outTok`.
+14. Keyboard and pointer paths produce equivalent actions.
+15. Reduced-motion mode reveals the same final evidence.
+16. The player can win without relying on undocumented controls.
+17. Each authoritative quantity appears once.
+18. The core choice contains a real tradeoff and all failure branches are reachable.
+19. Every `concept.id` and prerequisite is in §8.1, and every prerequisite belongs to an earlier level.
+20. Every limited-marker effect is backed by one available marker.
+21. `title` and `objective` contain no solution vocabulary—the level’s mechanic or answer words—as registered in `concept.solutionVocabulary`.
+
+Additional global QA contracts:
+
+- No `FREEZE_FAILURE` is dispatched from inside a counterfactual/reference request or reveal event.
+- Every predicate uses a declared reducer path, legal predicate kind, and legal comparison op.
+- Every fiction fixture has semantically matching provenance; numerical coincidence with a measured constant is insufficient.
+- L13 alone may use `conceptScope.kind === "capstone-integration"`, and every reused concept must appear in its prerequisite list.
+
+### 8.15 Deprecated `LearnBeat`
+
+```ts
+interface DeprecatedLearnBeat {
+  copy: string[];
+  withoutCfg: Partial<Config>;
+  withCfg: Partial<Config>;
+  scope: "session" | "week" | "month";
+  seed: number;
+  chip(a: ReducerState, b: ReducerState): string;
+}
+```
+
+`DeprecatedLearnBeat` exists only to keep current source compatible during migration. It must be converted into one or more `CounterfactualDef`s and must never render before the player’s first meaningful attempt.
+
+---
+
+## 9. Campaign progression
+
+```ts
+interface LevelProgress {
+  stars: 0 | 1 | 2 | 3;
+  bestUsd: number;
+  bestManualHours: number;
+  attempts: number;
+}
+
+interface CampaignState {
+  unlocked: ToolId[];
+  levels: Record<LevelId, LevelProgress>;
+  currentTier: 1 | 2 | 3;
+}
+```
+
+Contracts:
+
+- Unlocks are permanent.
+- Levels form the strict ordered chain in §8.1 unless a later campaign specification explicitly changes it.
+- Completing the frontier level unlocks the next level’s one new tool.
+- Best spend/manual values update only on passing attempts.
+- Attempts increment on every completed result, including local failures.
+- Level controls are the union of `introducedControls` through the current level, filtered by the current `LevelDef`.
+- Concept prerequisites validate against the canonical registry independently of campaign unlock state.
+- L13’s capstone integration does not add extra campaign unlocks or undeclared prerequisite concepts.
+
+---
+
+## 10. Authoring boundary
+
+Thin level specifications may provide:
+
+- `LevelDef` values.
+- Ordered event instances.
+- Exact level copy.
+- Exact request counts, prices, and citations.
+- Gate predicates and star thresholds.
+- Level-specific failure and result text.
+- Level-specific `ScenarioFixtureDef` values with distinct semantic provenance.
+
+Thin level specifications must reference, not redefine:
+
+- `Token`
+- `Request`
+- `CacheEntry`
+- `PrefixBlock`
+- `PrefixStack`
+- `WireSegment`
+- `Wallet`
+- `Budget`
+- `Clock`
+- `ExecutionContext`
+- `LedgerRow`
+- `PricingFunction`
+- `ReducerState`
+- `AttemptMetrics`
+- `AttemptResult`
+- `LocalAttemptFailure`
+- `Counts`
+- `StatePredicate`
+- `Action`
+- Any `UI_*` component
+- Any canonical kebab-case `InteractionPatternId`
+- The `LevelId` registry
+- The `ConceptId` registry and prerequisite graph
+- The constants and fixture registry
+- The `LevelDef` field meanings
+
+Significant tradeoffs and compatibility notes:
+
+- The repository’s current reducer stores wallet and budget as scalars and derives spend with `budget - wallet`; this canonical model preserves that real-code form and forbids object-shaped wallet or budget paths.
+- The repository’s current reducer lacks prediction, prefix-puzzle, checkpoint, failure-freeze, local-attempt-failure, loadout, limited-marker, audit-matching, and attempt-aggregate state. This model defines those additions explicitly while preserving existing reducer fields for incremental migration.
+- The existing engine constant `CATALOG_RESIDUE` remains the real `2,610`-token message residue; the L11 `5,360`-token quantity is intentionally named `L11_FIXED_BASE` to avoid assigning two meanings to one constant.
+- L3’s `13,083`-token history block is intentionally registered as the distinct `[FICTION]` `L3_HISTORY_FIXTURE`; it cannot cite the semantically unrelated measured skills-catalog constant.
+- L13 is the sole formal capstone integration exemption. It retains one new concept while exercising declared prerequisites in an integrated diagnosis.
+

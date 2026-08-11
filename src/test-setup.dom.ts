@@ -28,9 +28,12 @@ function makeCtx2D() {
     fillRect: noop,
     strokeRect: noop,
     beginPath: noop,
+    roundRect: noop,
     moveTo: noop,
     lineTo: noop,
     stroke: noop,
+    fill: noop,
+    setLineDash: noop,
     fillText: (text: unknown) => {
       canvasFillTextCalls.push(String(text));
     },
@@ -45,6 +48,7 @@ function makeCtx2D() {
     font: "",
     textAlign: "left",
     textBaseline: "middle",
+    globalAlpha: 1,
   } as unknown as CanvasRenderingContext2D;
 }
 

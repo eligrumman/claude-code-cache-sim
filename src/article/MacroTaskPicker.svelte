@@ -1,0 +1,57 @@
+<script lang="ts">
+  import type { Model } from "../engine/types.js";
+  import {
+    MACRO_ROUTES,
+    priceTaskChoice,
+    verdictForChoice,
+    type Effort,
+  } from "./macroPricing.js";
+  import RawDataModal from "../components/RawDataModal.svelte";
+  import type { RawTurn } from "../sim/captures/realSegments.js";
+
+  const models: Model[] = ["haiku", "sonnet", "opus", "fable"];
+  const efforts: Effort[] = ["low", "medium", "high"];
+  let choices = $state(MACRO_ROUTES.map((route) => ({ model: route.model, effort: route.effort })));
+  const effortInput = { low: .7, medium: 1, high: 1.35 } as const;
+  const effortOutput = { low: .65, medium: 1, high: 1.45 } as const;
+  const rawRows = $derived(MACRO_ROUTES.map((route, index): RawTurn => ({ label: `${route.task} · ${choices[index].model}/${choices[index].effort}`, cacheWrite: Math.round(route.input * effortInput[choices[index].effort]), output: Math.round(route.output * effortOutput[choices[index].effort]) })));
+
+  function money(value: number) {
+    return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
+  }
+</script>
+
+<div class="picker toycard" data-testid="macro-task-picker">
+  <header class="toycard__head toycard__head--blue"><small class="toy-eyebrow">TRY THE ROUTES</small><strong class="toy-title">Seven jobs. Four brains. Your call.</strong><RawDataModal title="Modeled task-picker inputs" provenance={{ real: false }} rows={rawRows} /></header>
+  <div class="rows">
+    {#each MACRO_ROUTES as route, index}
+      {@const choice = choices[index]}
+      {@const usd = priceTaskChoice(route, choice.model, choice.effort)}
+      {@const verdict = verdictForChoice(route, choice.model, choice.effort)}
+      <div class="task" data-task={route.task.toLowerCase().replace(" ", "-")}>
+        <b>{route.task}</b>
+        <label>Model
+          <select class="toy-select" bind:value={choice.model} aria-label={`${route.task} model`}>
+            {#each models as model}<option value={model}>{model}</option>{/each}
+          </select>
+        </label>
+        <label>Effort
+          <select class="toy-select" bind:value={choice.effort} aria-label={`${route.task} effort`}>
+            {#each efforts as effort}<option value={effort}>{effort}</option>{/each}
+          </select>
+        </label>
+        <strong class="money toy-num" data-value={usd}>{money(usd)}</strong>
+        <span class:good={verdict === "good"} class:bad={verdict === "bad"} class:expensive={verdict === "expensive"} data-testid="route-verdict">
+          {verdict === "good" ? "good · right-sized" : verdict === "bad" ? "bad · likely underpowered" : "expensive · more than this needs"}
+        </span>
+        <p><em>{route.judgment}.</em> {verdict === "good" ? route.fit : verdict === "bad" ? route.underpowered : route.overkill}</p>
+      </div>
+    {/each}
+  </div>
+  <p class="toycard__note">These are teaching-sized jobs, not a promise about quality. The verdict compares your choice with the route each job actually needs.</p>
+</div>
+
+<style>
+  .picker>header{display:grid;gap:4px;padding:16px 18px}.rows{padding:8px 14px}.task{display:grid;grid-template-columns:minmax(92px,1fr) 105px 105px 70px minmax(165px,1fr);gap:8px 10px;align-items:end;padding:11px 4px;border-bottom:1px dashed var(--toy-dash)}.task:last-child{border-bottom:0}.task label{display:grid;gap:2px;font-size:.6rem;font-weight:850;text-transform:uppercase;letter-spacing:.06em}.task select{padding:5px;text-transform:capitalize}.money{text-align:right;font-size:inherit}.task span{border-radius:99px;padding:5px 8px;font:800 .69rem/1.1 var(--font-body);text-align:center}.task p{grid-column:1/-1;margin:0;color:var(--toy-muted);font:.72rem/1.4 var(--font-body)}.task p em{color:var(--toy-ink);font-style:normal;font-weight:800}.good{background:var(--toy-green-chip);color:var(--toy-green-ink)}.bad{background:var(--toy-red-chip);color:var(--toy-red-ink)}.expensive{background:var(--toy-gold-soft);color:var(--toy-gold-ink)}.picker>p{padding:12px 18px;border-top:var(--toy-border-w) solid var(--toy-border);background:var(--toy-cream-2);font-size:.76rem;line-height:1.4}
+  @media(max-width:720px){.task{grid-template-columns:1fr 1fr 1fr}.task>b{grid-column:1/-1}.money{text-align:left;align-self:center}.task span{grid-column:2/-1}.picker>p{font-size:.7rem}}
+</style>

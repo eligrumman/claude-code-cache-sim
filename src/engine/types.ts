@@ -1,6 +1,6 @@
 // types.ts - the engine's shared type vocabulary, from SIMULATOR_SPEC.md 5.1.
 
-export type Model = "sonnet" | "opus" | "fable";
+export type Model = "haiku" | "sonnet" | "opus" | "fable";
 export type Tier = "read" | "input" | "w5m" | "w1h" | "output";
 export type WriteTier = "5m" | "1h";
 export type Who = "inline" | "subagent";
@@ -66,6 +66,11 @@ export interface SimRequest {
   // (L1_REDESIGN Section 7, gap #1). Omitting it reproduces every existing
   // golden number byte-for-byte.
   growthTok?: number;
+  // Scenario-level requests may name an isolated cache namespace and an
+  // authoritative measured prefix. Omitted for the existing game, preserving
+  // its "main" / "sub:<hash>" keys and calculated base sizes.
+  cacheKey?: string;
+  baseTok?: number;
 }
 
 // ---- Fan-out run shapes (computeRun) ----

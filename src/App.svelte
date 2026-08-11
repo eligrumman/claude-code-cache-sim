@@ -1,144 +1,161 @@
 <script lang="ts">
-  // App.svelte - the screen router (GAME_PLAN.md Section B.1/B.3). Owns only
-  // `screen` + `campaign`; all game logic still lives in step.ts/levels.ts.
-  import MapScreen from "./components/MapScreen.svelte";
-  import LearnScreen from "./components/LearnScreen.svelte";
-  import PlayScreen from "./components/PlayScreen.svelte";
-  import L1PlayScreen from "./components/L1PlayScreen.svelte";
-  import ResultScreen from "./components/ResultScreen.svelte";
-  import SessionStream from "./components/SessionStream.svelte";
-  import {
-    toMap,
-    enterLevel,
-    toPlay,
-    toResult,
-    toFreeplay,
-    retryLevel,
-    loadCampaign,
-    saveCampaign,
-    type Screen,
-    type LevelOutcome,
-  } from "./game/shell.js";
-  import { LEVEL_BY_ID, unlockedControls, starsFor, completeLevel, type LevelId } from "./game/levels.js";
-  import { totalSpent } from "./game/step.js";
-  import { DEFAULT_CFG } from "./engine/constants.js";
-  import type { GameState } from "./game/types.js";
+  import ArticleScreen from "./article/ArticleScreen.svelte";
+  import SandboxScreen from "./sandbox/SandboxScreen.svelte";
+  import TDScreen from "./td/TDScreen.svelte";
+  import Cheatsheet from "./setup/Cheatsheet.svelte";
 
-  let screen = $state<Screen>(toMap());
-  let campaign = $state(loadCampaign());
-  let showSandbox = $state(false);
+  type Experience = "home" | "article" | "sandbox" | "td";
 
-  function goMap() {
-    showSandbox = false;
-    screen = toMap();
-  }
-  function goEnter(id: LevelId) {
-    // L1's intro cards are rendered inline by L1PlayScreen (Section 4 Beat 0
-    // + Section 7 gap #7 - LearnBeat's A/B replay doesn't fit token-basics
-    // teaching), so entering L1 goes straight to play.
-    screen = id === "L1" ? toPlay(id) : enterLevel(id);
-  }
-  function goPlay(id: LevelId) {
-    screen = toPlay(id);
-  }
-  function goRetry(id: LevelId) {
-    // Mirror goEnter: L1's intro/play is a single dedicated screen
-    // (L1PlayScreen), it has no generic LearnScreen A/B replay to retry
-    // into. Without this, retryLevel(id) always routes to {id:"learn"},
-    // which for L1 rendered the generic LearnScreen instead of restarting
-    // the actual L1 flow - a dead end back into L1 after a failed attempt.
-    screen = id === "L1" ? toPlay(id) : retryLevel(id);
-  }
-  function goFreeplay() {
-    // Section B.1: Free Play uses the current unlocked toolset. Use the
-    // frontier (last unlocked) level's cumulative control set.
-    const lastUnlocked = campaign.unlocked.length - 1;
-    const frontierId = (Object.keys(LEVEL_BY_ID) as LevelId[])[Math.max(0, lastUnlocked)] as LevelId;
-    screen = toFreeplay(unlockedControls(frontierId));
-  }
+  let experience = $state<Experience>("home");
 
-  function finishLevel(id: LevelId, st: GameState, handCoded: number) {
-    const level = LEVEL_BY_ID[id];
-    const gate = level.pass(st);
-    const stars = starsFor(level, st, handCoded);
-    campaign = completeLevel(campaign, id, st, handCoded);
-    saveCampaign(campaign);
-    const outcome: LevelOutcome = {
-      pass: gate.pass,
-      stars,
-      reason: gate.reason,
-      spentUsd: totalSpent(st),
-      handCoded,
-      finalState: st,
-    };
-    screen = toResult(id, outcome);
+  function goHome() {
+    experience = "home";
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 </script>
 
-<div class="app">
-  {#if screen.id === "map"}
-    <MapScreen {campaign} onenter={goEnter} onfreeplay={goFreeplay} />
-  {:else if screen.id === "learn"}
-    <LearnScreen level={screen.level} onplay={() => goPlay(screen.level)} onback={goMap} />
-  {:else if screen.id === "play"}
-    {@const def = LEVEL_BY_ID[screen.level]}
-    <h1 style="margin:0 0 4px">{def.id} - {def.title}</h1>
-    {#if screen.level !== "L1"}
-      <p class="sub" style="margin-top:0">{def.objective}</p>
-    {/if}
-    {#if screen.level === "L1"}
-      <L1PlayScreen
-        attempted={campaign.levels.L1.attempts > 0}
-        onfinish={(st, handCoded) => finishLevel(screen.level, st, handCoded)}
-        onabandon={goMap}
-      />
-    {:else}
-      <PlayScreen
-        level={screen.level}
-        seed={def.seed}
-        scope={def.scope}
-        cfgOverride={def.cfgOverride}
-        cfgLocked={def.cfgLocked || []}
-        clockCapMin={def.clockCapMin}
-        onfinish={(st, handCoded) => finishLevel(screen.level, st, handCoded)}
-        onabandon={goMap}
-      />
-    {/if}
-  {:else if screen.id === "result"}
-    <ResultScreen
-      level={screen.level}
-      outcome={screen.outcome}
-      onnext={goMap}
-      onretry={() => goRetry(screen.level)}
-      onmap={goMap}
-    />
-  {:else if screen.id === "freeplay"}
-    <h1 style="margin:0 0 4px">Free Play</h1>
-    <p class="sub" style="margin-top:0">
-      Everything you've unlocked so far, with scope/seed controls. The wallet just drains -
-      it never tells you why.
-    </p>
-    <div class="card">
-      <button class="btn ghost" onclick={() => (showSandbox = !showSandbox)}>
-        {showSandbox ? "Hide" : "Show"} raw session message-stream view
-      </button>
-      <button class="btn ghost" onclick={goMap}>Back to map</button>
-    </div>
-    {#if showSandbox}
-      <div class="card">
-        <h2>Session message stream (real-shape simulation)</h2>
-        <SessionStream cfg={DEFAULT_CFG} />
+{#if experience === "article"}
+  <ArticleScreen onback={goHome} onsandbox={() => (experience = "sandbox")} />
+{:else if experience === "sandbox"}
+  <SandboxScreen onback={goHome} />
+{:else if experience === "td"}
+  <TDScreen onback={goHome} />
+{:else}
+  <main class="home">
+    <header class="hero">
+      <div class="eyebrow"><span aria-hidden="true">✦</span> A tiny field guide to a very hungry cache</div>
+      <h1>Claude Code Cache</h1>
+      <p class="tagline">Where your tokens go <span aria-hidden="true">(and why they keep asking for snacks)</span></p>
+      <div class="scribble" aria-hidden="true">
+        <span>understand it</span><i>→</i><span>play with it</span><i>→</i><span>survive it</span>
       </div>
-    {/if}
-    <PlayScreen
-      freeplayControls={screen.toolset}
-      onfinish={() => {}}
-      onabandon={goMap}
-    />
-  {/if}
+    </header>
 
-  <p class="footnote">
-    Economics use the canonical cost function and the real calibration table. Boot-time
-    invariants run in the console. No numbers are faked.
-  </p>
-</div>
+    <section class="experiences" aria-label="Choose an experience">
+      <button class="experience article" onclick={() => (experience = "article")}>
+        <span class="number">01</span>
+        <span class="icon" aria-hidden="true">📖</span>
+        <span class="card-copy">
+          <strong>The Article</strong>
+          <span class="hook">Understand the invisible tab.</span>
+          <small>Read, poke the diagrams, and see why cache costs grow.</small>
+        </span>
+        <span class="arrow" aria-hidden="true">→</span>
+      </button>
+
+      <button class="experience sandbox" onclick={() => (experience = "sandbox")}>
+        <span class="number">02</span>
+        <span class="icon" aria-hidden="true">🧪</span>
+        <span class="card-copy">
+          <strong>The Sandbox</strong>
+          <span class="hook">Play with every dangerous knob.</span>
+          <small>Shape a conversation and watch the token bill react live.</small>
+        </span>
+        <span class="arrow" aria-hidden="true">→</span>
+      </button>
+
+      <button class="experience td" onclick={() => (experience = "td")}>
+        <span class="number">03</span>
+        <span class="icon" aria-hidden="true">🎈</span>
+        <span class="card-copy">
+          <strong>Don't Get Replaced</strong>
+          <span class="hook">Six weeks. One increasingly weird team.</span>
+          <small>Route each kind of work, compound cache configs, and survive the quarter for less than panic-Opus.</small>
+        </span>
+        <span class="arrow" aria-hidden="true">→</span>
+      </button>
+    </section>
+
+    <footer>
+      <span aria-hidden="true">↳</span> Pick a door. You can always come back.
+    </footer>
+
+    <Cheatsheet />
+  </main>
+{/if}
+
+<style>
+  :global(body) {
+    background-color: #fbfaf5;
+    background-image: radial-gradient(#d9d6ca 0.75px, transparent 0.75px);
+    background-size: 18px 18px;
+  }
+
+  .home {
+    width: min(1040px, calc(100% - 32px));
+    min-height: 100vh;
+    margin: 0 auto;
+    padding: clamp(56px, 8vw, 96px) 0 36px;
+    color: #20201e;
+  }
+
+  .hero { text-align: center; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px; padding: 7px 13px;
+    border: 1.5px solid #20201e; border-radius: 999px; background: #fffef9;
+    font: 700 0.72rem/1.2 var(--font-display); letter-spacing: .06em; text-transform: uppercase;
+    transform: rotate(-1deg); box-shadow: 2px 2px 0 #20201e;
+  }
+  h1 {
+    margin: 24px 0 5px; font-family: var(--font-display);
+    font-size: clamp(2.8rem, 8vw, 6rem); line-height: .95; letter-spacing: -.045em;
+  }
+  .tagline { margin: 13px auto 0; color: #57564f; font: 500 clamp(1rem, 2vw, 1.2rem)/1.5 var(--font-body); }
+  .tagline span { color: #89867b; }
+  .scribble {
+    display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 9px;
+    margin: 26px auto 44px; color: #68665e; font: 700 .83rem/1.2 var(--font-display);
+  }
+  .scribble span { border-bottom: 2px wavy #bbb7aa; padding-bottom: 3px; }
+  .scribble i { color: #aaa69a; font-style: normal; }
+
+  .experiences { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; align-items: stretch; }
+  .experience {
+    --accent: #ffd75e; position: relative; isolation: isolate; min-height: 300px;
+    display: flex; flex-direction: column; align-items: flex-start; padding: 23px;
+    border: 2px solid #20201e; border-radius: 23px 18px 25px 19px; background: #fffef9;
+    color: inherit; text-align: left; cursor: pointer; box-shadow: 7px 8px 0 var(--accent), 9px 10px 0 #20201e;
+    transition: transform .18s ease, box-shadow .18s ease;
+  }
+  .experience:nth-child(2) { transform: rotate(.55deg) translateY(6px); }
+  .experience:nth-child(3) { transform: rotate(-.45deg); }
+  .experience:hover, .experience:focus-visible {
+    transform: translate(-2px, -6px) rotate(-.4deg); box-shadow: 10px 13px 0 var(--accent), 12px 15px 0 #20201e;
+  }
+  .experience:focus-visible { outline: 3px dashed #20201e; outline-offset: 6px; }
+  .article { --accent: #82d5f5; }
+  .sandbox { --accent: #ffd75e; }
+  .td { --accent: #8cdda0; }
+  .number { align-self: flex-end; color: #969287; font: 700 .72rem/1 var(--font-body); letter-spacing: .1em; }
+  .icon { display: block; margin: 5px 0 17px; font-size: 3.35rem; filter: drop-shadow(2px 3px 0 rgba(0,0,0,.12)); }
+  .card-copy { display: flex; flex-direction: column; gap: 8px; }
+  .card-copy strong { font: 700 1.55rem/1.05 var(--font-display); }
+  .hook { font: 750 1rem/1.3 var(--font-body); }
+  .card-copy small { color: #67645c; font: 500 .88rem/1.5 var(--font-body); }
+  .arrow {
+    display: grid; place-items: center; width: 38px; height: 38px; margin-top: auto;
+    border: 2px solid #20201e; border-radius: 50%; background: var(--accent);
+    font: 800 1.25rem/1 var(--font-body); transition: transform .18s ease;
+  }
+  .experience:hover .arrow { transform: translateX(5px) rotate(-8deg); }
+  footer { margin-top: 44px; text-align: center; color: #77746b; font: 600 .78rem/1.4 var(--font-body); }
+
+  @media (max-width: 760px) {
+    .home { padding-top: 40px; }
+    .experiences { grid-template-columns: 1fr; gap: 19px; }
+    .experience, .experience:nth-child(2), .experience:nth-child(3) {
+      min-height: 0; display: grid; grid-template-columns: auto 1fr auto; grid-template-rows: auto 1fr;
+      column-gap: 17px; transform: none; padding: 19px;
+    }
+    .experience:hover, .experience:focus-visible { transform: translateY(-3px); }
+    .number { grid-column: 3; grid-row: 1; }
+    .icon { grid-column: 1; grid-row: 1 / 3; margin: 6px 0 0; font-size: 2.5rem; }
+    .card-copy { grid-column: 2 / 4; grid-row: 2; padding-right: 42px; }
+    .arrow { position: absolute; right: 18px; bottom: 18px; width: 32px; height: 32px; }
+    .scribble { margin-bottom: 33px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .experience, .arrow { transition: none; }
+  }
+</style>

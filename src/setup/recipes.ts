@@ -1,0 +1,149 @@
+export type RecipeId =
+  | "ttl"
+  | "keep-warm"
+  | "same-prompt"
+  | "large-context"
+  | "auto-approve"
+  | "route"
+  | "delegate"
+  | "compact"
+  | "lazy";
+
+export type RecipeMechanism =
+  | "env"
+  | "settings.json"
+  | "CLAUDE.md"
+  | "slash-command"
+  | "agent-file"
+  | "behavioral";
+
+export interface SetupRecipe {
+  id: RecipeId;
+  title: string;
+  what: string;
+  mechanism: RecipeMechanism;
+  snippet: string;
+  caveat: string;
+}
+
+export const recipes: readonly SetupRecipe[] = [
+  {
+    id: "ttl",
+    title: "Cache TTL",
+    what: "Choose 5-min (cheaper writes) or 1-hour (survives longer breaks) prefix-cache lifetime.",
+    mechanism: "env",
+    snippet: `# API key / Bedrock / Vertex default is 5-min; opt into 1-hour:
+export ENABLE_PROMPT_CACHING_1H=1`,
+    caveat: "On Claude subscription (Pro/Max) 1-hour is automatic by default; on API keys / cloud providers the default is 5-min. Version/provider dependent.",
+  },
+  {
+    id: "keep-warm",
+    title: "Keep a cached prefix alive",
+    what: "Avoid a cold rebuild after a break.",
+    mechanism: "behavioral",
+    snippet: `# No explicit keep-alive ping exists. Keep sending requests, or after a
+# break restore an already-cached earlier point:
+/rewind <turn-number>`,
+    caveat: "TTL is passive — silence past the TTL expires the cache. /rewind restores an already-cached turn rather than pinging.",
+  },
+  {
+    id: "same-prompt",
+    title: "Shared prefix for subagents",
+    what: "Give parallel subagents byte-identical instruction prefixes so they share stable system-prompt content.",
+    mechanism: "agent-file",
+    snippet: `# ~/.claude/agents/researcher.md
+---
+name: researcher
+description: Deep research agent for search + analysis.
+model: sonnet
+tools: Read, Grep, WebSearch, WebFetch
+---
+You are a research specialist. Search comprehensively; flag uncertainties.`,
+    caveat: "Subagents build their own cache from turn 1 — the shared part is stable system-prompt content (CLAUDE.md, rules). Explore/Plan agents skip CLAUDE.md by design.",
+  },
+  {
+    id: "large-context",
+    title: "Stable context ordering",
+    what: "Keep stable system/repo context first, changing task last, so the prefix stays cache-hittable.",
+    mechanism: "CLAUDE.md",
+    snippet: `# CLAUDE.md — keep this stable between turns
+## Architecture
+[stable conventions]
+## Build commands
+npm run dev
+npm run test
+# Then in chat, reference task files by name (Claude reads them fresh)
+# instead of pasting them, so the stable prefix above stays a cache hit.`,
+    caveat: "Claude Code already orders context by stability; you influence it by keeping CLAUDE.md/rules stable and deferring file-specific context to on-demand reads. Changing MCP tool defs mid-session invalidates the cache.",
+  },
+  {
+    id: "auto-approve",
+    title: "Fewer approval round-trips",
+    what: "Cut permission prompts so messages stay within the cache TTL.",
+    mechanism: "settings.json",
+    snippet: `// .claude/settings.json — auto-accept edits
+{ "permissions": { "defaultMode": "acceptEdits" } }
+// or scope specific safe commands:
+{ "permissions": { "allow": ["Bash(npm run *)", "Bash(git commit *)", "Read(.)"] } }`,
+    caveat: "acceptEdits auto-approves edits + common fs ops. Deny rules always win. Keep destructive ops gated. No --dangerously-skip-permissions in interactive Claude Code (SDK/non-interactive only).",
+  },
+  {
+    id: "route",
+    title: "Model + effort selection",
+    what: "Pick model per task; effort controls reasoning spend.",
+    mechanism: "slash-command",
+    snippet: `# switch model mid-session (invalidates cache — prefer at start)
+/model sonnet
+// persistent default — .claude/settings.json
+{ "model": "sonnet" }`,
+    caveat: "Model + effort are part of the cache key — switching mid-session invalidates the whole cache. Subagents inherit the parent model unless a model: field overrides.",
+  },
+  {
+    id: "delegate",
+    title: "Give subagents smaller backpacks",
+    what: "Spawn scoped agents so the 1M main context isn't dragged through every task.",
+    mechanism: "agent-file",
+    snippet: `# .claude/agents/refactorer.md
+---
+name: refactorer
+description: Refactor for readability/perf. Use when asked to refactor/consolidate.
+model: sonnet
+tools: Read, Edit, Bash, Grep
+---
+Analyze, apply changes incrementally, verify with tests.
+# then: "Use the refactorer agent to clean up the auth module."`,
+    caveat: "Project agents live in .claude/agents/; global in ~/.claude/agents/. Each subagent has its own scoped context + inherited permissions.",
+  },
+  {
+    id: "compact",
+    title: "Auto-compact / manual compact",
+    what: "Summarize history before it dominates input.",
+    mechanism: "slash-command",
+    snippet: `# manual compact at a natural break (cheapest while cache warm)
+/compact
+// settings.json — compact threshold (tokens)
+{ "autoCompactWindow": 500000 }
+# disable auto-compact
+export DISABLE_AUTO_COMPACT=1`,
+    caveat: "autoCompactWindow default is model-tuned; lower = compact more often. Compaction invalidates the conversation layer but keeps stable system/project layers. Version dependent.",
+  },
+  {
+    id: "lazy",
+    title: "Lazy-load skills + MCP tools",
+    what: "Load skill bodies / MCP schemas on demand, not all at startup.",
+    mechanism: "env",
+    snippet: `# ~/.claude/skills/api-guide/SKILL.md
+---
+description: REST API design reference. Use when asked about API design/HTTP.
+---
+[large body loads only when invoked]
+# MCP tool schemas are deferred by default (names listed, schemas on demand).
+# Force all schemas upfront if you want predictability:
+export ENABLE_TOOL_SEARCH=false`,
+    caveat: "Skill descriptions (~one line each) load at startup; full bodies load on invoke. MCP tools deferred by default on models supporting tool search; some gateways/providers load them into the prefix. Version dependent.",
+  },
+] as const;
+
+export const recipeById = Object.fromEntries(
+  recipes.map((recipe) => [recipe.id, recipe]),
+) as Record<RecipeId, SetupRecipe>;
