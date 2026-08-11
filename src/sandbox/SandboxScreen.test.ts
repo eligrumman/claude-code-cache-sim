@@ -27,6 +27,55 @@ afterEach(() => {
 });
 
 describe("sandbox screen", () => {
+  it("renders the conversation toggle with flex-aligned end positions without IntersectionObserver", async () => {
+    render(ConversationView, {
+      props: {
+        script: replayScript,
+        options: replayOptions,
+        off: replayOptions,
+        on: replayOptions,
+        offLabel: "disabled",
+        onLabel: "enabled",
+      },
+    });
+
+    const toggle = screen.getByRole("button", { name: "Switch to enabled" });
+    const knob = toggle.querySelector("i") as HTMLElement;
+    expect(toggle).toHaveClass("switch-flex");
+    expect(knob).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "▶ Play" })).toBeInTheDocument();
+
+    await fireEvent.click(toggle);
+    expect(screen.getByRole("button", { name: "Switch to disabled" })).toHaveClass("on");
+  });
+
+  it("starts replay once the conversation is at least 55% visible", async () => {
+    let callback: IntersectionObserverCallback | undefined;
+    const disconnect = vi.fn();
+    const observe = vi.fn();
+    const observer = { disconnect, observe, root: null, rootMargin: "0px", thresholds: [0.55], takeRecords: () => [], unobserve: vi.fn() } as unknown as IntersectionObserver;
+    vi.stubGlobal("IntersectionObserver", class {
+      constructor(next: IntersectionObserverCallback) { callback = next; }
+      observe = observe;
+      disconnect = disconnect;
+      root = null;
+      rootMargin = "0px";
+      thresholds = [0.55];
+      takeRecords = () => [];
+      unobserve = vi.fn();
+    });
+
+    render(ConversationView, { props: { script: replayScript, options: replayOptions } });
+    expect(observe).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "▶ Play" })).toBeInTheDocument();
+
+    callback?.([{ isIntersecting: true, intersectionRatio: 0.54 } as IntersectionObserverEntry], observer);
+    expect(screen.getByRole("button", { name: "▶ Play" })).toBeInTheDocument();
+    callback?.([{ isIntersecting: true, intersectionRatio: 0.55 } as IntersectionObserverEntry], observer);
+    expect(await screen.findByRole("button", { name: "⏸ Pause" })).toBeInTheDocument();
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+
   it("is reachable from home and applies panel changes in real time", async () => {
     render(App);
     await fireEvent.click(screen.getByRole("button", { name: /Sandbox/ }));
@@ -109,6 +158,7 @@ describe("sandbox screen", () => {
     expect(price).toHaveClass("pricey");
     expect(spendBar).toBeInTheDocument();
     expect(price!.compareDocumentPosition(spendBar!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "▶ Play" }));
     const cheapBubble = await screen.findByRole("button", { name: /Claude · 9:02a.*Here is the result.*\$\d/ });
     expect(cheapBubble.querySelector(".price")).toHaveClass("cheap");
     const chat = bubble.closest(".chat") as HTMLDivElement;
