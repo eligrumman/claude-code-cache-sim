@@ -93,18 +93,18 @@
   .eyebrow {
     display: inline-flex; align-items: center; gap: 8px; padding: 7px 13px;
     border: 1.5px solid #20201e; border-radius: 999px; background: #fffef9;
-    font: 700 0.72rem/1.2 system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase;
+    font: 700 0.72rem/1.2 var(--font-display); letter-spacing: .06em; text-transform: uppercase;
     transform: rotate(-1deg); box-shadow: 2px 2px 0 #20201e;
   }
   h1 {
-    margin: 24px 0 5px; font-family: "Comic Sans MS", "Bradley Hand", cursive;
+    margin: 24px 0 5px; font-family: var(--font-display);
     font-size: clamp(2.8rem, 8vw, 6rem); line-height: .95; letter-spacing: -.045em;
   }
-  .tagline { margin: 13px auto 0; color: #57564f; font: 500 clamp(1rem, 2vw, 1.2rem)/1.5 system-ui, sans-serif; }
+  .tagline { margin: 13px auto 0; color: #57564f; font: 500 clamp(1rem, 2vw, 1.2rem)/1.5 var(--font-body); }
   .tagline span { color: #89867b; }
   .scribble {
     display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 9px;
-    margin: 26px auto 44px; color: #68665e; font: 700 .83rem/1.2 "Comic Sans MS", cursive;
+    margin: 26px auto 44px; color: #68665e; font: 700 .83rem/1.2 var(--font-display);
   }
   .scribble span { border-bottom: 2px wavy #bbb7aa; padding-bottom: 3px; }
   .scribble i { color: #aaa69a; font-style: normal; }
@@ -126,19 +126,19 @@
   .article { --accent: #82d5f5; }
   .sandbox { --accent: #ffd75e; }
   .td { --accent: #8cdda0; }
-  .number { align-self: flex-end; color: #969287; font: 700 .72rem/1 system-ui, sans-serif; letter-spacing: .1em; }
+  .number { align-self: flex-end; color: #969287; font: 700 .72rem/1 var(--font-body); letter-spacing: .1em; }
   .icon { display: block; margin: 5px 0 17px; font-size: 3.35rem; filter: drop-shadow(2px 3px 0 rgba(0,0,0,.12)); }
   .card-copy { display: flex; flex-direction: column; gap: 8px; }
-  .card-copy strong { font: 700 1.55rem/1.05 "Comic Sans MS", "Bradley Hand", cursive; }
-  .hook { font: 750 1rem/1.3 system-ui, sans-serif; }
-  .card-copy small { color: #67645c; font: 500 .88rem/1.5 system-ui, sans-serif; }
+  .card-copy strong { font: 700 1.55rem/1.05 var(--font-display); }
+  .hook { font: 750 1rem/1.3 var(--font-body); }
+  .card-copy small { color: #67645c; font: 500 .88rem/1.5 var(--font-body); }
   .arrow {
     display: grid; place-items: center; width: 38px; height: 38px; margin-top: auto;
     border: 2px solid #20201e; border-radius: 50%; background: var(--accent);
-    font: 800 1.25rem/1 system-ui, sans-serif; transition: transform .18s ease;
+    font: 800 1.25rem/1 var(--font-body); transition: transform .18s ease;
   }
   .experience:hover .arrow { transform: translateX(5px) rotate(-8deg); }
-  footer { margin-top: 44px; text-align: center; color: #77746b; font: 600 .78rem/1.4 system-ui, sans-serif; }
+  footer { margin-top: 44px; text-align: center; color: #77746b; font: 600 .78rem/1.4 var(--font-body); }
 
   @media (max-width: 760px) {
     .home { padding-top: 40px; }

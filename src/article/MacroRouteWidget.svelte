@@ -21,11 +21,11 @@
   }
 </script>
 
-<div class="router" data-testid="macro-route-widget">
-  <div class="toolbar">
+<div class="router toycard" data-testid="macro-route-widget">
+  <div class="toolbar toycard__head toycard__head--blue">
     <div>
-      <small>7 TASK WORKDAY</small>
-      <strong>{routed ? "Route by job" : "All-default baseline"}</strong>
+      <small class="toy-eyebrow">7 TASK WORKDAY</small>
+      <strong class="toy-title">{routed ? "Route by job" : "All-default baseline"}</strong>
     </div>
     <button class:on={routed} onclick={() => routed = !routed} aria-label="Toggle routed workload">
       <i></i>
@@ -39,24 +39,23 @@
         <span>{route.task}</span>
         <b>{route.activeModel}</b>
         <small>{route.activeEffort} effort</small>
-        <strong>{money(route.usd)}</strong>
+        <strong class="toy-num">{money(route.usd)}</strong>
       </div>
     {/each}
   </div>
 
-  <footer>
+  <footer class="toycard__foot">
     <div class="comparison"><span>Before · all default</span><strong>{money(defaultTotal)}</strong></div>
     <div class="arrow">→</div>
     <div class="comparison after"><span>After · right-sized</span><strong>{money(routedTotal)}</strong></div>
-    <div class="saving"><span>saved</span><strong>{money(saved)}</strong></div>
+    <div class="saving toy-delta"><span>saved</span><strong>{money(saved)}</strong></div>
     <strong class="test-total" data-testid="macro-total" data-value={total}>{money(total)}</strong>
   </footer>
 </div>
 
 <style>
-  .router{border:2px solid #20201d;border-radius:20px 17px 22px 16px;overflow:hidden;background:#fff;box-shadow:7px 8px 0 #dedbd0;color:#20201d}
-  .toolbar{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:16px 18px;background:#eaf5ff;border-bottom:2px solid #20201d}.toolbar div{display:grid;gap:3px}.toolbar small{font-size:.66rem;font-weight:900;letter-spacing:.12em}.toolbar strong{font-size:1.1rem}.toolbar button{width:50px;height:29px;padding:3px;border:2px solid #20201d;border-radius:99px;background:#f08080;cursor:pointer}.toolbar button.on{background:#62d39a}.toolbar i{display:block;width:18px;height:18px;border:1px solid #20201d;border-radius:50%;background:white;transition:transform .2s}.toolbar button.on i{transform:translateX(19px)}
-  .routes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:10px 14px}.route{display:grid;grid-template-columns:minmax(90px,1fr) 70px 82px 58px;align-items:center;gap:8px;padding:11px 5px;border-bottom:1px dashed #bbb7ac}.route:nth-last-child(-n+2){border-bottom:0}.route>b{text-transform:capitalize}.route small{color:#716c62}.route>strong{text-align:right}
-  footer{display:grid;grid-template-columns:1fr auto 1fr auto;align-items:center;gap:12px;padding:14px 18px;border-top:2px solid #20201d;background:#fff9db}.comparison{display:grid;gap:2px}.comparison span,.saving span{font-size:.68rem;font-weight:850;text-transform:uppercase;letter-spacing:.05em}.comparison strong{font-size:1.2rem;color:#9a2d24}.comparison.after strong{color:#126536}.arrow{font-weight:950}.saving{display:grid;padding:7px 10px;border:2px solid #126536;border-radius:10px;background:#c8f5d9;color:#126536}.saving strong{font-size:1.05rem}.test-total{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
-  @media(max-width:720px){.routes{grid-template-columns:1fr}.route:nth-last-child(2){border-bottom:1px dashed #bbb7ac}.route{grid-template-columns:minmax(78px,1fr) 60px 72px 50px;font-size:.82rem}.route small{font-size:.7rem}footer{grid-template-columns:1fr auto 1fr}.saving{grid-column:1/-1;text-align:center}.comparison strong{font-size:1rem}}
+  .toolbar{gap:20px;padding:16px 18px}.toolbar button{width:50px;height:29px;padding:3px;border:var(--toy-border-w) solid var(--toy-border);border-radius:99px;background:var(--toy-toggle-off);cursor:pointer}.toolbar button.on{background:var(--toy-green)}.toolbar i{display:block;width:18px;height:18px;border:1px solid var(--toy-border);border-radius:50%;background:var(--toy-paper);transition:transform .2s}.toolbar button.on i{transform:translateX(19px)}
+  .routes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:10px 14px}.route{display:grid;grid-template-columns:minmax(90px,1fr) 70px 82px 58px;align-items:center;gap:8px;padding:11px 5px;border-bottom:1px dashed var(--toy-dash)}.route:nth-last-child(-n+2){border-bottom:0}.route>b{text-transform:capitalize}.route small{color:var(--toy-muted)}.route>strong{text-align:right;font-size:inherit}
+  footer{padding:14px 18px}.comparison{display:grid;gap:2px}.comparison span,.saving span{font-size:.68rem;letter-spacing:.05em}.comparison strong{font-size:1.2rem;color:var(--toy-red-deep)}.comparison.after strong{color:var(--toy-green-ink)}.saving{padding:7px 10px;border-radius:10px}.saving strong{font-size:1.05rem}.test-total{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+  @media(max-width:720px){.routes{grid-template-columns:1fr}.route:nth-last-child(2){border-bottom:1px dashed var(--toy-dash)}.route{grid-template-columns:minmax(78px,1fr) 60px 72px 50px;font-size:.82rem}.route small{font-size:.7rem}.comparison strong{font-size:1rem}}
 </style>

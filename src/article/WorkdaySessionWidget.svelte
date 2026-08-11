@@ -43,43 +43,43 @@
   }
 </script>
 
-<div class="workday" data-testid="workday-session-widget">
-  <header>
-    <div><small>THE BILL, TURN BY TURN</small><strong>How fast does the backpack compound?</strong></div>
+<div class="workday toycard" data-testid="workday-session-widget">
+  <header class="toycard__head toycard__head--green">
+    <div><small class="toy-eyebrow">THE BILL, TURN BY TURN</small><strong class="toy-title">How fast does the backpack compound?</strong></div>
     <label>Workday
-      <select bind:value={scenarioId} aria-label="Workday scenario">
+      <select class="toy-select" bind:value={scenarioId} aria-label="Workday scenario">
         {#each options as option}<option value={option.id}>{option.label}</option>{/each}
       </select>
     </label>
     <RawDataModal title={`Modeled workday · ${scenario.title}`} provenance={{ real: false }} rows={rawRows} />
   </header>
 
-  <div class="legend">
-    <span class="giant">One 1M Opus session</span>
-    <span class="scoped">Scenario-sized agent</span>
+  <div class="legend toy-legend">
+    <span><i class="toy-swatch write"></i>One 1M Opus session</span>
+    <span><i class="toy-swatch read"></i>Scenario-sized agent</span>
   </div>
   <div class="chart" aria-label={`Cumulative cost for ${scenario.title}`}>
     {#each rows as row, index}
       <div class="turn">
         <small>{index + 1}</small>
         <div class="bars">
-          <i class="giant-bar" style={`width:${(row.giantUsd / maximum) * 100}%`}></i>
-          <i class="scoped-bar" style={`width:${(row.scopedUsd / maximum) * 100}%`}></i>
+          <i class="giant-bar toy-bar__seg write" style={`width:${(row.giantUsd / maximum) * 100}%`}></i>
+          <i class="scoped-bar toy-bar__seg read" style={`width:${(row.scopedUsd / maximum) * 100}%`}></i>
         </div>
         <span>{row.atMin}m</span>
       </div>
     {/each}
   </div>
-  <footer>
+  <footer class="toycard__foot">
     <div><span>Giant default</span><strong data-testid="workday-giant-total" data-value={giant.totalUsd}>{money(giant.totalUsd)}</strong></div>
     <b>→</b>
     <div class="after"><span>Scoped route</span><strong data-testid="workday-scoped-total" data-value={scoped.totalUsd}>{money(scoped.totalUsd)}</strong></div>
-    <div class="saving"><span>saved</span><strong>{money(saving)}</strong></div>
+    <div class="saving toy-delta"><span>saved</span><strong>{money(saving)}</strong></div>
   </footer>
-  <p>The first giant turn alone writes 1,000,000 tokens × {RATE.w1h} × ${MODEL_IN.opus}/M. Later turns still read that full prefix; the green line runs the same script with the scenario's {scenario.defaults.prefixTok.toLocaleString()}-token, {scenario.defaults.model} backpack.</p>
+  <p class="toycard__note">The first giant turn alone writes 1,000,000 tokens × {RATE.w1h} × ${MODEL_IN.opus}/M. Later turns still read that full prefix; the green line runs the same script with the scenario's {scenario.defaults.prefixTok.toLocaleString()}-token, {scenario.defaults.model} backpack.</p>
 </div>
 
 <style>
-  .workday{border:2px solid #20201d;border-radius:20px 17px 22px 16px;overflow:hidden;background:#fff;box-shadow:7px 8px 0 #dedbd0;color:#20201d}.workday>header{display:flex;justify-content:space-between;align-items:end;gap:18px;padding:15px 18px;background:#e7f8ee;border-bottom:2px solid #20201d}.workday>header div{display:grid;gap:3px}.workday header small{font-size:.65rem;font-weight:950;letter-spacing:.11em}.workday header strong{font-size:1.08rem}.workday label{display:grid;gap:2px;font-size:.6rem;font-weight:850;text-transform:uppercase}.workday select{max-width:150px;border:1.5px solid #20201d;border-radius:7px;background:#fff;padding:5px 7px;font:750 .78rem system-ui}.legend{display:flex;flex-wrap:wrap;gap:16px;padding:12px 18px 5px;font:.7rem/1.2 system-ui}.legend span::before{content:"";display:inline-block;width:12px;height:7px;margin-right:5px;border:1px solid #20201d;border-radius:3px}.legend .giant::before{background:#e57970}.legend .scoped::before{background:#62d39a}.chart{display:grid;gap:7px;padding:12px 18px 17px}.turn{display:grid;grid-template-columns:20px minmax(0,1fr) 30px;align-items:center;gap:8px}.turn>small,.turn>span{font:700 .62rem system-ui;color:#716c62}.turn>span{text-align:right}.bars{display:grid;gap:2px;min-width:0}.bars i{display:block;min-width:2px;height:5px;border:1px solid #20201d;border-radius:4px;transition:width .2s}.giant-bar{background:#e57970}.scoped-bar{background:#62d39a}.workday footer{display:grid;grid-template-columns:1fr auto 1fr auto;align-items:center;gap:12px;padding:13px 18px;border-top:2px solid #20201d;background:#fff9db}.workday footer div{display:grid;gap:2px}.workday footer span{font-size:.67rem;font-weight:850;text-transform:uppercase;letter-spacing:.04em}.workday footer strong{font-size:1.15rem;color:#9a2d24}.workday footer .after strong,.workday footer .saving{color:#126536}.workday footer .saving{padding:6px 9px;border:2px solid #126536;border-radius:9px;background:#c8f5d9}.workday>p{margin:0;padding:11px 18px;border-top:1px dashed #aaa398;font:.76rem/1.45 system-ui}
-  @media(max-width:620px){.workday>header{align-items:center}.workday header strong{font-size:.94rem}.workday footer{grid-template-columns:1fr auto 1fr}.workday footer .saving{grid-column:1/-1;text-align:center}.legend{gap:9px}.chart{padding-inline:12px}.workday>p{font-size:.7rem}}
+  .workday label{display:grid;gap:2px;font-size:.6rem;font-weight:850;text-transform:uppercase}.workday select{max-width:150px}.legend{padding:12px 18px 5px}.chart{display:grid;gap:7px;padding:12px 18px 17px}.turn{display:grid;grid-template-columns:20px minmax(0,1fr) 30px;align-items:center;gap:8px}.turn>small,.turn>span{font:700 .62rem var(--font-body);color:var(--toy-muted)}.turn>span{text-align:right}.bars{display:grid;gap:2px;min-width:0}.bars i{height:5px;border:1px solid var(--toy-border);border-radius:4px}.bars .giant-bar{background:var(--toy-red-2)}.bars .scoped-bar{background:var(--toy-green)}.workday footer strong{font-size:1.15rem;color:var(--toy-red-deep)}.workday footer .after strong{color:var(--toy-green-ink)}
+  @media(max-width:620px){.workday header strong{font-size:.94rem}.chart{padding-inline:12px}.workday>p{font-size:.7rem}}
 </style>
