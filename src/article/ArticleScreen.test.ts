@@ -50,6 +50,14 @@ describe("Micro and Macro articles", () => {
     const monthWidgets = screen.getAllByTestId("macro-month-widget");
     expect(monthWidgets).toHaveLength(5);
     expect(monthWidgets.map((widget) => widget.getAttribute("data-focus"))).toEqual(["strategy", "model", "effort", "load", "all"]);
+    expect(screen.getByTestId("subagent-fleet-widget")).toBeInTheDocument();
+    expect(screen.getAllByTestId("subagent-row")).toHaveLength(7);
+    const fleetTotal = Number(screen.getByTestId("subagent-fleet-total").getAttribute("data-value"));
+    const fitTotal = MACRO_ROUTES.reduce((sum, route) => sum + priceTaskChoice(route, route.model, route.effort), 0);
+    const opusBaseline = MACRO_ROUTES.reduce((sum, route) => sum + priceTaskChoice(route, "opus", "high"), 0);
+    expect(fleetTotal).toBeGreaterThan(0);
+    expect(fleetTotal).toBeCloseTo(fitTotal);
+    expect(fitTotal).toBeLessThan(opusBaseline);
     expect(screen.queryByTestId("spend-breakdown-task")).not.toBeInTheDocument();
     expect(screen.queryByTestId("route-rate-card-widget")).not.toBeInTheDocument();
 
@@ -135,7 +143,7 @@ describe("Micro and Macro articles", () => {
     expect(screen.getAllByTestId("deep-dive")).toHaveLength(4);
 
     await fireEvent.click(screen.getByRole("button", { name: "Macro" }));
-    expect(screen.getAllByTestId("deep-dive")).toHaveLength(5);
+    expect(screen.getAllByTestId("deep-dive")).toHaveLength(6);
 
     await fireEvent.click(screen.getByRole("switch", { name: "TL;DR" }));
     expect(screen.queryAllByTestId("deep-dive")).toHaveLength(0);

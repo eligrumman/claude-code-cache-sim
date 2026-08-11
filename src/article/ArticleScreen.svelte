@@ -1,6 +1,7 @@
 <script lang="ts">
   import LeverWidget from "./LeverWidget.svelte";
   import MacroMonthWidget from "./MacroMonthWidget.svelte";
+  import SubagentFleetWidget from "./SubagentFleetWidget.svelte";
   import { MODEL_IN, RATE } from "../engine/pricing.js";
   import {
     COMPACTION,
@@ -233,6 +234,7 @@
     expanded = Object.fromEntries([
       ...microSections.map((section) => [`micro-${section.id}`, !tldr]),
       ...macroFocusSections.map((section) => [`macro-${section.id}`, !tldr]),
+      ["macro-subagents", !tldr],
     ]);
   }
 
@@ -319,6 +321,18 @@
         <MacroMonthWidget preset={section.preset} focus={section.focus} />
       </section>
     {/each}
+
+    <section class="lesson">
+      <div class="section-copy">
+        <small>6 · SUBAGENTS</small>
+        <h2>Give each subagent the brain it needs.</h2>
+        <p class="section-prose">The main agent fans work out to subagents; tune each subagent’s model and effort to the cost of being wrong on its task, and the fleet gets cheaper without losing the judgment that matters.{#if expanded["macro-subagents"]}<span data-testid="deep-dive"> Each route keeps an independent model and effort choice, so cheap, verifiable work does not inherit the same premium settings as architecture, debugging, or root-cause analysis.</span>{/if}</p>
+        <button class="expand" aria-expanded={Boolean(expanded["macro-subagents"])} onclick={() => toggle("macro-subagents")}>
+          <b>&gt;</b> {expanded["macro-subagents"] ? "Close detail" : "Deep dive"}
+        </button>
+      </div>
+      <SubagentFleetWidget />
+    </section>
 
     <button class="crosslink" onclick={() => show("micro")}>Why did THAT message spike? Zoom in →</button>
     <section class="cta macro-cta">
