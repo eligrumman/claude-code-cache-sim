@@ -5,9 +5,9 @@
   import ContextCostWidget from "./ContextCostWidget.svelte";
   import WorkdaySessionWidget from "./WorkdaySessionWidget.svelte";
   import SpendBreakdownWidget from "./SpendBreakdownWidget.svelte";
+  import MacroLabWidget from "./MacroLabWidget.svelte";
   import CacheLifecycleWidget from "./CacheLifecycleWidget.svelte";
   import OutputCostWidget from "./OutputCostWidget.svelte";
-  import RouteRateCardWidget from "./RouteRateCardWidget.svelte";
   import { MODEL_IN, RATE } from "../engine/pricing.js";
   import {
     COMPACTION,
@@ -284,7 +284,7 @@
     expanded = Object.fromEntries([
       ...["spend", "lifecycle", "output"].map((id) => [`micro-${id}`, !tldr]),
       ...microSections.map((section) => [`micro-${section.id}`, !tldr]),
-      ...["spend", "rate-card"].map((id) => [`macro-${id}`, !tldr]),
+      ...["lab"].map((id) => [`macro-${id}`, !tldr]),
       ...macroSections.map((section) => [`macro-${section.id}`, !tldr]),
     ]);
   }
@@ -397,28 +397,17 @@
 
     <section class="lesson macro-lesson">
       <div class="section-copy">
-        <small>0 · TASK SPEND ANATOMY</small>
-        <h2>The same meter, now at task granularity.</h2>
-        <p class="section-prose">Plan, Hotfix, Debug, RCA, Code review, Tests, and Docs use the same task vocabulary as the route table and Tokenloons TD balloons. Token Optimizer’s 80%+ cache-read volume and ~74% hit-rate findings are sourced context; these task dollars are engine-modeled.{#if expanded["macro-spend"]}<span data-testid="deep-dive"> Increase tasks per day to cycle the seven routes. The shared working prefix is written on first touch, then re-read as the task history grows; fresh task input and generated output remain separate billed classes.</span>{/if}</p>
-        <button class="expand" aria-expanded={Boolean(expanded["macro-spend"])} onclick={() => toggle("macro-spend")}><b>&gt;</b> {expanded["macro-spend"] ? "Close detail" : "Deep dive"}</button>
+        <small>0 · MACRO LAB</small>
+        <h2>Route the workday, not just the next prompt.</h2>
+        <p class="section-prose">Plan, Hotfix, Debug, RCA, Code review, Tests, and Docs use the same task vocabulary as Tokenloons TD. Token Optimizer’s 80%+ cache-read volume and ~74% hit-rate findings are sourced context; the task mix, compaction effect, and every dollar below are engine-modeled.{#if expanded["macro-lab"]}<span data-testid="deep-dive"> Compare one model-and-effort route with the fit route for every task, then change workday volume and the retained context. The four-class receipt always reconciles to the selected total; at seven tasks with no compaction, the default strategies reconcile to the long-standing route widget.</span>{/if}</p>
+        <button class="expand" aria-expanded={Boolean(expanded["macro-lab"])} onclick={() => toggle("macro-lab")}><b>&gt;</b> {expanded["macro-lab"] ? "Close detail" : "Deep dive"}</button>
       </div>
-      <SpendBreakdownWidget unit="task" />
+      <MacroLabWidget />
       <div class="section-setup"><CopyButton recipe={recipeById.route} compact /></div>
     </section>
 
     <MacroRouteWidget />
     <div class="macro-widget"><MacroTaskPicker /></div>
-
-    <section class="lesson macro-lesson">
-      <div class="section-copy">
-        <small>0.1 · RATE CARDS</small>
-        <h2>Inspect one balloon before dispatch.</h2>
-        <p class="section-prose">Pick one of the seven tasks and hold its workload constant across every model rate card. The recommended fit buys enough judgment without paying for capacity the task cannot use.{#if expanded["macro-rate-card"]}<span data-testid="deep-dive"> Haiku is always the cheapest arithmetic rate and Fable the highest, but price alone is not routing. The verdict compares each card with the route’s required model and effort; the footer reconciles to the existing all-Opus and right-sized seven-task totals.</span>{/if}</p>
-        <button class="expand" aria-expanded={Boolean(expanded["macro-rate-card"])} onclick={() => toggle("macro-rate-card")}><b>&gt;</b> {expanded["macro-rate-card"] ? "Close detail" : "Deep dive"}</button>
-      </div>
-      <RouteRateCardWidget />
-      <div class="section-setup"><CopyButton recipe={recipeById.route} compact /></div>
-    </section>
 
     {#each macroSections as section}
       <section class="lesson macro-lesson">

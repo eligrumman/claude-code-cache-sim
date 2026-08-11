@@ -37,8 +37,11 @@ describe("Micro and Macro articles", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Macro" }));
     expect(screen.getByRole("heading", { name: "Stop making one giant agent do everything." })).toBeInTheDocument();
+    expect(screen.getByTestId("macro-lab-widget")).toBeInTheDocument();
     expect(screen.getByTestId("macro-route-widget")).toBeInTheDocument();
     expect(screen.getByTestId("workday-session-widget")).toBeInTheDocument();
+    expect(screen.queryByTestId("spend-breakdown-task")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("route-rate-card-widget")).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: "Micro" }));
     expect(screen.getByRole("heading", { name: "Five minutes or one hour?" })).toBeInTheDocument();
@@ -117,7 +120,7 @@ describe("Micro and Macro articles", () => {
     expect(screen.getAllByTestId("deep-dive")).toHaveLength(7);
 
     await fireEvent.click(screen.getByRole("button", { name: "Macro" }));
-    expect(screen.getAllByTestId("deep-dive")).toHaveLength(7);
+    expect(screen.getAllByTestId("deep-dive")).toHaveLength(6);
 
     await fireEvent.click(screen.getByRole("switch", { name: "TL;DR" }));
     expect(screen.queryAllByTestId("deep-dive")).toHaveLength(0);

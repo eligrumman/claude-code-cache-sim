@@ -1,22 +1,23 @@
-import { describe, expect, it } from "vitest";
-import { MACRO_ROUTES, priceTaskChoice } from "./macroPricing.js";
+import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, render, screen } from "@testing-library/svelte";
+import MacroLabWidget from "./MacroLabWidget.svelte";
+import { MACRO_ROUTES, macroLabComparison, priceMacroLab, priceTaskChoice, totalMacroRoutes } from "./macroPricing.js";
 import { lifecycleComparison, outputComparison, spendBreakdown } from "./spendModel.js";
+
+afterEach(cleanup);
 
 describe("article spend teaching models", () => {
   it("reconciles all four billed classes to the displayed total", () => {
-    for (const unit of ["message", "task"] as const) {
-      const result = spendBreakdown(unit, unit === "message" ? 16 : 12);
-      const summed = result.usd.input + result.usd.cacheRead + result.usd.cacheWrite + result.usd.output;
-      expect(summed).toBeCloseTo(result.totalUsd, 10);
-    }
+    const micro = spendBreakdown("message", 16);
+    expect(micro.usd.input + micro.usd.cacheRead + micro.usd.cacheWrite + micro.usd.output).toBeCloseTo(micro.totalUsd, 10);
+
+    const macro = priceMacroLab({ strategy: "uniform", model: "opus", effort: "high", taskCount: 12, contextDropped: 30 });
+    expect(macro.usd.input + macro.usd.cacheRead + macro.usd.cacheWrite + macro.usd.output).toBeCloseTo(macro.totalUsd, 10);
   });
 
-  it("grows cache-read share as a session or task workload lengthens", () => {
-    for (const unit of ["message", "task"] as const) {
-      const lengths = unit === "message" ? [1, 8, 20, 40] : [1, 7, 14, 21];
-      const shares = lengths.map((length) => spendBreakdown(unit, length).cacheReadPercent);
-      for (let index = 1; index < shares.length; index += 1) expect(shares[index]).toBeGreaterThan(shares[index - 1]);
-    }
+  it("grows cache-read share as a message session lengthens", () => {
+    const shares = [1, 8, 20, 40].map((length) => spendBreakdown("message", length).cacheReadPercent);
+    for (let index = 1; index < shares.length; index += 1) expect(shares[index]).toBeGreaterThan(shares[index - 1]);
   });
 
   it("prices a keep-warm read below a lapsed rewrite", () => {
@@ -34,5 +35,28 @@ describe("article spend teaching models", () => {
   it("prices the same task lower on Haiku than Opus", () => {
     const route = MACRO_ROUTES[0];
     expect(priceTaskChoice(route, "haiku", route.effort)).toBeLessThan(priceTaskChoice(route, "opus", route.effort));
+  });
+
+  it("saves money by right-sizing an all-Opus workday", () => {
+    const result = macroLabComparison({ strategy: "uniform", model: "opus", effort: "high", taskCount: 7, contextDropped: 0 });
+    expect(result.uniform.totalUsd).toBeGreaterThan(result.routed.totalUsd);
+    expect(result.savedUsd).toBeGreaterThan(0);
+    expect(result.uniform.totalUsd).toBeCloseTo(totalMacroRoutes(false), 10);
+    expect(result.routed.totalUsd).toBeCloseTo(totalMacroRoutes(true), 10);
+  });
+
+  it("lowers later prefix reads as compaction drops more context", () => {
+    const base = priceMacroLab({ strategy: "uniform", model: "opus", effort: "high", taskCount: 14, contextDropped: 0 });
+    const compacted = priceMacroLab({ strategy: "uniform", model: "opus", effort: "high", taskCount: 14, contextDropped: 60 });
+    expect(compacted.totalUsd).toBeLessThan(base.totalUsd);
+    expect(compacted.tokens.cacheRead).toBeLessThan(base.tokens.cacheRead);
+  });
+
+  it("renders four stacked-bar percentages that sum to approximately 100", () => {
+    render(MacroLabWidget);
+    const percentages = ["input", "cacheRead", "cacheWrite", "output"].map((key) =>
+      Number(screen.getByTestId(`macrolab-${key}`).getAttribute("data-percent")),
+    );
+    expect(percentages.reduce((sum, value) => sum + value, 0)).toBeCloseTo(100, 8);
   });
 });

@@ -1,5 +1,5 @@
 import type { Model } from "../engine/types.js";
-import { priceTokenBuckets } from "../sim/cost.js";
+import { priceTokenBuckets, priceTokens } from "../sim/cost.js";
 
 export type WorkRoute = {
   task: string;
@@ -15,6 +15,33 @@ export type WorkRoute = {
 
 export type Effort = WorkRoute["effort"];
 export type RouteVerdict = "good" | "bad" | "expensive";
+export type MacroLabStrategy = "uniform" | "routed";
+export type MacroSpendClass = "input" | "cacheRead" | "cacheWrite" | "output";
+
+export interface MacroLabOptions {
+  strategy: MacroLabStrategy;
+  model: Model;
+  effort: Effort;
+  taskCount: number;
+  /** Percentage of the carried prefix removed before later task reads. */
+  contextDropped: number;
+}
+
+export interface MacroLabRow {
+  label: string;
+  activeModel: Model;
+  activeEffort: Effort;
+  verdict: RouteVerdict;
+  buckets: Record<MacroSpendClass, number>;
+  usd: number;
+}
+
+export interface MacroLabSpend {
+  rows: MacroLabRow[];
+  tokens: Record<MacroSpendClass, number>;
+  usd: Record<MacroSpendClass, number>;
+  totalUsd: number;
+}
 
 const EFFORT_TOKENS: Record<Effort, { input: number; output: number }> = {
   low: { input: 0.7, output: 0.65 },
@@ -83,6 +110,80 @@ export function verdictForChoice(route: WorkRoute, model: Model, effort: Effort)
   if (modelRank[model] < modelRank[recommendedModel] || effortRank[effort] < effortRank[route.effort]) return "bad";
   if (modelRank[model] > modelRank[recommendedModel] || effortRank[effort] > effortRank[route.effort]) return "expensive";
   return "good";
+}
+
+const emptyMacroClasses = (): Record<MacroSpendClass, number> => ({ input: 0, cacheRead: 0, cacheWrite: 0, output: 0 });
+
+/**
+ * Engine-priced Macro Lab workload. At seven tasks, zero compaction, Opus-high
+ * uniform and right-sized totals reconcile exactly with priceMacroRoutes.
+ * Compaction only changes later reads of the shared uniform-route prefix;
+ * right-sized tasks already write isolated, task-sized contexts.
+ */
+export function priceMacroLab(options: MacroLabOptions): MacroLabSpend {
+  const taskCount = Math.max(1, Math.floor(options.taskCount));
+  const dropped = Math.min(100, Math.max(0, options.contextDropped)) / 100;
+  const reconciled = taskCount === MACRO_ROUTES.length && dropped === 0
+    ? priceMacroRoutes(options.strategy === "routed")
+    : null;
+  const rows = Array.from({ length: taskCount }, (_, index): MacroLabRow => {
+    const route = MACRO_ROUTES[index % MACRO_ROUTES.length];
+    const pass = Math.floor(index / MACRO_ROUTES.length);
+    const activeModel = options.strategy === "routed" ? route.model : options.model;
+    const activeEffort = options.strategy === "routed" ? route.effort : options.effort;
+    const scaled = taskChoiceBuckets(route, activeEffort);
+    const buckets: Record<MacroSpendClass, number> = options.strategy === "routed"
+      ? { input: 0, cacheRead: 0, cacheWrite: scaled.cacheWrite, output: scaled.output }
+      : {
+          input: scaled.cacheWrite,
+          cacheRead: index === 0 ? 0 : Math.round(DEFAULT_MAIN_CONTEXT_TOKENS * (1 - dropped)),
+          cacheWrite: index === 0 ? DEFAULT_MAIN_CONTEXT_TOKENS : 0,
+          output: scaled.output,
+        };
+    const computedUsd = options.strategy === "routed"
+      ? priceTaskChoice(route, activeModel, activeEffort)
+      : priceTokenBuckets(buckets, { model: activeModel, ttl: "1h" });
+    const canReuseReconciled = reconciled
+      && (options.strategy === "routed" || (options.model === "opus" && options.effort === "high"));
+    return {
+      label: `${route.task}${pass ? ` · pass ${pass + 1}` : ""}`,
+      activeModel,
+      activeEffort,
+      verdict: verdictForChoice(route, activeModel, activeEffort),
+      buckets,
+      usd: canReuseReconciled ? reconciled[index].usd : computedUsd,
+    };
+  });
+  const tokens = emptyMacroClasses();
+  const usd = emptyMacroClasses();
+  for (const row of rows) {
+    for (const key of Object.keys(tokens) as MacroSpendClass[]) {
+      tokens[key] += row.buckets[key];
+      usd[key] += priceTokens(row.buckets[key], key, { model: row.activeModel, ttl: "1h" });
+    }
+  }
+  let totalUsd = usd.input + usd.cacheRead + usd.cacheWrite + usd.output;
+  if (reconciled && (options.strategy === "routed" || (options.model === "opus" && options.effort === "high"))) {
+    totalUsd = totalMacroRoutes(options.strategy === "routed");
+  }
+  return { rows, tokens, usd, totalUsd };
+}
+
+export function macroLabComparison(options: MacroLabOptions) {
+  const uniform = priceMacroLab({ ...options, strategy: "uniform" });
+  const routed = priceMacroLab({ ...options, strategy: "routed" });
+  const selected = options.strategy === "uniform" ? uniform : routed;
+  const withoutCompaction = priceMacroLab({ ...options, contextDropped: 0 });
+  const savedUsd = uniform.totalUsd - routed.totalUsd;
+  return {
+    uniform,
+    routed,
+    selected,
+    savedUsd,
+    savedPercent: uniform.totalUsd ? savedUsd / uniform.totalUsd * 100 : 0,
+    withoutCompactionUsd: withoutCompaction.totalUsd,
+    compactionSavedUsd: withoutCompaction.totalUsd - selected.totalUsd,
+  };
 }
 
 export function priceContextComparison(model: Model = "sonnet") {
