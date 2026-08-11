@@ -59,12 +59,16 @@
   const realSelected = $derived(selectedIndex === null ? null : REAL_SESSION_COSTS[selectedIndex]);
   const realRunning = $derived(totalRealSessionCosts(REAL_SESSION_COSTS.slice(0, shown)));
   const realComplete = $derived(shown >= REAL_SESSION_COSTS.length);
+  const realPriceThreshold = $derived(REAL_SESSION_COSTS.reduce((sum, step) => sum + step.costWarm, 0) / REAL_SESSION_COSTS.length);
 
   const hasToggle = $derived(Boolean(off && on && offLabel && onLabel));
   const activeScript = $derived(hasToggle ? ((leverOn ? onScript : offScript) ?? script) : script);
   const activeOptions = $derived(hasToggle ? (leverOn ? on! : off!) : options);
   const legacyLedger = $derived(simulateMessageLedger(activeScript, activeOptions));
   const legacyMessages = $derived(legacyLedger.messages);
+  const legacyPriceThreshold = $derived(legacyMessages.length
+    ? legacyMessages.reduce((sum, message) => sum + message.usd, 0) / legacyMessages.length
+    : 0);
   const legacySelected = $derived(legacyMessages.find((message) => message.id === selectedId) ?? null);
   const legacyVisible = $derived(legacyMessages.slice(Math.max(0, compact ? shown - 6 : 0), shown));
   const legacyRunningTotal = $derived(legacyVisible.reduce((sum, message) => sum + message.usd, 0));
@@ -244,11 +248,14 @@
       <div class="chat" style="overflow:hidden" aria-live="polite" bind:this={chatViewport} onscroll={updateScrollBounds}>
         {#each realVisible as step (step.label)}
           <button class="bubble round-trip" class:selected={realSelected === step} onclick={() => inspect(stepNumber(step) - 1)} title="Inspect this API round trip">
-            <small class="bubble-meta">
-              <span>Claude Code · round trip {stepNumber(step)} · <strong>{exactMoney(step.costWarm)}</strong></span>
-              <span class="mini" aria-hidden="true"><i class="read" style={`flex:${tokCost(step.cacheRead, RATE.read, REAL_SESSION_MODEL)}`}></i><i class="write" style={`flex:${tokCost(step.cacheWrite, RATE.w5m, REAL_SESSION_MODEL)}`}></i><i class="input" style={`flex:${tokCost(step.freshInput, RATE.input, REAL_SESSION_MODEL)}`}></i><i class="output" style={`flex:${tokCost(step.output, RATE.out, REAL_SESSION_MODEL)}`}></i></span>
-            </small>
-            {step.label}
+            <small class="bubble-meta">Claude Code · round trip {stepNumber(step)}</small>
+            <span class="bubble-content">
+              <span class="message-text">{step.label}</span>
+              <span class="cost-cluster">
+                <strong class="price" class:pricey={step.costWarm > realPriceThreshold} class:cheap={step.costWarm <= realPriceThreshold}>{exactMoney(step.costWarm)}</strong>
+                <span class="mini" aria-hidden="true"><i class="read" style={`flex:${tokCost(step.cacheRead, RATE.read, REAL_SESSION_MODEL)}`}></i><i class="write" style={`flex:${tokCost(step.cacheWrite, RATE.w5m, REAL_SESSION_MODEL)}`}></i><i class="input" style={`flex:${tokCost(step.freshInput, RATE.input, REAL_SESSION_MODEL)}`}></i><i class="output" style={`flex:${tokCost(step.output, RATE.out, REAL_SESSION_MODEL)}`}></i></span>
+              </span>
+            </span>
           </button>
         {/each}
       </div>
@@ -317,11 +324,14 @@
       <div class="chat" style="overflow:hidden" aria-live="polite" bind:this={chatViewport} onscroll={updateScrollBounds}>
         {#each legacyVisible as message (message.id)}
           <button class="bubble {changeClass(message.id, message.usd)}" class:user={message.role === "user"} class:selected={selectedId === message.id} onclick={() => inspectLegacy(message.id)} title="Inspect this message's cost">
-            <small class="bubble-meta">
-              <span>{message.role === "user" ? "You" : "Claude"} · {clock(message.atMin)} · <strong>{legacyMoney(message.usd)}</strong></span>
-              <span class="mini" aria-hidden="true"><i class="prefix" style={`flex:${message.buckets.prefix.usd}`}></i><i class="input" style={`flex:${message.buckets.workIn.usd}`}></i><i class="output" style={`flex:${message.buckets.output.usd}`}></i>{#if message.buckets.keepWarm.usd}<i class="ping" style={`flex:${message.buckets.keepWarm.usd}`}></i>{/if}{#if message.buckets.compaction.usd}<i class="compact-cost" style={`flex:${message.buckets.compaction.usd}`}></i>{/if}</span>
-            </small>
-            {message.text}
+            <small class="bubble-meta">{message.role === "user" ? "You" : "Claude"} · {clock(message.atMin)}</small>
+            <span class="bubble-content">
+              <span class="message-text">{message.text}</span>
+              <span class="cost-cluster">
+                <strong class="price" class:pricey={message.usd > legacyPriceThreshold} class:cheap={message.usd <= legacyPriceThreshold}>{legacyMoney(message.usd)}</strong>
+                <span class="mini" aria-hidden="true"><i class="prefix" style={`flex:${message.buckets.prefix.usd}`}></i><i class="input" style={`flex:${message.buckets.workIn.usd}`}></i><i class="output" style={`flex:${message.buckets.output.usd}`}></i>{#if message.buckets.keepWarm.usd}<i class="ping" style={`flex:${message.buckets.keepWarm.usd}`}></i>{/if}{#if message.buckets.compaction.usd}<i class="compact-cost" style={`flex:${message.buckets.compaction.usd}`}></i>{/if}</span>
+              </span>
+            </span>
           </button>
         {/each}
       </div>
@@ -369,7 +379,7 @@
   .widget:not(.compact) .stage{min-height:250px;flex:0 0 auto;display:grid;overflow:visible}
   .chat-shell{display:grid;grid-template-columns:minmax(0,1fr) 38px;grid-area:1/1;gap:10px;width:100%;min-width:0;max-height:clamp(220px,42vh,420px)}
   .widget:not(.compact) .inspector{position:relative;inset:auto;grid-area:1/1;z-index:1;box-sizing:border-box;overflow:visible}
-  .chat{max-height:clamp(220px,42vh,420px);scroll-behavior:smooth}.chat>.bubble:first-child{margin-top:0}.bubble.selected{outline:3px solid var(--toy-gold)}.bubble.cheaper{animation:greenflash .8s}.bubble.pricier{animation:redflash .8s}.bubble-meta{display:flex!important;align-items:center;justify-content:space-between;gap:8px;min-width:0}.bubble-meta>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bubble-meta strong{font-variant-numeric:tabular-nums}.bubble .mini{display:flex;width:84px;min-width:54px;flex:none}.mini .read{background:var(--c-read)}.mini .write,.mini .prefix{background:var(--c-write)}.mini .input,.mini .ping{background:var(--c-input)}.mini .output{background:var(--c-output)}.scroll-controls{display:flex;flex-direction:column;justify-content:center;gap:10px}.scroll-button{width:34px;height:34px;border:2px solid var(--toy-border);border-radius:10px;background:var(--toy-cream-2);box-shadow:2px 2px 0 var(--toy-border);font-weight:950;cursor:pointer}.scroll-button:active:not(:disabled){transform:translate(2px,2px);box-shadow:none}.scroll-button:disabled{opacity:.3;cursor:not-allowed;box-shadow:none}.inspector-actions{display:flex;align-items:center;gap:5px}.inspector-title .raw-corner :global(.raw-trigger){padding:3px 5px;border:1.5px solid var(--toy-border);background:var(--toy-paper);color:var(--toy-ink);font-size:.62rem}.inspector-title .inspector-actions>button{border:0;background:none;font-size:1.4rem;cursor:pointer;padding:0 3px}
+  .chat{max-height:clamp(220px,42vh,420px);scroll-behavior:smooth}.chat>.bubble:first-child{margin-top:0}.bubble.selected{outline:3px solid var(--toy-gold)}.bubble.cheaper{animation:greenflash .8s}.bubble.pricier{animation:redflash .8s}.bubble-meta{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bubble-content{display:flex;align-items:center;gap:12px;min-width:0}.message-text{min-width:0;flex:1;overflow-wrap:anywhere}.cost-cluster{display:flex;align-items:center;gap:7px;flex:none}.price{font-size:.7rem;font-variant-numeric:tabular-nums;white-space:nowrap}.price.pricey{color:var(--toy-red)}.price.cheap{color:var(--toy-green)}.bubble .mini{display:flex;width:84px;min-width:54px;flex:none}.mini .read{background:var(--c-read)}.mini .write,.mini .prefix{background:var(--c-write)}.mini .input,.mini .ping{background:var(--c-input)}.mini .output{background:var(--c-output)}.scroll-controls{display:flex;flex-direction:column;justify-content:center;gap:10px}.scroll-button{width:34px;height:34px;border:2px solid var(--toy-border);border-radius:10px;background:var(--toy-cream-2);box-shadow:2px 2px 0 var(--toy-border);font-weight:950;cursor:pointer}.scroll-button:active:not(:disabled){transform:translate(2px,2px);box-shadow:none}.scroll-button:disabled{opacity:.3;cursor:not-allowed;box-shadow:none}.inspector-actions{display:flex;align-items:center;gap:5px}.inspector-title .raw-corner :global(.raw-trigger){padding:3px 5px;border:1.5px solid var(--toy-border);background:var(--toy-paper);color:var(--toy-ink);font-size:.62rem}.inspector-title .inspector-actions>button{border:0;background:none;font-size:1.4rem;cursor:pointer;padding:0 3px}
   @media(max-width:600px){.toolbar{padding:8px 10px}.live{font-size:.64rem}.timeline{height:61px;margin:0 8px}.rail{top:25px}.tick{top:11px}.tick small{font-size:.5rem}.stage,.widget:not(.compact) .stage{padding:8px;min-height:150px}.chat-shell{grid-template-columns:minmax(0,1fr) 32px;gap:6px;max-height:clamp(180px,38vh,320px)}.chat{max-height:clamp(180px,38vh,320px)}.bubble{max-width:94%;font-size:.75rem;padding:6px 8px}.bubble .mini{display:flex;width:62px}.scroll-button{width:30px;height:30px;padding:0}.inspector{inset:6px;padding:9px}.receipt-lines{font-size:.58rem}.receipt-lines>div{grid-template-columns:84px 1fr;gap:3px}footer{padding:8px;display:block}footer>span{display:block;margin-bottom:2px}footer strong{font-size:.8rem}}
   @media(max-height:700px){.compact .timeline{height:58px}.compact .rail{top:24px}.compact .tick{top:10px}.compact .stage{min-height:130px}.compact .bubble{padding:5px 8px;font-size:.72rem}.compact .toolbar{padding-block:8px}}
   @media(max-height:520px){.compact .toolbar{padding-block:4px}.compact .timeline{height:44px}.compact .rail{top:17px}.compact .tick{top:3px}.compact .tick small{display:none}.compact .stage{min-height:76px;padding:5px}.compact .chat-shell,.compact .chat{max-height:120px}.compact .chat{gap:3px}.compact .bubble{padding:3px 6px;font-size:.65rem}.compact .bubble-meta{display:flex!important}.compact footer{padding-block:4px}}

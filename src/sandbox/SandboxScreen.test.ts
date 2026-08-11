@@ -99,12 +99,18 @@ describe("sandbox screen", () => {
     expect(screen.getByText(/With shared cache.*uncached/)).toBeInTheDocument();
   });
 
-  it("shows inline message spend and opens a receipt with raw logs", async () => {
+  it("shows color-banded message spend before the spend bar and opens a receipt with raw logs", async () => {
     render(ConversationView, { props: { script: replayScript, options: replayOptions } });
 
-    const bubble = screen.getByRole("button", { name: /You · 9:00a · \$\d/ });
-    expect(bubble).toHaveTextContent(/You · 9:00a · \$\d/);
-    expect(bubble.querySelector(".mini")).toBeInTheDocument();
+    const bubble = screen.getByRole("button", { name: /You · 9:00a.*Please inspect this replay.*\$\d/ });
+    expect(bubble).toHaveTextContent(/You · 9:00a.*Please inspect this replay.*\$\d/);
+    const price = bubble.querySelector(".price");
+    const spendBar = bubble.querySelector(".mini");
+    expect(price).toHaveClass("pricey");
+    expect(spendBar).toBeInTheDocument();
+    expect(price!.compareDocumentPosition(spendBar!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const cheapBubble = await screen.findByRole("button", { name: /Claude · 9:02a.*Here is the result.*\$\d/ });
+    expect(cheapBubble.querySelector(".price")).toHaveClass("cheap");
     const chat = bubble.closest(".chat") as HTMLDivElement;
     expect(chat.style.overflow).toBe("hidden");
     Object.defineProperties(chat, { clientHeight: { configurable: true, value: 100 }, scrollHeight: { configurable: true, value: 400 } });
