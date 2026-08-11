@@ -106,6 +106,7 @@ describe("sandbox screen", () => {
     expect(bubble).toHaveTextContent(/You · 9:00a · \$\d/);
     expect(bubble.querySelector(".mini")).toBeInTheDocument();
     const chat = bubble.closest(".chat") as HTMLDivElement;
+    expect(chat.style.overflow).toBe("hidden");
     Object.defineProperties(chat, { clientHeight: { configurable: true, value: 100 }, scrollHeight: { configurable: true, value: 400 } });
     chat.scrollTop = 0;
     await fireEvent.scroll(chat);
@@ -116,6 +117,11 @@ describe("sandbox screen", () => {
     await fireEvent.click(scrollDown);
     expect(chat.scrollTop).toBe(120);
     expect(scrollUp).toBeEnabled();
+    chat.scrollTop = 290;
+    await fireEvent.scroll(chat);
+    await fireEvent.click(scrollDown);
+    expect(chat.scrollTop).toBe(300);
+    expect(scrollDown).toBeDisabled();
 
     await fireEvent.click(bubble);
     expect(screen.getByText("Message receipt")).toBeInTheDocument();
