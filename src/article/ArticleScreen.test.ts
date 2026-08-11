@@ -47,7 +47,9 @@ describe("Micro and Macro articles", () => {
     expect(screen.queryByTestId("macro-route-widget")).not.toBeInTheDocument();
     expect(screen.queryByTestId("workday-session-widget")).not.toBeInTheDocument();
     expect(screen.queryByTestId("context-cost-widget")).not.toBeInTheDocument();
-    expect(screen.getByTestId("macro-month-widget")).toBeInTheDocument();
+    const monthWidgets = screen.getAllByTestId("macro-month-widget");
+    expect(monthWidgets).toHaveLength(5);
+    expect(monthWidgets.map((widget) => widget.getAttribute("data-focus"))).toEqual(["strategy", "model", "effort", "load", "all"]);
     expect(screen.queryByTestId("spend-breakdown-task")).not.toBeInTheDocument();
     expect(screen.queryByTestId("route-rate-card-widget")).not.toBeInTheDocument();
 
@@ -133,7 +135,7 @@ describe("Micro and Macro articles", () => {
     expect(screen.getAllByTestId("deep-dive")).toHaveLength(4);
 
     await fireEvent.click(screen.getByRole("button", { name: "Macro" }));
-    expect(screen.getAllByTestId("deep-dive")).toHaveLength(12);
+    expect(screen.getAllByTestId("deep-dive")).toHaveLength(5);
 
     await fireEvent.click(screen.getByRole("switch", { name: "TL;DR" }));
     expect(screen.queryAllByTestId("deep-dive")).toHaveLength(0);
@@ -229,8 +231,8 @@ describe("Micro and Macro articles", () => {
     renderArticle();
     await fireEvent.click(screen.getByRole("button", { name: "Macro" }));
     await fireEvent.click(screen.getAllByRole("button", { name: /Deep dive/ })[0]);
-    await fireEvent.click(screen.getByRole("button", { name: "Uniform" }));
-    await fireEvent.change(screen.getByLabelText("Month model"), { target: { value: "fable" } });
+    await fireEvent.click(screen.getAllByRole("button", { name: "Uniform" }).slice(-1)[0]);
+    await fireEvent.change(screen.getAllByLabelText("Month model").slice(-1)[0], { target: { value: "fable" } });
     expect(consoleError).not.toHaveBeenCalled();
   });
 });

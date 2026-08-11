@@ -10,10 +10,12 @@
   } from "../sim/cost.js";
   import type { MessageLedgerOptions, ScriptedMessage } from "../sim/ledger.js";
   import {
+    DEFAULT_MACRO_MONTH,
     MACRO_ROUTES,
     priceContextComparison,
     priceTaskChoice,
     type Effort,
+    type MacroMonthConfig,
   } from "./macroPricing.js";
   import type { Model } from "../engine/types.js";
   import CopyButton from "../setup/CopyButton.svelte";
@@ -206,78 +208,16 @@
     },
   ];
 
-  const macroSections = [
-    {
-      id: "route", eyebrow: "1 · MODEL + EFFORT", title: "Match the brain to the job.",
-      copy: "Route by the cost of being wrong: buy judgment where a mistake fans out, and buy throughput where the answer is easy to verify.",
-      deep: [
-        `Model choice changes the base price of every token: Haiku is ${money(MODEL_IN.haiku)}, Sonnet ${money(MODEL_IN.sonnet)}, Opus ${money(MODEL_IN.opus)}, and Fable ${money(MODEL_IN.fable)} per million input tokens before bucket multipliers. Effort changes the teaching workload's reasoning input and output, and output is billed at ${RATE.out}×, so premium model plus high effort compounds both axes.`,
-        `For the plan, Sonnet-high costs ${money(routeCost("Plan", "sonnet", "high"))}: architecture and sequencing justify judgment, while Haiku-high at ${money(routeCost("Plan", "haiku", "high"))} is a false economy if a weak dependency map spawns seven bad implementation tasks, and Fable-high at ${money(routeCost("Plan", "fable", "high"))} is usually unused headroom. A local, reversible hotfix is the opposite: Haiku-low is ${money(routeCost("Hotfix", "haiku", "low"))}, while Opus-high is ${money(routeCost("Hotfix", "opus", "high"))}; escalate only when the blast radius stops being local.`,
-        `Debugging needs a wide hypothesis search, so the worked route spends ${money(routeCost("Debug", "opus", "high"))} on Opus-high instead of ${money(routeCost("Debug", "sonnet", "high"))} on a cheaper but underpowered pass whose missed hypothesis buys another edit-and-test loop. RCA also lands on Opus-high at ${money(routeCost("RCA", "opus", "high"))}, because reproducing the failure and separating cause from symptom demands a defensible chain, not a plausible narrative. Code review is bounded but cross-file: Sonnet-medium costs ${money(routeCost("Code review", "sonnet", "medium"))}, enough to trace contracts without pricing every diff as research.`,
-        `Tests and docs are cheaper because their answers are externally checkable. Haiku-medium prices the testing job at ${money(routeCost("Tests", "haiku", "medium"))}; the spec supplies the judgment and the runner supplies the verdict. Haiku-low prices docs at ${money(routeCost("Docs", "haiku", "low"))}, while Fable-low costs ${money(routeCost("Docs", "fable", "low"))} and cannot recover facts absent from the brief. “Bad” in the picker therefore means likely to create rework, “expensive” means capacity the task cannot use, and “good” means the least costly route whose failure mode you can tolerate.`,
-      ],
-    },
-    {
-      id: "main-context", eyebrow: "2 · MAIN AGENT", title: "The default agent carries the whole backpack.",
-      copy: "A 1M-context main agent is powerful—and expensive when every request drags that prefix through the meter.",
-      deep: [
-        `The main agent's million-token context may contain useful history, but the meter sees input carried into this request—not how much of it the task actually needs. On Sonnet, a one-hour cold write of 1,000,000 tokens plus the review output is ${money(contextExample.mainCold)}; the next warm message is still ${money(contextExample.mainWarm)} because the whole prefix is read at ${RATE.read}× and output remains ${RATE.out}×. The scoped 14,000-token version with identical output is ${money(contextExample.scopedCold)} cold and ${money(contextExample.scopedWarm)} warm.`,
-        `The backpack is worth carrying when the next request genuinely depends on decisions, failed attempts, and repository relationships already accumulated in it. Architecture synthesis, an incident command thread, and a cross-cutting refactor often do. A bounded review, test run, or documentation pass usually does not; give that work the relevant files and a short brief, then return a compact result. Context is not a trophy for session longevity—it is recurring input rent.`,
-      ],
-    },
-    {
-      id: "delegate", eyebrow: "3 · DELEGATE", title: "Give subagents smaller backpacks.",
-      copy: "A scoped subagent sees only the brief and files it needs.",
-      deep: [
-        `Delegation creates a new context boundary. A 260,000-token Sonnet subagent prefix costs 260,000 × ${RATE.w1h} × $${MODEL_IN.sonnet}/M = ${money(sonnetPrefixRebuild)} for its first one-hour write, then 260,000 × ${RATE.read} × $${MODEL_IN.sonnet}/M = ${exactMoney(sonnetPrefixRead)} per warm read—a ${RATE.w1h / RATE.read}× swing on the prefix. The alternative is not free: a long main session repeatedly reads its larger accumulated history even when the next job needs one directory.`,
-        `Delegate work that can be specified narrowly, checked independently, and returned compactly: searches, bounded reviews, focused tests, and factual docs. Do not delegate a two-minute edit whose brief and result need more tokens than the work, a decision that depends on tacit conversation history, or parallel tasks that will collide in the same files. Keep cross-cutting decisions and final synthesis in the main agent. When several subagents share a stable instruction prefix, preserve it exactly and append the task-specific target afterward so later subagents can read rather than rewrite it.`,
-      ],
-    },
-    {
-      id: "compact", eyebrow: "4 · AUTO-COMPACT", title: "Compress history before it owns you.",
-      copy: "Compaction trades some detail for a smaller reusable prefix.",
-      deep: [
-        `Auto-compact replaces older conversation detail with a shorter working set. The engine compacts after ${COMPACTION.thresholdTok.toLocaleString()} history tokens and retains ${COMPACTION.workingSetTok.toLocaleString()}; at ${compactionHistory.toLocaleString()} tokens it reads the history and emits a ${COMPACTION.summaryTok.toLocaleString()}-token Haiku summary for ${money(compactionUsd)}. Removing ${compactedAway.toLocaleString()} repeated tokens then saves ${money(compactWarmSaving)} on each warm Sonnet message, before any cold-write saving, so this worked case breaks even after ${compactionBreakEvenTurns} subsequent warm turns. Compaction is a purchase: pay once for the summary, then earn it back only if the smaller history will be reused.`,
-        `Compact when a coherent summary can replace old exploration and the session still has meaningful work ahead. Do not compact just before stopping, and preserve exact logs, quotations, or code outside the chat when later reasoning needs them verbatim. The useful summary records decisions, rejected hypotheses, invariants, and open questions; a vague recap saves tokens by discarding the very state the agent needed.`,
-      ],
-    },
-    {
-      id: "lazy", eyebrow: "5 · LAZY-LOAD", title: "Load skills and MCPs when called.",
-      copy: "Unused tool descriptions are still context.",
-      deep: [
-        `Skill instructions and MCP schemas are input tokens even when the task never calls them. The engine's eager tool bundle is ${TOTAL_TOOL_CONTEXT_TOKENS.toLocaleString()} tokens; omitting it from a non-tool Sonnet turn saves ${money(lazyColdSaving)} on a one-hour cold write or ${money(lazyWarmSaving)} on a warm read. One turn is small, but an all-day session pays the warm amount repeatedly, and a changed prefix can pay the cold amount again.`,
-        `Lazy-load when most turns do not need the capability and discovery is cheap. Eager loading is rational when nearly every next turn will call the same tools or when the schema itself is essential planning context; repeatedly discovering and rewriting an immediately needed capability wins nothing. Once loaded, keep the definition stable at the reusable front and put changing arguments later. As with compaction, this is a reuse calculation, not a cleanliness ritual.`,
-      ],
-    },
+
+  type MacroFocus = "all" | "strategy" | "model" | "effort" | "load";
+  const macroFocusSections: { id: string; eyebrow: string; title: string; copy: string; deep: string[]; preset: Partial<MacroMonthConfig>; focus: MacroFocus }[] = [
+    { id: "strategy", eyebrow: "1 · ROUTE THE MONTH", title: "Route each task to the brain it needs.", copy: "Compare fit-routing with pinning every task to one expensive default, then watch that choice repeat across 30 days.", deep: ["The month is computed from the same Plan, Hotfix, Debug, RCA, Code review, Tests, and Docs routes. Right-sizing buys judgment where mistakes fan out and throughput where answers are easy to verify."], preset: { strategy: "routed" }, focus: "strategy" },
+    { id: "model", eyebrow: "2 · MODEL", title: "Right-size the model.", copy: "A premium model on every task inflates every day, including routine work whose result is easy to check.", deep: ["This view holds uniform routing and high effort steady, isolating the model rate across the deterministic workload."], preset: { strategy: "uniform", model: "opus", effort: "high" }, focus: "model" },
+    { id: "effort", eyebrow: "3 · EFFORT", title: "Reasoning effort recurs daily.", copy: "Effort changes the amount of reasoning input and output billed for every task in the month.", deep: ["High effort earns its keep when deeper search prevents rework; it is waste when tests or a narrow specification already supply the verdict."], preset: { strategy: "uniform", model: "sonnet", effort: "high" }, focus: "effort" },
+    { id: "load", eyebrow: "4 · VOLUME", title: "Small mismatches multiply.", copy: "Heavier days repeat more tasks, magnifying every per-task routing choice across the month.", deep: ["The workload repeats the engine's documented route cycle rather than multiplying a hardcoded estimate, while weekends retain a muted skeleton workload."], preset: { strategy: "routed" }, focus: "load" },
+    { id: "all", eyebrow: "5 · ALL KNOBS", title: "Read the whole month.", copy: "Turn every knob, inspect any day, and reconcile its model and effort mix with the 30-day total.", deep: ["Deterministic incident days create Debug and RCA peaks. Each bar exposes its own breakdown, while the footer reconciles the complete model and effort mix."], preset: DEFAULT_MACRO_MONTH, focus: "all" },
   ];
 
-  const macroLabFocusSections = [
-    {
-      id: "strategy", highlight: "strategy", eyebrow: "0.1 · STRATEGY", title: "Route the work—or route every task the same.", recipe: "route",
-      copy: "Switch only the routing strategy while model, effort, volume, and compaction stay fixed. The comparison exposes the cost of sending every task through one expensive default.",
-      deep: "Right-sizing is not shorthand for choosing the cheapest model. Each task keeps the least costly model-and-effort pairing that fits its judgment burden; the uniform side deliberately applies one selection to every task so the saved amount measures routing alone.",
-    },
-    {
-      id: "model", highlight: "model", eyebrow: "0.2 · MODEL", title: "Model price multiplies the whole receipt.", recipe: "route",
-      copy: "Change only the uniform model. The same seven tasks, high effort, full context, and billing buckets are repriced at that model’s engine rate.",
-      deep: "A cheaper model lowers every billed class, but that arithmetic says nothing about whether it can do the job. Use this control to see the rate effect in isolation, then use the task-routing guidance below to account for the cost of being wrong.",
-    },
-    {
-      id: "effort", highlight: "effort", eyebrow: "0.3 · EFFORT", title: "Effort changes how much work gets billed.", recipe: "route",
-      copy: "Hold Opus and the seven-task workload steady, then change effort. The model scales the task input and generated output before the shared pricing engine totals them.",
-      deep: "High effort is valuable when deeper search prevents rework; it is waste when tests or a narrow specification already make the answer easy to verify. This focused view isolates token-volume changes from model and routing changes.",
-    },
-    {
-      id: "volume", highlight: "volume", eyebrow: "0.4 · VOLUME", title: "A workday scales one task at a time.", recipe: "delegate",
-      copy: "Move only tasks per day. The workload repeats the documented task mix, so every added task contributes its own input, cached context, and output rather than multiplying a hardcoded dollar estimate.",
-      deep: "Volume makes a small per-task mismatch recur. After the seven named task types, later tasks repeat the same deterministic route cycle; the bar and total are recomputed from those rows through macroLabComparison.",
-    },
-    {
-      id: "compaction", highlight: "compaction", eyebrow: "0.5 · COMPACTION", title: "Carry less context into the next task.", recipe: "compact",
-      copy: "Change only the share of cached context dropped before later tasks. The readout compares the selected workload with and without that reduction.",
-      deep: "This teaching model reduces later cache-read prefixes; it does not claim measured savings or price the act of summarizing. The full compaction lesson below covers that purchase-and-break-even tradeoff.",
-    },
-  ] as const;
 
   function show(kind: "micro" | "macro") {
     article = kind;
@@ -292,10 +232,7 @@
     tldr = !tldr;
     expanded = Object.fromEntries([
       ...microSections.map((section) => [`micro-${section.id}`, !tldr]),
-      ...["lab"].map((id) => [`macro-${id}`, !tldr]),
-      ["macro-month", !tldr],
-      ...macroLabFocusSections.map((section) => [`macro-lab-${section.id}`, !tldr]),
-      ...macroSections.map((section) => [`macro-${section.id}`, !tldr]),
+      ...macroFocusSections.map((section) => [`macro-${section.id}`, !tldr]),
     ]);
   }
 
@@ -369,42 +306,8 @@
       </div>
     </div>
 
-    <section class="lesson macro-lesson">
-      <div class="section-copy">
-        <small>0 · MACRO LAB</small>
-        <h2>Route the workday, not just the next prompt.</h2>
-        <p class="section-prose">Plan, Hotfix, Debug, RCA, Code review, Tests, and Docs use the same task vocabulary as Tokenloons TD. Token Optimizer’s 80%+ cache-read volume and ~74% hit-rate findings are sourced context; the task mix, compaction effect, and every dollar below are engine-modeled.{#if expanded["macro-lab"]}<span data-testid="deep-dive"> Compare one model-and-effort route with the fit route for every task, then change workday volume and the retained context. The four-class receipt always reconciles to the selected total; at seven tasks with no compaction, the default strategies reconcile to the long-standing route widget.</span>{/if}</p>
-        <button class="expand" aria-expanded={Boolean(expanded["macro-lab"])} onclick={() => toggle("macro-lab")}><b>&gt;</b> {expanded["macro-lab"] ? "Close detail" : "Deep dive"}</button>
-      </div>
-      <div class="section-setup"><CopyButton recipe={recipeById.route} compact /></div>
-    </section>
-
-    {#each macroLabFocusSections as section}
-      <section class="lesson macro-lesson">
-        <div class="section-copy">
-          <small>{section.eyebrow}</small>
-          <h2>{section.title}</h2>
-          <p class="section-prose">{section.copy}{#if expanded[`macro-lab-${section.id}`]}<span data-testid="deep-dive"> {section.deep}</span>{/if}</p>
-          <button class="expand" aria-expanded={Boolean(expanded[`macro-lab-${section.id}`])} onclick={() => toggle(`macro-lab-${section.id}`)}>
-            <b>&gt;</b> {expanded[`macro-lab-${section.id}`] ? "Close detail" : "Deep dive"}
-          </button>
-        </div>
-        <div class="section-setup"><CopyButton recipe={recipeById[section.recipe]} compact /></div>
-      </section>
-    {/each}
-
-    <section class="lesson macro-lesson">
-      <div class="section-copy">
-        <small>6 · 30 DAYS</small>
-        <h2>A month of choices, day by day.</h2>
-        <p class="section-prose">Over 30 days, per-task model-and-effort routing separates a cheap month from an expensive one; the timeline shows each day’s cost and which models drove it.{#if expanded["macro-month"]}<span data-testid="deep-dive"> Weekends carry a skeleton workload, while deterministic incident days force Debug and RCA spikes. Toggle the routing strategy, then inspect any bar to reconcile its model and effort mix with the month total.</span>{/if}</p>
-        <button class="expand" aria-expanded={Boolean(expanded["macro-month"])} onclick={() => toggle("macro-month")}><b>&gt;</b> {expanded["macro-month"] ? "Close detail" : "Deep dive"}</button>
-      </div>
-      <MacroMonthWidget />
-    </section>
-
-    {#each macroSections as section}
-      <section class="lesson macro-lesson">
+    {#each macroFocusSections as section}
+      <section class="lesson">
         <div class="section-copy">
           <small>{section.eyebrow}</small>
           <h2>{section.title}</h2>
@@ -413,7 +316,7 @@
             <b>&gt;</b> {expanded[`macro-${section.id}`] ? "Close detail" : "Deep dive"}
           </button>
         </div>
-        <div class="section-setup"><CopyButton recipe={articleRecipe(section.id)} compact /></div>
+        <MacroMonthWidget preset={section.preset} focus={section.focus} />
       </section>
     {/each}
 
@@ -485,7 +388,7 @@
   .intro-links{display:flex;justify-content:center;flex-wrap:wrap;gap:10px;margin-top:20px}.intro-links button{border:0;background:none;color:#8c4a0a;font-weight:900;font-size:.82rem;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
   section.lesson{margin:80px 0 125px}.section-copy{max-width:680px;margin:0 0 24px 18px}.section-copy>small{color:#a85e13}.section-copy h2,.cta h2{font-size:clamp(2rem,5vw,3.6rem);line-height:1;letter-spacing:-.045em;margin:8px 0 12px}.section-copy>p,.cta p{font-size:1.05rem;line-height:1.5;margin:0;max-width:650px}.expand{display:flex;align-items:center;gap:8px;margin-top:14px;padding:5px 0;border:0;border-bottom:2px solid #20201d;background:transparent;font-size:.82rem;font-weight:900;cursor:pointer}.expand b{font:950 1rem/1 ui-monospace,monospace;color:#a85e13;transition:transform .15s}.expand[aria-expanded="true"] b{transform:rotate(90deg)}
   .section-setup{max-width:680px;margin:24px 0 0 18px}
-  .macro-lesson{margin:65px 0!important;border-bottom:2px dashed #d4d0c6}.macro-lesson .section-copy{margin-bottom:48px}.crosslink{display:block;margin:40px auto 90px;border:0;background:none;color:#8c4a0a;font-weight:950;font-size:1rem;text-decoration:underline;text-underline-offset:4px;cursor:pointer}
+  .crosslink{display:block;margin:40px auto 90px;border:0;background:none;color:#8c4a0a;font-weight:950;font-size:1rem;text-decoration:underline;text-underline-offset:4px;cursor:pointer}
   .cta{margin:70px 0 100px;border:3px solid #20201d;border-radius:25px 19px 28px 18px;padding:34px;display:flex;align-items:center;gap:30px;background:#fff6c7;box-shadow:10px 11px 0 #f2c94c}.cta div{flex:1}.cta>button{border:2px solid #20201d;border-radius:14px;background:#20201d;color:white;padding:16px 20px;font-weight:900;cursor:pointer;white-space:nowrap;box-shadow:5px 5px 0 #e57970;transition:transform .2s}.cta>button:hover{transform:translate(-2px,-2px)}.cta>button span{font-size:1.4rem;margin-left:8px}.macro-cta{background:#eaf5ff;box-shadow:10px 11px 0 #9dccee}
   .article-diagnose{margin:110px 0 40px;padding-top:55px;border-top:3px solid #20201d}.article-diagnose>small{display:block;text-align:center;color:#a85e13;font-weight:950;letter-spacing:.13em;font-size:.72rem}.article-diagnose>h2{text-align:center;font-size:clamp(2rem,5vw,3.6rem);line-height:1;margin:8px 0 24px;letter-spacing:-.045em}
   @media(max-width:650px){.article{width:min(100% - 18px,940px)}nav span{display:none}header{min-height:450px}header>div:not(.article-switch){font-size:.95rem}.doodle{right:2%;top:15%;width:40px;height:40px;font-size:1.4rem}.article-switch button{min-width:90px}.reading-mode{top:12px;right:0}.article-intro{margin:20px auto 55px}section.lesson{margin:60px 0 90px}.section-copy,.section-setup{margin-left:6px}.section-copy>p{font-size:.94rem}.cta{padding:23px 18px;display:block}.cta>button{width:100%;margin-top:22px}}

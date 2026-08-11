@@ -1,13 +1,17 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import type { Model } from "../engine/types.js";
-  import { DEFAULT_MACRO_MONTH, simulateMacroMonth, type Effort, type MacroLabStrategy, type MacroLoad } from "./macroPricing.js";
+  import { DEFAULT_MACRO_MONTH, simulateMacroMonth, type Effort, type MacroLabStrategy, type MacroLoad, type MacroMonthConfig } from "./macroPricing.js";
+
+  interface Props { preset?: Partial<MacroMonthConfig>; focus?: "all" | "strategy" | "model" | "effort" | "load"; }
+  let { preset = {}, focus = "all" }: Props = $props();
+  const initial = untrack(() => ({ ...DEFAULT_MACRO_MONTH, ...preset }));
 
   let root: HTMLElement;
-  let strategy = $state<MacroLabStrategy>(DEFAULT_MACRO_MONTH.strategy);
-  let model = $state<Model>(DEFAULT_MACRO_MONTH.model);
-  let effort = $state<Effort>(DEFAULT_MACRO_MONTH.effort);
-  let load = $state<MacroLoad>(DEFAULT_MACRO_MONTH.load);
+  let strategy = $state<MacroLabStrategy>(initial.strategy);
+  let model = $state<Model>(initial.model);
+  let effort = $state<Effort>(initial.effort);
+  let load = $state<MacroLoad>(initial.load);
   let revealed = $state(0);
   let selectedIndex = $state<number | null>(null);
   let playing = $state(false);
@@ -25,6 +29,8 @@
   const dominantModel = (values: Record<Model, number>): Model => models.reduce((best, model) => values[model] > values[best] ? model : best, "haiku");
   const weekday = (day: number) => weekdays[day % 7];
   const isWeekend = (day: number) => day % 7 === 6 || day % 7 === 0;
+  const enabled = (knob: "strategy" | "model" | "effort" | "load") => focus === "all" || focus === knob;
+  const heldAt = $derived([focus !== "strategy" ? strategy : null, focus !== "model" ? model : null, focus !== "effort" ? effort : null, focus !== "load" ? load : null].filter(Boolean).join(" · "));
 
   function play() {
     clearTimeout(timer);
@@ -66,19 +72,20 @@
   });
 </script>
 
-<article bind:this={root} class="month toycard" data-testid="macro-month-widget">
+<article bind:this={root} class="month toycard" data-testid="macro-month-widget" data-focus={focus}>
   <header class="toycard__head toycard__head--green">
     <div><small class="toy-eyebrow">MACRO · 30-DAY COST TIMELINE</small><strong class="toy-title">Where the month’s money went</strong></div>
     <button class="replay" onclick={play} aria-label="Replay month">↻ Replay</button>
   </header>
   <div class="toolbar">
-    <div class="control"><span>Strategy</span><div class="toy-seg" aria-label="Month routing strategy">
-      <button class:active={strategy === "routed"} aria-pressed={strategy === "routed"} onclick={() => strategy = "routed"}>Fit-routed</button>
-      <button class:active={strategy === "uniform"} aria-pressed={strategy === "uniform"} onclick={() => strategy = "uniform"}>Uniform</button>
+    <div class:featured={focus === "strategy"} class:disabled={!enabled("strategy")} class="control"><span>Strategy</span><div class="toy-seg" aria-label="Month routing strategy">
+      <button disabled={!enabled("strategy")} class:active={strategy === "routed"} aria-pressed={strategy === "routed"} onclick={() => strategy = "routed"}>Fit-routed</button>
+      <button disabled={!enabled("strategy")} class:active={strategy === "uniform"} aria-pressed={strategy === "uniform"} onclick={() => strategy = "uniform"}>Uniform</button>
     </div></div>
-    <label class:disabled={strategy === "routed"} class="control"><span>Model</span><select aria-label="Month model" disabled={strategy === "routed"} bind:value={model}>{#each models as choice}<option value={choice}>{choice}</option>{/each}</select></label>
-    <label class:disabled={strategy === "routed"} class="control"><span>Effort</span><select aria-label="Month effort" disabled={strategy === "routed"} bind:value={effort}>{#each efforts as choice}<option value={choice}>{choice}</option>{/each}</select></label>
-    <div class="control"><span>Load</span><div class="toy-seg" aria-label="Month load">{#each ["light", "normal", "heavy"] as choice}<button class:active={load === choice} aria-pressed={load === choice} onclick={() => load = choice as MacroLoad}>{choice}</button>{/each}</div></div>
+    <label class:featured={focus === "model"} class:disabled={!enabled("model") || strategy === "routed"} class="control"><span>Model</span><select aria-label="Month model" disabled={!enabled("model") || strategy === "routed"} bind:value={model}>{#each models as choice}<option value={choice}>{choice}</option>{/each}</select></label>
+    <label class:featured={focus === "effort"} class:disabled={!enabled("effort") || strategy === "routed"} class="control"><span>Effort</span><select aria-label="Month effort" disabled={!enabled("effort") || strategy === "routed"} bind:value={effort}>{#each efforts as choice}<option value={choice}>{choice}</option>{/each}</select></label>
+    <div class:featured={focus === "load"} class:disabled={!enabled("load")} class="control"><span>Load</span><div class="toy-seg" aria-label="Month load">{#each ["light", "normal", "heavy"] as choice}<button disabled={!enabled("load")} class:active={load === choice} aria-pressed={load === choice} onclick={() => load = choice as MacroLoad}>{choice}</button>{/each}</div></div>
+    {#if focus !== "all"}<small class="held">held at: {heldAt}</small>{/if}
     <div class="legend">{#each models as model}<span><i class={model}></i>{model}</span>{/each}</div>
   </div>
   <div class="chart-scroll">
@@ -108,4 +115,5 @@
 
 <style>
   .month{overflow:hidden}.toolbar{display:flex;align-items:end;flex-wrap:wrap;gap:12px;padding:12px 18px;border-bottom:1px dashed var(--toy-dash);background:var(--toy-cream)}.control{display:grid;gap:4px}.control>span{font-size:.62rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase}.control select{min-height:31px;border:2px solid var(--toy-border);border-radius:8px;background:white;padding:3px 24px 3px 8px;font-weight:800;text-transform:capitalize}.control.disabled{opacity:.4}.replay{border:2px solid var(--toy-border);border-radius:9px;background:var(--toy-cream);padding:6px 9px;font-weight:900;box-shadow:2px 2px 0 var(--toy-border)}.legend{display:flex;flex-wrap:wrap;gap:10px;margin-left:auto;font-size:.68rem;font-weight:850;text-transform:capitalize}.legend span{display:flex;align-items:center;gap:4px}.legend i{width:11px;height:11px;border:1px solid var(--toy-border);border-radius:3px}.chart-scroll{max-width:100%;overflow-x:auto;padding:18px 14px 8px}.chart{display:flex;align-items:end;gap:5px;min-width:720px;height:190px;border-bottom:3px solid var(--toy-border)}.chart button{position:relative;display:grid;grid-template-rows:1fr 18px;align-items:end;width:20px;height:100%;padding:0;border:0;background:transparent;cursor:pointer}.chart button>b{position:absolute;top:-11px;left:50%;translate:-50%;font-size:.48rem}.bar{display:block;width:100%;border:2px solid var(--toy-border);border-bottom:0;border-radius:5px 5px 0 0;transform-origin:bottom;transition:height .3s,transform .25s,opacity .25s}.waiting .bar{transform:scaleY(0);opacity:0}.weekend{opacity:.62}.selected .bar{outline:3px solid var(--toy-ink);outline-offset:2px}.chart small{font-size:.58rem;text-align:center}.haiku{background:#f5c84c}.sonnet{background:#65c5b4}.opus{background:#ef766f}.fable{background:#9e87dc}.detail{padding:14px 18px;border-top:1px dashed var(--toy-dash)}.detail-head{display:flex;justify-content:space-between;align-items:end}.detail-head div{display:grid}.detail-head small,.detail h4,.toycard__foot span{text-transform:uppercase;letter-spacing:.06em;font-size:.65rem}.detail-head>strong{font-size:1.35rem}.splits{display:grid;grid-template-columns:1fr 1fr;gap:22px}.splits h4{margin:12px 0 5px}.row{display:grid;grid-template-columns:58px minmax(30px,1fr) 65px;align-items:center;gap:7px;min-height:22px;font-size:.7rem;text-transform:capitalize}.row .fill{display:block;height:10px;min-width:0;border:1px solid var(--toy-border);border-radius:4px}.row b{text-align:right}.effort-low{background:#d9ef9f}.effort-medium{background:#82cbd0}.effort-high{background:#df75a5}.toycard__foot{display:grid;grid-template-columns:auto 1fr 1fr;gap:18px;align-items:center}.toycard__foot>div{display:grid}.toycard__foot .big{font-size:1.35rem;color:var(--toy-green-ink)}.mix b{font-size:.7rem;line-height:1.5;text-transform:capitalize}@media(max-width:650px){.toolbar{align-items:stretch;flex-direction:column}.legend{margin-left:0}.toy-seg{display:grid;grid-template-columns:1fr 1fr}.splits{grid-template-columns:1fr}.toycard__foot{grid-template-columns:1fr}.chart-scroll{padding-inline:8px}}
+  .control.featured{outline:3px solid var(--toy-green);outline-offset:2px;padding:4px;border-radius:8px}.held{align-self:center;font-weight:800;text-transform:uppercase}
 </style>
