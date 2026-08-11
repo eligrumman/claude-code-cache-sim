@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import App from "../App.svelte";
+import ConversationView from "./ConversationView.svelte";
+import type { MessageLedgerOptions, ScriptedMessage } from "../sim/ledger.js";
+
+const replayScript: ScriptedMessage[] = [
+  { id: "first", role: "user", atMin: 0, text: "Please inspect this replay" },
+  { id: "second", role: "assistant", atMin: 2, text: "Here is the result" },
+];
+const replayOptions: MessageLedgerOptions = { ttl: "5m", model: "sonnet", prefixTok: 8_000, workInTok: 500, outputTok: 240 };
 
 beforeEach(() => {
   const store: Record<string, string> = {};
@@ -25,8 +33,8 @@ describe("sandbox screen", () => {
 
     expect(screen.getByRole("heading", { name: "Conversation playground" })).toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: "Tune the workday" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "💬 Parallel conversations" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "🔧 Under the hood" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "💬 Parallel conversations" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "🔧 Under the hood" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Concurrent conversation lanes")).toHaveTextContent(/Main thread.*Subagent 1/s);
     expect(screen.getByLabelText("Daily cost strip")).toHaveTextContent(/average.*month total/);
     expect(screen.getByLabelText("Daily, weekly, and monthly totals")).toBeInTheDocument();
@@ -82,14 +90,38 @@ describe("sandbox screen", () => {
     expect(screen.getByRole("button", { name: "↺ Reset" })).toBeInTheDocument();
     await fireEvent.click(pause);
     expect(screen.getByRole("button", { name: "▶ Play" })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "🔧 Under the hood" }));
     await fireEvent.click(screen.getAllByRole("button", { name: /Main thread message 1:/ })[0]);
 
-    expect(screen.getByRole("button", { name: "🔧 Under the hood" })).toHaveClass("active");
     expect(screen.getByText("Message receipt · Main thread")).toBeInTheDocument();
+    expect(screen.getByTitle("Raw logs").querySelector("button")).toBeInTheDocument();
     expect(screen.getByLabelText("Ordered modeled prompt segments and cache invalidation cursor")).toHaveTextContent(/cache breaks here.*System prompt.*THE NEW \/ CHANGED MESSAGE/s);
     expect(screen.getByText("output")).toBeInTheDocument();
     expect(screen.getByText(/With shared cache.*uncached/)).toBeInTheDocument();
+  });
+
+  it("shows inline message spend and opens a receipt with raw logs", async () => {
+    render(ConversationView, { props: { script: replayScript, options: replayOptions } });
+
+    const bubble = screen.getByRole("button", { name: /You · 9:00a · \$\d/ });
+    expect(bubble).toHaveTextContent(/You · 9:00a · \$\d/);
+    expect(bubble.querySelector(".mini")).toBeInTheDocument();
+    const chat = bubble.closest(".chat") as HTMLDivElement;
+    Object.defineProperties(chat, { clientHeight: { configurable: true, value: 100 }, scrollHeight: { configurable: true, value: 400 } });
+    chat.scrollTop = 0;
+    await fireEvent.scroll(chat);
+    const scrollUp = screen.getByRole("button", { name: "Scroll messages up" });
+    const scrollDown = screen.getByRole("button", { name: "Scroll messages down" });
+    expect(scrollUp).toBeDisabled();
+    expect(scrollDown).toBeEnabled();
+    await fireEvent.click(scrollDown);
+    expect(chat.scrollTop).toBe(120);
+    expect(scrollUp).toBeEnabled();
+
+    await fireEvent.click(bubble);
+    expect(screen.getByText("Message receipt")).toBeInTheDocument();
+    expect(screen.getByText("raw logs")).toBeInTheDocument();
+    expect(screen.getByTitle("Raw logs").querySelector("button")).toBeInTheDocument();
+    expect(screen.getByLabelText("Ordered modeled prompt segments and cache invalidation cursor")).toBeInTheDocument();
   });
 
   it("opens and closes the narrow-screen configuration drawer", async () => {
