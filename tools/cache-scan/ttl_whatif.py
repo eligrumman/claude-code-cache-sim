@@ -186,6 +186,23 @@ def main(argv: Optional[list] = None) -> int:
     five_m_tokens = {k: 0 for k in KINDS}
     subagent_gaps = []
 
+    # --- corrected-accounting accumulators -----------------------------------
+    # The first-order model above has two biases, BOTH against 1h:
+    #   1. It priced avoided rebuilds at 1.0x base. But avoiding a rebuild under
+    #      1h does not make the token free -- it swaps a 1.25x cache WRITE for a
+    #      0.1x cache READ. The true saving per token is therefore
+    #      (CACHE_WRITE_5M_MULT - CACHE_READ_MULTIPLIER) = 1.25 - 0.1 = 1.15x base,
+    #      not 1.0x. -> corrected_savings uses the 1.15x read-offset.
+    #   2. It charged the 1h write premium (0.75x) on ALL 5m writes, including
+    #      the mid-bucket rebuild writes. But under 1h those mid-bucket rebuilds
+    #      VANISH (they become reads), so they are never written at 1h and must
+    #      NOT be charged the write premium. -> corrected_switch_cost excludes
+    #      the mid-bucket rebuild tokens from the premium base (avoids
+    #      double-charging tokens that disappear under 1h).
+    # Rates are per-row (per model); accumulate per row, never a single global rate.
+    corrected_savings = {k: 0.0 for k in KINDS}          # 1.15x read-offset on mid rows
+    mid_premium_offset = {k: 0.0 for k in KINDS}          # 0.75x on mid rebuild tok, to subtract
+
     n_rows = 0
     for row in rows:
         n_rows += 1
@@ -213,6 +230,11 @@ def main(argv: Optional[list] = None) -> int:
                 buckets[tk][b]["n"] += 1
                 buckets[tk][b]["tok"] += rebuilt_tok
                 buckets[tk][b]["usd"] += usd
+                if b == "mid":
+                    # corrected saving: swap 1.25x write -> 0.1x read = 1.15x base saved
+                    corrected_savings[tk] += rebuilt_tok * (CACHE_WRITE_5M_MULT - CACHE_READ_MULTIPLIER) * rate / 1e6
+                    # these rebuild tokens vanish under 1h -> exclude from write premium
+                    mid_premium_offset[tk] += rebuilt_tok * (CACHE_WRITE_1H_MULT - CACHE_WRITE_5M_MULT) * rate / 1e6
 
         if tk == "subagent" and row.get("gap_seconds") is not None:
             subagent_gaps.append(row["gap_seconds"])
@@ -267,24 +289,37 @@ def main(argv: Optional[list] = None) -> int:
         print(f"  {k}: 5m_tokens_written={five_m_tokens[k]}  extra_$_if_switched_to_1h=${extra_cost_if_all_1h[k]:.2f}")
     print()
 
-    print("=== 4) NET of switching to 1h ( = addressable-bucket $ savings - switch cost $ ) ===")
-    nets = {}
+    print("=== 4) NET of switching to 1h -- FIRST-ORDER vs CORRECTED, side by side ===")
+    print("    First-order (original): savings priced at 1.0x base; premium charged on ALL 5m writes.")
+    print("    Corrected (read-offset + no double-charge): savings at 1.15x (1.25x write -> 0.1x read);")
+    print("      premium charged only on writes that survive under 1h (mid-bucket rebuild tok excluded).")
+    nets = {}          # first-order (original)
+    corrected_nets = {}
     for k in KINDS:
-        net = buckets[k]["mid"]["usd"] - extra_cost_if_all_1h[k]
-        nets[k] = net
+        fo_net = buckets[k]["mid"]["usd"] - extra_cost_if_all_1h[k]
+        nets[k] = fo_net
+        corr_switch = extra_cost_if_all_1h[k] - mid_premium_offset[k]
+        corr_net = corrected_savings[k] - corr_switch
+        corrected_nets[k] = corr_net
+        print(f"  {k}:")
         print(
-            f"  {k}: addressable_savings=${buckets[k]['mid']['usd']:.2f}  "
-            f"switch_cost=${extra_cost_if_all_1h[k]:.2f}  NET=${net:.2f}"
+            f"    First-order (original): addressable_savings=${buckets[k]['mid']['usd']:.2f}  "
+            f"switch_cost=${extra_cost_if_all_1h[k]:.2f}  NET=${fo_net:.2f}"
+        )
+        print(
+            f"    Corrected            : savings=${corrected_savings[k]:.2f}  "
+            f"switch_cost=${corr_switch:.2f} (premium base less ${mid_premium_offset[k]:.2f} mid-rebuild)  "
+            f"NET=${corr_net:.2f}"
         )
     print()
 
-    print("=== 5) RECOMMENDATION per kind ===")
+    print("=== 5) RECOMMENDATION per kind (based on CORRECTED net) ===")
     for k in KINDS:
         note = ""
         if k != "main":
             note = "  (diagnostic only -- TTL is hardcoded, not user-configurable)"
-        verdict = "SWITCH TO 1H" if nets[k] > 0 else "KEEP 5M"
-        print(f"  {k}: {verdict} (net=${nets[k]:.2f}){note}")
+        verdict = "SWITCH TO 1H" if corrected_nets[k] > 0 else "KEEP 5M"
+        print(f"  {k}: {verdict} (corrected net=${corrected_nets[k]:.2f}; first-order net=${nets[k]:.2f}){note}")
     print()
 
     print("=== SUBAGENT gap_seconds DISTRIBUTION (shows how short-lived subagents are) ===")
