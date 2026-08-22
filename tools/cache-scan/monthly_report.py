@@ -10,11 +10,12 @@ For each YYYY-MM (by turn timestamp), computes:
                + cache_creation_5m*CACHE_WRITE_5M_MULT*base/1e6
                + cache_creation_1h*CACHE_WRITE_1H_MULT*base/1e6
   cache_read_$ = cache_read_input_tokens*CACHE_READ_MULTIPLIER*base/1e6
-  total_$      = uncached_$ + cache_read_$
+  output_$     = output_tokens*out_rate/1e6   (output billed at ~5x input)
+  total_$      = uncached_$ + cache_read_$ + output_$   (true billable spend)
   recoverable_$ (GROSS) = for rows where cache_miss_after_gap is true:
       (input_tokens + cache_creation_input_tokens) * base/1e6 * 0.9
       else 0
-  rec%         = recoverable_$ / total_$
+  rec%         = recoverable_$ / total_$   (denominator is the new all-in total_$)
 
 recoverable_$ is a GROSS figure: the dollar value of cold-rebuild tokens
 that a warm cache would have avoided, BEFORE subtracting the cost of the
@@ -54,6 +55,18 @@ BASE_RATES = {
 }
 DEFAULT_BASE_RATE = 5.0  # applied to unknown models; counted and reported
 
+# Output-token rates ($/1M). Output is billed at ~5x the input base rate.
+# Keyed the same way as BASE_RATES / base_rate() so pricing stays in sync.
+OUTPUT_RATES = {
+    "opus": 25.0,
+    "opus5": 25.0,
+    "fable5": 50.0,
+    "sonnet": 15.0,
+    "sonnet5": 15.0,
+    "haiku": 5.0,
+}
+DEFAULT_OUTPUT_RATE = 25.0  # unknown models -> default output rate
+
 KINDS = ("main", "subagent", "workflow_subagent")
 
 
@@ -69,6 +82,21 @@ def base_rate(model: Optional[str], unknown_counter: collections.Counter) -> flo
         return BASE_RATES["haiku"]
     unknown_counter[model] += 1
     return DEFAULT_BASE_RATE
+
+
+def output_rate(model: Optional[str]) -> float:
+    # Mirrors base_rate()'s model-name matching exactly, so the output rate
+    # tracks the same model bucket as the input base rate.
+    m = (model or "").lower()
+    if "fable5" in m or "fable" in m:
+        return OUTPUT_RATES["fable5"]
+    if "opus" in m:
+        return OUTPUT_RATES["opus"]
+    if "sonnet" in m:
+        return OUTPUT_RATES["sonnet"]
+    if "haiku" in m:
+        return OUTPUT_RATES["haiku"]
+    return DEFAULT_OUTPUT_RATE
 
 
 def load_rows(path: Path):
@@ -93,7 +121,7 @@ def kind_of(row: dict) -> str:
 
 
 def new_bucket() -> dict:
-    return {"uncached": 0.0, "read": 0.0, "recoverable": 0.0}
+    return {"uncached": 0.0, "read": 0.0, "output": 0.0, "recoverable": 0.0}
 
 
 def month_end_day(month: str) -> int:
@@ -103,12 +131,14 @@ def month_end_day(month: str) -> int:
 
 def accumulate(row: dict, bucket: dict, unknown_counter: collections.Counter) -> None:
     base = base_rate(row.get("model"), unknown_counter)
+    out_rate = output_rate(row.get("model"))
 
     input_tokens = row.get("input_tokens") or 0
     cache_read = row.get("cache_read_input_tokens") or 0
     c5m = row.get("cache_creation_5m") or 0
     c1h = row.get("cache_creation_1h") or 0
     ccreate = row.get("cache_creation_input_tokens") or 0
+    output_tokens = row.get("output_tokens") or 0
 
     uncached = (
         input_tokens * base / 1e6
@@ -116,6 +146,9 @@ def accumulate(row: dict, bucket: dict, unknown_counter: collections.Counter) ->
         + c1h * CACHE_WRITE_1H_MULT * base / 1e6
     )
     cache_read_dollar = cache_read * CACHE_READ_MULTIPLIER * base / 1e6
+    # Output cost is now included so total_$ reflects real billable spend
+    # (output tokens are billed at ~5x the input rate; see OUTPUT_RATES).
+    output_dollar = output_tokens * out_rate / 1e6
 
     recoverable = 0.0
     if row.get("cache_miss_after_gap") is True:
@@ -123,30 +156,36 @@ def accumulate(row: dict, bucket: dict, unknown_counter: collections.Counter) ->
 
     bucket["uncached"] += uncached
     bucket["read"] += cache_read_dollar
+    bucket["output"] += output_dollar
     bucket["recoverable"] += recoverable
 
 
 def print_table(title: str, rows_by_key, key_order, total_label="TOTAL", indent=""):
     print(f"{indent}{title}")
-    header = f"{indent}{'Month':10} {'Uncached$':>12} {'CacheRead$':>12} {'Total$':>12} {'Recoverable$':>14} {'Rec%':>7}"
+    header = (
+        f"{indent}{'Month':10} {'Uncached$':>12} {'CacheRead$':>12} {'Output$':>12} "
+        f"{'Total$':>12} {'Recoverable$':>14} {'Rec%':>7}"
+    )
     print(header)
     tot = new_bucket()
     for k in key_order:
         d = rows_by_key[k]
-        total = d["uncached"] + d["read"]
+        # total_$ is now all-in: input side + cache reads + output.
+        total = d["uncached"] + d["read"] + d["output"]
         pct = (d["recoverable"] / total * 100) if total else 0.0
         print(
-            f"{indent}{k:10} {d['uncached']:12.2f} {d['read']:12.2f} {total:12.2f} "
-            f"{d['recoverable']:14.2f} {pct:6.2f}%"
+            f"{indent}{k:10} {d['uncached']:12.2f} {d['read']:12.2f} {d['output']:12.2f} "
+            f"{total:12.2f} {d['recoverable']:14.2f} {pct:6.2f}%"
         )
         tot["uncached"] += d["uncached"]
         tot["read"] += d["read"]
+        tot["output"] += d["output"]
         tot["recoverable"] += d["recoverable"]
-    total_all = tot["uncached"] + tot["read"]
+    total_all = tot["uncached"] + tot["read"] + tot["output"]
     pct = (tot["recoverable"] / total_all * 100) if total_all else 0.0
     print(
-        f"{indent}{total_label:10} {tot['uncached']:12.2f} {tot['read']:12.2f} {total_all:12.2f} "
-        f"{tot['recoverable']:14.2f} {pct:6.2f}%"
+        f"{indent}{total_label:10} {tot['uncached']:12.2f} {tot['read']:12.2f} {tot['output']:12.2f} "
+        f"{total_all:12.2f} {tot['recoverable']:14.2f} {pct:6.2f}%"
     )
     print()
 
@@ -215,7 +254,8 @@ def main(argv: Optional[list] = None) -> int:
     print("recoverable_$ is GROSS: dollar value of cache_miss_after_gap rebuild")
     print("tokens, BEFORE subtracting keep-warm ping overhead. For a NET")
     print("(post-warming-cost) per-session projection, use calibrate.py.")
-    print(f"Pricing: opus/opus5=$5 fable5=$10 sonnet/sonnet5=$3 haiku=$1 per Mtok;")
+    print(f"Pricing (input): opus/opus5=$5 fable5=$10 sonnet/sonnet5=$3 haiku=$1 per Mtok;")
+    print(f"Pricing (output): opus/opus5=$25 fable5=$50 sonnet/sonnet5=$15 haiku=$5 per Mtok;")
     print(f"cache_read={CACHE_READ_MULTIPLIER}x write_5m={CACHE_WRITE_5M_MULT}x write_1h={CACHE_WRITE_1H_MULT}x")
     if unknown_counter:
         total_unknown = sum(unknown_counter.values())
@@ -249,7 +289,8 @@ def main(argv: Optional[list] = None) -> int:
     if "unknown" in months:
         d = months["unknown"]
         print(f"Rows with unparseable/missing timestamp (excluded from table above): "
-              f"uncached=${d['uncached']:.2f} read=${d['read']:.2f} recoverable=${d['recoverable']:.2f}")
+              f"uncached=${d['uncached']:.2f} read=${d['read']:.2f} output=${d['output']:.2f} "
+              f"recoverable=${d['recoverable']:.2f}")
         print()
 
     if args.by_kind:
