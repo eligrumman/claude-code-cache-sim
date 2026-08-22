@@ -8,19 +8,56 @@ dependencies. Runs anywhere Python 3.9+ is installed.
 
 ## What it does
 
-Claude Code writes one JSONL file per session under
-`~/.claude/projects/<project-slug>/<session-id>.jsonl`. Each line is a
-JSON record; assistant turns carry token usage under `message.usage`.
+Claude Code writes JSONL transcripts under `~/.claude/projects/` in
+three shapes, all of which `cache_scan.py` discovers **recursively**
+(`Path(projects_dir).rglob("*.jsonl")`, scoped strictly to the projects
+dir — it does not broaden to `~/.claude` at large, so it never pulls in
+`history.jsonl`, `jobs/**/timeline.jsonl`, plugin logs, etc.):
 
-`cache_scan.py` walks every session file, pulls out each assistant
-turn's usage numbers, sorts turns within a session by timestamp,
-computes the gap since the previous turn, and flags turns where a cache
-write happened after the active TTL had already expired with no cache
-read (`cache_miss_after_gap`) — i.e. a cold rebuild a warm-keeper would
-have avoided.
+- `<slug>/<session>.jsonl` — a main session transcript
+- `<slug>/<session>/subagents/<agent>.jsonl` — a subagent transcript
+- `<slug>/<session>/subagents/workflows/<wf>/<agent>.jsonl` — a nested
+  workflow-subagent transcript
+
+Each line is a JSON record; assistant turns carry token usage under
+`message.usage`.
+
+`cache_scan.py` walks every discovered file, pulls out each assistant
+turn's usage numbers, **deduplicates cumulative streaming usage lines**
+(see below), sorts turns within a session by timestamp, computes the
+gap since the previous turn, and flags turns where a cache write
+happened after the active TTL had already expired with no cache read
+(`cache_miss_after_gap`) — i.e. a cold rebuild a warm-keeper would have
+avoided.
 
 It never reads message/prompt/tool-output TEXT. Only numeric usage
 fields, timestamps, model names, and ids are touched or emitted.
+
+### requestId dedup (streaming cumulative usage)
+
+Claude Code emits cumulative streaming usage chunks: the same assistant
+turn can appear on multiple JSONL lines, each carrying a running-total
+usage snapshot rather than a delta. Naively summing every line
+double-counts tokens. `cache_scan.py` groups lines by top-level
+`requestId` (falling back to `message.id` when `requestId` is absent)
+and takes the **max** of each usage field across the group — the max is
+the final cumulative total for that turn — emitting exactly one row per
+requestId/turn. Records with neither `requestId` nor `message.id` are
+kept as their own undeduped row (matches ccusage's fallback). This
+mirrors the dedup approach used by ccusage and token-optimizer. On a
+real sample session file on this machine, this reduced 3,292 raw
+assistant-usage lines to 1,649 unique requestIds/turns — i.e. the raw
+data really does double-count roughly 2x without this dedup.
+
+### is_subagent / transcript_kind classification
+
+Like ccusage, token-optimizer, and Total Recall, `cache_scan.py`
+classifies transcripts by **file path**, not the `isSidechain` field
+(all three mature tools ignore `isSidechain` as unreliable). A file is
+classified `is_subagent=True` when its path contains a `subagents`
+segment or its filename stem starts with `agent-`; `transcript_kind` is
+`"main"`, `"subagent"`, or `"workflow_subagent"` (path contains
+`subagents/workflows`).
 
 ## Running it
 
@@ -50,7 +87,7 @@ with any Python 3.9+ (`python3 cache_scan.py ...`).
 | `--since DAYS` | Only scan `.jsonl` files modified in the last N days (by file mtime). |
 | `--out PATH` | Write one JSON object per turn (JSONL) to PATH. |
 | `--csv PATH` | Write the same rows as CSV to PATH. |
-| `--summary` | Print per-session (top 20 by cache-creation volume) and grand totals to stdout. Runs by default if neither `--out` nor `--csv` is given. |
+| `--summary` | Print per-session (top 20 by cache-creation volume), grand totals, and a main-vs-subagent-vs-workflow_subagent breakdown to stdout. Runs by default if neither `--out` nor `--csv` is given. |
 
 ## Output columns
 
@@ -76,6 +113,8 @@ One row per assistant turn:
 | `gap_seconds` | Seconds since the previous assistant turn in the same session; `null`/empty for the first turn. |
 | `active_ttl_seconds` | TTL (in seconds) inferred as active for this turn's cache write (3600 for 1h-bucket writes, 300 for 5m-bucket writes; defaults to 300 when neither bucket got tokens). |
 | `cache_miss_after_gap` | `true` when `gap_seconds` exceeded `active_ttl_seconds` AND `cache_read_input_tokens == 0` AND `cache_creation_input_tokens` exceeded the 5000-token noise floor — i.e. a full cold rebuild that a warm cache would have avoided. |
+| `is_subagent` | `true` when the source file's path contains a `subagents` segment, or the filename stem starts with `agent-`. Classified by path, not `isSidechain`. |
+| `transcript_kind` | `"main"`, `"subagent"`, or `"workflow_subagent"` (path contains `subagents/workflows`). |
 
 ## Confirmed schema (verified against real transcript files, 2026-08-22)
 

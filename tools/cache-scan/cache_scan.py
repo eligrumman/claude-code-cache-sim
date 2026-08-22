@@ -97,7 +97,26 @@ OUTPUT_FIELDS = [
     "gap_seconds",
     "active_ttl_seconds",
     "cache_miss_after_gap",
+    "is_subagent",
+    "transcript_kind",
 ]
+
+
+def classify_transcript(path: Path) -> tuple[bool, str]:
+    """Classify a transcript file by its PATH (not isSidechain — ccusage,
+    token-optimizer, and Total Recall all ignore isSidechain since it is
+    unreliable). True/"workflow_subagent" when the path contains a
+    "subagents/workflows" segment, True/"subagent" when it contains a
+    "subagents" segment or the filename stem starts with "agent-",
+    otherwise False/"main"."""
+    parts = path.parts
+    if "subagents" in parts:
+        if "workflows" in parts:
+            return True, "workflow_subagent"
+        return True, "subagent"
+    if path.stem.startswith("agent-"):
+        return True, "subagent"
+    return False, "main"
 
 
 # --- parsing --------------------------------------------------------------
@@ -134,8 +153,22 @@ def iter_jsonl_records(path: Path) -> Iterator[dict]:
 
 def extract_assistant_turns(path: Path) -> list[dict]:
     """Extract raw assistant-turn records (numeric/id fields only) from
-    one session file, in timestamp order."""
-    raw = []
+    one session file, in timestamp order.
+
+    Claude Code emits cumulative streaming usage chunks: the same
+    assistant turn (identified by requestId, falling back to
+    message.id) can appear on several JSONL lines, each carrying a
+    running-total usage snapshot. Summing every line would double- (or
+    N-)count tokens for that turn. Instead we group lines by
+    requestId/message.id and take the MAX of each usage field across
+    the group -- the max is the final cumulative total for that turn.
+    This mirrors the dedup approach used by ccusage and
+    token-optimizer. Records with neither requestId nor message.id are
+    kept as their own row, undeduped (same fallback ccusage uses).
+    """
+    groups: dict[Any, dict] = {}
+    ungrouped: list[dict] = []
+
     for rec in iter_jsonl_records(path):
         if rec.get("type") != "assistant":
             continue
@@ -150,23 +183,55 @@ def extract_assistant_turns(path: Path) -> list[dict]:
         ts_raw = rec.get("timestamp")
         ts_parsed = parse_timestamp(ts_raw)
 
-        raw.append(
-            {
-                "session_id": rec.get("sessionId"),
-                "uuid": rec.get("uuid"),
-                "parent_uuid": rec.get("parentUuid"),
-                "request_id": rec.get("requestId"),
-                "timestamp": ts_raw,
-                "_ts_parsed": ts_parsed,
-                "model": message.get("model"),
-                "input_tokens": usage.get("input_tokens", 0) or 0,
-                "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0) or 0,
-                "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0) or 0,
-                "cache_creation_1h": cache_creation.get("ephemeral_1h_input_tokens", 0) or 0,
-                "cache_creation_5m": cache_creation.get("ephemeral_5m_input_tokens", 0) or 0,
-                "output_tokens": usage.get("output_tokens", 0) or 0,
-            }
-        )
+        key = rec.get("requestId") or message.get("id")
+
+        entry = {
+            "session_id": rec.get("sessionId"),
+            "uuid": rec.get("uuid"),
+            "parent_uuid": rec.get("parentUuid"),
+            "request_id": rec.get("requestId"),
+            "timestamp": ts_raw,
+            "_ts_parsed": ts_parsed,
+            "model": message.get("model"),
+            "input_tokens": usage.get("input_tokens", 0) or 0,
+            "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0) or 0,
+            "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0) or 0,
+            "cache_creation_1h": cache_creation.get("ephemeral_1h_input_tokens", 0) or 0,
+            "cache_creation_5m": cache_creation.get("ephemeral_5m_input_tokens", 0) or 0,
+            "output_tokens": usage.get("output_tokens", 0) or 0,
+        }
+
+        if key is None:
+            ungrouped.append(entry)
+            continue
+
+        existing = groups.get(key)
+        if existing is None:
+            groups[key] = entry
+            continue
+
+        # Later cumulative chunk for the same turn: keep the max of
+        # each usage field, and prefer the latest timestamp/uuid seen
+        # (they track the running snapshot).
+        for field in (
+            "input_tokens",
+            "cache_read_input_tokens",
+            "cache_creation_input_tokens",
+            "cache_creation_1h",
+            "cache_creation_5m",
+            "output_tokens",
+        ):
+            existing[field] = max(existing[field], entry[field])
+        if entry["_ts_parsed"] is not None and (
+            existing["_ts_parsed"] is None or entry["_ts_parsed"] >= existing["_ts_parsed"]
+        ):
+            existing["timestamp"] = entry["timestamp"]
+            existing["_ts_parsed"] = entry["_ts_parsed"]
+            existing["uuid"] = entry["uuid"]
+            existing["parent_uuid"] = entry["parent_uuid"]
+            existing["model"] = entry["model"] or existing["model"]
+
+    raw = list(groups.values()) + ungrouped
 
     # Sort by parsed timestamp (None sorts first via fallback ordinal),
     # preserving original file order as a tiebreak/fallback.
@@ -175,6 +240,7 @@ def extract_assistant_turns(path: Path) -> list[dict]:
 
 
 def derive_rows(path: Path, project_slug: str, raw_turns: list[dict]) -> list[dict]:
+    is_subagent, transcript_kind = classify_transcript(path)
     rows = []
     prev_ts: Optional[datetime] = None
     for idx, t in enumerate(raw_turns):
@@ -226,6 +292,8 @@ def derive_rows(path: Path, project_slug: str, raw_turns: list[dict]) -> list[di
                 "gap_seconds": gap_seconds,
                 "active_ttl_seconds": active_ttl,
                 "cache_miss_after_gap": cache_miss_after_gap,
+                "is_subagent": is_subagent,
+                "transcript_kind": transcript_kind,
             }
         )
         if ts_parsed is not None:
@@ -244,19 +312,25 @@ def find_session_files(projects_dir: Path, since_days: Optional[int]) -> list[Pa
     if since_days is not None:
         cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
 
+    # Recursive discovery, scoped strictly to projects_dir, to catch all
+    # three transcript shapes:
+    #   <slug>/<session>.jsonl                                  (main)
+    #   <slug>/<session>/subagents/<agent>.jsonl                (subagent)
+    #   <slug>/<session>/subagents/workflows/<wf>/<agent>.jsonl (workflow subagent)
+    # This intentionally does NOT broaden to ~/.claude at large (that
+    # would wrongly pull in history.jsonl, jobs/**/timeline.jsonl,
+    # plugin logs, etc.).
     files: list[Path] = []
-    for project_dir in sorted(projects_dir.iterdir()):
-        if not project_dir.is_dir():
-            continue
-        for jsonl_path in sorted(project_dir.glob("*.jsonl")):
-            if cutoff is not None:
-                try:
-                    mtime = datetime.fromtimestamp(jsonl_path.stat().st_mtime, tz=timezone.utc)
-                except OSError:
-                    continue
-                if mtime < cutoff:
-                    continue
-            files.append(jsonl_path)
+    for jsonl_path in projects_dir.rglob("*.jsonl"):
+        if cutoff is not None:
+            try:
+                mtime = datetime.fromtimestamp(jsonl_path.stat().st_mtime, tz=timezone.utc)
+            except OSError:
+                continue
+            if mtime < cutoff:
+                continue
+        files.append(jsonl_path)
+    files.sort()
     return files
 
 
@@ -334,6 +408,33 @@ def print_summary(rows: list[dict]) -> None:
     print(f"cache_miss_after_gap events:       {grand['cache_miss_after_gap_count']}")
     print(f"cache_miss_after_gap tokens rebuilt:{grand['cache_miss_after_gap_tokens_rebuilt']}")
 
+    # --- breakdown by transcript kind (main / subagent / workflow_subagent) ---
+    by_kind: dict[str, list[dict]] = {}
+    for row in rows:
+        by_kind.setdefault(row.get("transcript_kind") or "main", []).append(row)
+
+    print()
+    print("=== Breakdown by transcript kind (main vs subagent) ===")
+    for kind in ("main", "subagent", "workflow_subagent"):
+        kind_rows = by_kind.get(kind, [])
+        if not kind_rows and kind != "main":
+            continue
+        t = totals(kind_rows)
+        print(
+            f"- {kind}: turns={t['turns']} input={t['input_tokens']} "
+            f"cache_read={t['cache_read_input_tokens']} "
+            f"cache_creation={t['cache_creation_input_tokens']} "
+            f"(1h={t['cache_creation_1h']} 5m={t['cache_creation_5m']}) "
+            f"output={t['output_tokens']} "
+            f"cache_miss_after_gap={t['cache_miss_after_gap_count']} "
+            f"(tokens_rebuilt={t['cache_miss_after_gap_tokens_rebuilt']})"
+        )
+
+    main_turns = len(by_kind.get("main", []))
+    subagent_turns = grand["turns"] - main_turns
+    print(f"main turns:                       {main_turns}")
+    print(f"subagent turns (all kinds):       {subagent_turns}")
+
 
 # --- CLI ----------------------------------------------------------------
 
@@ -380,7 +481,10 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     all_rows: list[dict] = []
     for path in files:
-        project_slug = path.parent.name
+        try:
+            project_slug = path.relative_to(projects_dir).parts[0]
+        except ValueError:
+            project_slug = path.parent.name
         raw_turns = extract_assistant_turns(path)
         rows = derive_rows(path, project_slug, raw_turns)
         all_rows.extend(rows)
