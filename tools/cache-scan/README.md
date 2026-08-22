@@ -273,3 +273,184 @@ useful signal about historical gap patterns and cache-rebuild waste, not
 a claim that ~2.7 billion tokens are recoverable going forward. For an
 actionable "should I warm this right now" view, filter the `--json`
 output to `active: true`.
+
+# return_patterns.py
+
+Standalone, read-only Python 3 CLI that answers: "at what times of the
+week is the user likely to RETURN to and continue a session, broken down
+per project?" This is the temporal-return-pattern piece of a cache
+keep-warm analyzer — it tells a warmer *when* to bother pinging a
+project, as opposed to `calibrate.py`, which tells it *whether* warming
+a given session is worth the tokens at all. Standard library only, no
+pip dependencies, clean-room (does not share code with `cache_scan.py`
+beyond both reading the same JSONL row schema).
+
+## What it does
+
+It reads the per-turn JSONL produced by `cache_scan.py` and, per
+`project_slug`, distinguishes two kinds of turn:
+
+- a **continuation** turn — `gap_seconds` is small, the session was
+  already in active use;
+- a **RETURN event** — `gap_seconds` is larger than
+  `--return-threshold-min` (default 30 minutes) — the user came back to
+  the project after being away. These are the events that predict future
+  returns and are what a warmer should care about; continuation turns
+  are not informative about "when will they come back."
+
+For each project it computes:
+
+1. A 7×24 (day-of-week × hour-of-day) heatmap of **all** turns, in local
+   time.
+2. A separate 7×24 heatmap of **RETURN events only**.
+3. The top N `(day, hour)` windows ranked by return-event frequency,
+   e.g. `Sat 07:00-08:00`.
+4. Median and p75 gap length of return events, the total return-event
+   count, and recency (hours since the project's last turn, so you know
+   if it's still active).
+5. A **concentration/predictability score**: the fraction of a
+   project's return-event mass held by its busiest 5 heatmap cells (out
+   of 168), against a uniform baseline of 5/168 ≈ 3%. High concentration
+   (roughly ≥50%) means returns cluster into a few predictable windows —
+   a good keep-warm candidate. Low concentration (most real projects, in
+   practice) means returns are spread across many hours — pinging on a
+   schedule would frequently miss, or would need to run near-continuously
+   to catch the user, which defeats the point of warming.
+
+### Timezone handling
+
+Raw timestamps in the scan JSONL are UTC. Weekly day/hour patterns are
+meaningless in UTC unless the user is physically in UTC, so every
+timestamp is converted to a **local** timezone before bucketing. The
+local zone defaults to the machine's system local timezone
+(`datetime.now().astimezone().tzinfo`) and is overridable with `--tz
+<IANA name>` (resolved via the stdlib `zoneinfo` module). The resolved
+zone is always printed in the report header (e.g. `IDT`) so results are
+never silently mis-labeled.
+
+## CLI
+
+```bash
+python3 return_patterns.py --in /path/to/cache_scan_data.jsonl \
+    --return-threshold-min 30 \
+    --tz Asia/Jerusalem \
+    --top-projects 15 --top-windows 5 \
+    --json /tmp/return_patterns_out.jsonl
+```
+
+- `--in PATH` (required) — scan JSONL from `cache_scan.py`.
+- `--return-threshold-min N` — gap minutes above which a turn counts as
+  a RETURN (default 30).
+- `--tz NAME` — override local timezone (default: system local tz).
+- `--top-projects N` — only show the N most-active projects by turn
+  volume (default 15).
+- `--top-windows N` — return windows to list per project (default 5).
+- `--json OUT` — write one per-project pattern object per line.
+- Default (no `--json`): prints a readable per-project report — return
+  windows, gap stats, recency, predictability, and a compact ASCII
+  heatmap (rows = Mon..Sun, cols = hour 0-23 local, density chars
+  ` .:-=+*#%@` low→high) for both all-activity and return-events-only.
+
+## Honesty / limitations
+
+- A historical return-time pattern is a **weak predictor** of any single
+  future return — it describes a tendency across sampled history, not a
+  scheduled commitment. Use it to bias warm-ping timing
+  probabilistically, never as a guarantee.
+- Small-sample projects (few return events) produce noisy heatmaps and
+  unstable top-windows/concentration numbers; the tool does not enforce
+  a minimum count, but always reports the return-event count so low
+  confidence is visible, never hidden.
+- Sessions that span timezones (the user traveling) are still bucketed
+  under whatever local offset applies to that instant in the resolved
+  zone — this tool has no way to know the user was physically elsewhere
+  at the time.
+- The system-local-tz default is a snapshot at run time; it does not
+  retroactively account for a user having lived in a different zone
+  earlier in the scanned history.
+
+## Real output (2026-08-22 run against this machine's `~/.claude/projects`)
+
+184,232 turn-rows scanned. Local timezone resolved as `IDT`. Top 5
+projects by turn volume, return-threshold = 30 minutes:
+
+```
+PROJECT: -Users-user-investor
+  total turns: 111041
+  return events (gap > threshold): 1461
+  return gap length: median=1.0h p75=3.0h
+  last turn: 19.8h ago (ACTIVE)
+  predictability: DIFFUSE (unpredictable — warming likely wastes pings); top-5 cells hold 6% of returns (uniform baseline 3%)
+  top 5 likely-return windows:
+    - Fri 12:00-13:00  (20 return event(s))
+    - Sat 07:00-08:00  (20 return event(s))
+    - Sun 03:00-04:00  (17 return event(s))
+    - Sat 08:00-09:00  (16 return event(s))
+    - Mon 03:00-04:00  (16 return event(s))
+
+PROJECT: -Users-user-agents-total-recall-core
+  total turns: 15432
+  return events (gap > threshold): 149
+  return gap length: median=3.3h p75=8.7h
+  last turn: 302.0h ago (inactive)
+  predictability: DIFFUSE (unpredictable — warming likely wastes pings); top-5 cells hold 12% of returns (uniform baseline 3%)
+  top 5 likely-return windows:
+    - Sat 21:00-22:00  (5 return event(s))
+    - Sun 18:00-19:00  (4 return event(s))
+    - Sat 09:00-10:00  (3 return event(s))
+    - Wed 15:00-16:00  (3 return event(s))
+    - Mon 21:00-22:00  (3 return event(s))
+
+PROJECT: -Users-user-Library-CloudStorage-GoogleDrive-eligro91-gmail-com-My-Drive-life-os
+  total turns: 15291
+  return events (gap > threshold): 263
+  return gap length: median=1.4h p75=9.7h
+  last turn: 2112.7h ago (inactive)
+  predictability: DIFFUSE (unpredictable — warming likely wastes pings); top-5 cells hold 10% of returns (uniform baseline 3%)
+  top 5 likely-return windows:
+    - Sun 17:00-18:00  (6 return event(s))
+    - Fri 08:00-09:00  (6 return event(s))
+    - Sun 18:00-19:00  (6 return event(s))
+    - Sun 11:00-12:00  (4 return event(s))
+    - Thu 17:00-18:00  (4 return event(s))
+
+PROJECT: -Users-user-agents-total-recall
+  total turns: 9316
+  return events (gap > threshold): 73
+  return gap length: median=2.1h p75=5.8h
+  last turn: 1925.0h ago (inactive)
+  predictability: DIFFUSE (unpredictable — warming likely wastes pings); top-5 cells hold 15% of returns (uniform baseline 3%)
+  top 5 likely-return windows:
+    - Sat 15:00-16:00  (3 return event(s))
+    - Sat 00:00-01:00  (2 return event(s))
+    - Sat 09:00-10:00  (2 return event(s))
+    - Tue 14:00-15:00  (2 return event(s))
+    - Wed 08:00-09:00  (2 return event(s))
+
+PROJECT: -Users-user-agents-total-recall.bak
+  total turns: 9169
+  return events (gap > threshold): 69
+  return gap length: median=2.1h p75=5.6h
+  last turn: 1997.7h ago (inactive)
+  predictability: DIFFUSE (unpredictable — warming likely wastes pings); top-5 cells hold 16% of returns (uniform baseline 3%)
+  top 5 likely-return windows:
+    - Sat 15:00-16:00  (3 return event(s))
+    - Sat 00:00-01:00  (2 return event(s))
+    - Sat 09:00-10:00  (2 return event(s))
+    - Fri 01:00-02:00  (2 return event(s))
+    - Tue 09:00-10:00  (2 return event(s))
+```
+
+Honest read of these numbers: even the busiest project (`investor`,
+1461 return events) is **DIFFUSE** — its top 5 hourly windows only
+account for 6% of returns, barely above the 3% uniform baseline. None
+of the top 5 projects here show a concentrated, schedule-like return
+pattern. That is itself the answer to "have you seen periods in the
+week when I'm likely to be back, per project": for this user's real
+history, return timing is close to uniformly spread across the week
+(with a mild lean toward Friday/Saturday/Sunday for a couple of
+projects) rather than clustered into a few strong daily windows. A
+warmer built on this data should treat "day-of-week x hour" scheduling
+as a weak tiebreaker at most, not a primary keep-warm strategy — recency
+(is the project active in the last day) is a much stronger signal here
+than time-of-week.
