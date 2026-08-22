@@ -313,6 +313,116 @@ a claim that ~2.7 billion tokens are recoverable going forward. For an
 actionable "should I warm this right now" view, filter the `--json`
 output to `active: true`.
 
+# monthly_report.py
+
+Standalone, read-only Python 3 CLI. Produces a per-calendar-month cost
+table from `cache_scan.py`'s JSONL output: `Month | Uncached$ | CacheRead$
+| Total$ | Recoverable$ | Rec%`. Same pricing constants as
+`calibrate.py`: base rates opus/opus5=$5, fable5=$10, sonnet/sonnet5=$3,
+haiku=$1/Mtok (unknown models default to $5/Mtok, with a printed count of
+how many rows hit that default); `cache_read=0.1x`, `write_5m=1.25x`,
+`write_1h=2.0x`.
+
+`Recoverable$` is **GROSS**: the dollar value of `cache_miss_after_gap`
+cold-rebuild tokens, before subtracting the cost of the keep-warm pings
+that would have actually been needed to hold the cache open. It is not a
+net savings number -- for a NET (post-warming-cost) per-session
+projection, use `calibrate.py`.
+
+Months print chronologically plus a `TOTAL` row. The last month is
+flagged `PARTIAL` (suffixed `*`) if its last observed day doesn't reach
+month-end.
+
+## CLI
+
+```bash
+python3 monthly_report.py --in cache_scan_data.jsonl
+python3 monthly_report.py --in cache_scan_data.jsonl --by-kind
+```
+
+- `in_path` / `--in PATH` -- scan JSONL from `cache_scan.py` (positional
+  or `--in`; pass `-` for stdin).
+- `--by-kind` -- additionally split each month by `transcript_kind`
+  (`main` / `subagent` / `workflow_subagent`), same columns, nested
+  under each month.
+
+# ttl_whatif.py
+
+Standalone, read-only Python 3 CLI. Reproduces the 5m-vs-1h prompt-cache
+TTL what-if analysis from `cache_scan.py` JSONL output, split by
+`transcript_kind` (`main` / `subagent` / `workflow_subagent`).
+
+## The TTL control reality (read before acting on these numbers)
+
+- The **main** conversation transcript uses the **1-hour** cache TTL by
+  default on a Max subscription. `ENABLE_PROMPT_CACHING_1H=1` /
+  `FORCE_PROMPT_CACHING_5M=1` can override this. **Actionable.**
+- **Subagent** and **workflow_subagent** transcripts are **hardcoded to
+  the 5-minute TTL** by Claude Code itself -- this is **not**
+  user-configurable, no env var or setting changes it. The tool's
+  subagent numbers are therefore **diagnostic only**: they show whether
+  the fixed policy is costing you, not something you can act on.
+
+## What it computes, per kind
+
+1. Write mix: `cache_creation_1h` vs `cache_creation_5m` token share.
+2. Cold-rebuild waste (`cache_miss_after_gap == true` rows) bucketed by
+   `gap_seconds`: `<=300s` (dead under 5m too), `300s-3600s`
+   (**addressable** -- a 1h TTL would have kept this warm), `>3600s`
+   (dead either way) -- counts, rebuilt tokens, and $ per bucket.
+3. Cost of switching all observed 5m writes to 1h writes:
+   `extra_$ = cache_creation_5m * (2.0 - 1.25) * base/1e6`.
+4. NET of switching to 1h per kind = (300s-3600s bucket $ savings) -
+   (switch cost $).
+5. A one-line recommendation per kind (`SWITCH TO 1H` / `KEEP 5M`) based
+   on the sign of NET.
+
+Also prints `gap_seconds` distribution stats (median/p75/p95/mean/max)
+for subagent rows, to make visually obvious how short-lived subagent
+sessions are.
+
+## CLI
+
+```bash
+python3 ttl_whatif.py --in cache_scan_data.jsonl
+```
+
+- `in_path` / `--in PATH` -- scan JSONL from `cache_scan.py` (positional
+  or `--in`; pass `-` for stdin).
+
+## Real output (run against this machine's data)
+
+```
+=== 4) NET of switching to 1h ( = addressable-bucket $ savings - switch cost $ ) ===
+  main: addressable_savings=$6.46  switch_cost=$10.09  NET=$-3.63
+  subagent: addressable_savings=$54.49  switch_cost=$817.31  NET=$-762.81
+  workflow_subagent: addressable_savings=$1.54  switch_cost=$81.90  NET=$-80.35
+
+=== SUBAGENT gap_seconds DISTRIBUTION (shows how short-lived subagents are) ===
+  n=99000  median=6.4s  p75=11.7s  p95=43.4s  mean=25.6s  max=129050.8s
+```
+
+Subagent NET is strongly negative and subagent median gap is ~6.4
+seconds -- consistent with subagents being extremely short-lived, which
+is exactly why the platform's hardcoded 5m TTL is already the right
+policy for them: there's essentially never enough idle time for a 1h TTL
+to pay for its higher write cost.
+
+## Office workflow
+
+On a fresh machine (e.g. the office box), the full pipeline is:
+
+```bash
+python3 tools/cache-scan/cache_scan.py --out scan.jsonl
+python3 tools/cache-scan/calibrate.py --in scan.jsonl
+python3 tools/cache-scan/monthly_report.py --in scan.jsonl --by-kind
+python3 tools/cache-scan/ttl_whatif.py --in scan.jsonl
+```
+
+All four tools are stdlib-only single files -- no install step, no pip
+dependencies, safe to copy off-machine (none of them read prompt/message
+text, only numeric usage/timing fields).
+
 # return_patterns.py
 
 Standalone, read-only Python 3 CLI that answers: "at what times of the
