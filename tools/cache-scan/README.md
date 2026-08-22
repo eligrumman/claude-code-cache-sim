@@ -454,3 +454,196 @@ warmer built on this data should treat "day-of-week x hour" scheduling
 as a weak tiebreaker at most, not a primary keep-warm strategy — recency
 (is the project active in the last day) is a much stronger signal here
 than time-of-week.
+
+# gap_patterns.py
+
+Standalone, read-only Python 3 CLI that answers the same underlying
+question as `return_patterns.py` -- "when do gaps happen, and do they turn
+into returns?" -- but **pooled globally across every project and
+session**, instead of per-project. Per-project return counts turned out
+too sparse and diffuse to see stable structure in (see the DIFFUSE
+verdicts above); pooling everything into one population is what makes a
+survival/hazard analysis possible. Standard library only, no pip
+dependencies, clean-room.
+
+## What it does
+
+Reads the `cache_scan.py` per-turn JSONL. For every session, sorts turns
+by `turn_index`/timestamp and derives two kinds of gap event:
+
+- a **realized gap** -- the interval between one turn and the next turn in
+  the same session (this is exactly `gap_seconds` from `cache_scan.py`,
+  which is already computed per-session). It "resolved" because a next
+  turn exists.
+- a **censored trailing idle** -- every session's *last* turn has no
+  following turn in the data. That open period is right-censored: we
+  know the user went idle, but not whether/when they ever came back. This
+  tool always counts these explicitly (one per session) rather than
+  dropping them -- dropping them would bias every rate toward "always
+  returns."
+
+Six pooled analyses:
+
+1. **Return survival/hazard table** -- for elapsed-time thresholds T (5m,
+   10m, 15m, 30m, 1h, 2h, 4h, 8h, 24h): of all gaps (realized + censored)
+   that reached at least T, what fraction are known-realized returns vs.
+   still-censored/unresolved, and -- for the realized ones -- the median
+   *additional* wait beyond T until the actual return.
+2. **Gap-START heatmap** (7x24, local time, pooled) -- when the user steps
+   away.
+3. **Return heatmap** (7x24, local time, pooled) -- when the user comes
+   back, plus the single busiest step-away hour vs. busiest return hour.
+4. **Gap-length histogram**, log-scale buckets from 0-2m up to 7d+, to
+   look for natural clusters (coffee break / lunch / overnight / multi-
+   day).
+5. **Abandonment by length bucket** -- realized-return counts per length
+   bucket, with the total censored count reported alongside as context
+   (censored gaps have unknown final length, so they cannot themselves be
+   placed in a length bucket).
+6. **Cross-session concurrency** -- per day, the max number of distinct
+   sessions with turns inside the same local hour; a rough project-
+   juggling signal, not proof of literal simultaneous attention.
+
+### Timezone handling
+
+Identical approach to `return_patterns.py`: UTC in the source data,
+converted to local time (system local tz by default, `--tz <IANA name>`
+override) before any day/hour bucketing. Resolved zone is always printed.
+
+## CLI
+
+```bash
+python3 gap_patterns.py --in /path/to/cache_scan_data.jsonl \
+    --return-threshold-min 30 \
+    --tz Asia/Jerusalem \
+    --json /tmp/gap_patterns_out.json
+```
+
+- `--in PATH` (required) -- scan JSONL from `cache_scan.py`.
+- `--return-threshold-min N` -- gap minutes above which a *realized* gap
+  is additionally flagged as a "RETURN event" in the summary line
+  (default 30). The survival table itself uses the full elapsed-time
+  threshold list (5m..24h), independent of this flag.
+- `--tz NAME` -- override local timezone (default: system local tz).
+- `--json OUT` -- write the full pooled result object as one JSON file
+  (survival table, histogram, abandonment table, concurrency, both
+  heatmaps).
+- Default (no `--json`): prints the full readable report -- summary
+  counts, survival/hazard table, both ASCII heatmaps, gap-length
+  histogram, abandonment-by-bucket table, concurrency summary, and a
+  plain-English "actionable read" section.
+
+## Honesty / limitations
+
+- **Right-censoring is central, not a footnote.** This is a snapshot: a
+  session whose last turn is 20 minutes before the scan is
+  indistinguishable, from the file alone, between "about to return" and
+  "abandoned." Every session's trailing idle is counted as censored
+  regardless of how recent it is -- the tool does not peek at wall-clock
+  "now" to decide it's "probably still open." Because of this, the
+  `frac_censored_of_reached` numbers for the most recent/longest
+  thresholds are an *upper bound* on true abandonment -- some of those
+  censored gaps may, in reality, resolve into returns outside this data
+  window (the hard right edge of the data is the scan time).
+- **History is a weak predictor of any one future gap.** These are
+  population tendencies across thousands of past gaps, not a promise
+  about what happens after your next coffee break.
+- Histogram/heatmap cells with <~20 events may be noise; counts are
+  always shown alongside rates so this is visible, not hidden.
+- Timezone is a present-day snapshot (same caveat as `return_patterns.py`
+  -- travel and historical zone changes are not modeled per-era).
+- Concurrency is a rough same-hour co-occurrence count across sessions,
+  not proof of literal simultaneous attention.
+- **Data-quality anomaly found on this machine's real data, worth
+  knowing about for any downstream use:** one day (2026-03-28) shows
+  ~6,100 distinct sessions each with a turn concentrated into two single
+  UTC hours (10:00 and 17:00), producing an absurd "3096 concurrent
+  sessions" reading in the concurrency table -- almost certainly a bulk
+  import/migration event that stamped many old session files with
+  similar timestamps that day, not real simultaneous usage.
+  `gap_patterns.py` flags any day with >100 same-hour concurrent sessions
+  inline in the report as a likely artifact rather than silently
+  reporting it as normal. This did not meaningfully distort the survival
+  table, gap histogram, or heatmaps (those are keyed on gap length /
+  hour-of-day, not concurrency), but it does mean analysis 6's numbers
+  should be read with that one day excluded/discounted.
+
+## Real output (2026-08-22 run against this machine's `~/.claude/projects`, pooled)
+
+184,242 turn-rows, 6,895 sessions, 177,267 realized gaps, 6,895 censored
+trailing idles. Local timezone resolved as `IDT`.
+
+```
+1) RETURN SURVIVAL / HAZARD TABLE
+      T |     n>=T |  realized>=T |  censored |  frac censored |   median add. wait |  p75 add. wait
+     5m |    23330 |        16435 |      6895 |          29.6% |                 8m |            24m
+    10m |    16627 |         9732 |      6895 |          41.5% |                13m |            20m
+    15m |    13294 |         6399 |      6895 |          51.9% |                15m |            45m
+    30m |     9508 |         2613 |      6895 |          72.5% |                51m |           3.8h
+   1.0h |     8460 |         1565 |      6895 |          81.5% |               2.2h |           8.5h
+   2.0h |     8025 |         1130 |      6895 |          85.9% |               3.3h |          11.4h
+   4.0h |     7583 |          688 |      6895 |          90.9% |               6.9h |          19.9h
+   8.0h |     7344 |          449 |      6895 |          93.9% |               9.9h |           1.1d
+   1.0d |     7060 |          165 |      6895 |          97.7% |              23.8h |           2.7d
+```
+
+```
+4) GAP-LENGTH HISTOGRAM (realized gaps only)
+         0m-2m: 154766  ##################################################
+         2m-5m:   6066  ##
+        5m-10m:   6703  ##
+       10m-15m:   3333  #
+       15m-20m:   1324
+       20m-30m:   2462  #
+       30m-45m:    658
+      45m-1.0h:    390
+     1.0h-1.5h:    312
+     1.5h-2.0h:    123
+     2.0h-3.0h:    328
+     3.0h-4.0h:    114
+     4.0h-6.0h:    161
+     6.0h-8.0h:     78
+    8.0h-12.0h:    135
+   12.0h-18.0h:     93
+    18.0h-1.0d:     56
+     1.0d-1.5d:     59
+     1.5d-2.0d:     24
+     2.0d-3.0d:     30
+     3.0d-7.0d:     34
+      7.0d-inf:     18
+```
+
+No sharp multimodal clusters ("coffee break"/"lunch"/"overnight" bumps)
+stand out from a smooth decay -- the histogram is dominated (87%) by
+sub-2-minute gaps (normal turn-taking), and everything past ~20 minutes
+decays roughly monotonically with no distinct secondary peak. Weak, noisy
+bumps sit around 2-4h and 8-12h but at n=100-300 each they are not strong
+evidence of a real "lunch" or "overnight" habit -- just the long tail of a
+skewed distribution.
+
+Gap-start and return heatmaps pooled globally both show 09:00 local as
+the single busiest hour (for both stepping away and coming back), with
+Saturday the busiest day overall -- consistent with the `investor`
+project's own top-5 windows skewing Fri/Sat/Sun in the per-project
+report above. No strong "step away evening, return next morning" rhythm
+is visible pooled across all work; the vast majority of gaps (87%,
+0-2min) are just normal turn-taking, not step-away/return cycles, so the
+day/hour heatmaps are dominated by *when the user is generally working*
+more than by any distinct return ritual.
+
+### The single clearest actionable finding
+
+**There is no clean elapsed-time cutoff where warming reliably "pays
+off," but the data does show a fast decay: by ~15 minutes idle, the
+population is already split roughly 50/50 between "about to come back
+within another ~15 minutes" and "gone, unresolved in this data." Past 30
+minutes idle, roughly 3 in 4 comparable historical gaps never resolved
+into an observed return at all** (the 72.5% censored figure at T=30m).
+Practically: warming makes the most sense in the first ~10-15 minutes of
+an idle window (where the majority of gaps that reach that point do
+still resolve, with a short median additional wait of 8-15 minutes); past
+30 minutes, most of the historical population is either abandoned or,
+if it does return, takes hours -- so continuous warming past that point
+is a poor bet. This roughly matches the existing 30-minute active-TTL
+default already used elsewhere in this tool suite, which this analysis
+is broadly consistent with rather than contradicting.
