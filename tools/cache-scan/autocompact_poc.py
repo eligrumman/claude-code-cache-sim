@@ -73,6 +73,14 @@ def eff_rate(model, prefix, premium):
         r *= 2.0
     return r
 
+def eff_rate_out(model, prefix, premium):
+    """Output rate: base rate scaled by 1.5x (not 2x) in a premium turn --
+    matches SPLIT+PREM(o1.5) in verify_against_anthropic.py."""
+    r = base_rate(model)
+    if premium and "opus" in (model or "").lower() and prefix > PREMIUM_THRESHOLD:
+        r *= 1.5
+    return r
+
 def percentile(vals, p):
     if not vals: return None
     xs = sorted(vals); n = len(xs)
@@ -184,10 +192,12 @@ def turn_spend(t, premium, default_write=WRITE_MULT_5M):
     if r == 0.0:
         return 0.0    # external / non-Anthropic model -> ccusage shows $0
     prefix = t["cache_read"] + t["cache_creation"]
-    if premium and "opus" in (t["model"] or "").lower() and prefix > PREMIUM_THRESHOLD:
-        r *= 2.0
+    is_prem = premium and "opus" in (t["model"] or "").lower() and prefix > PREMIUM_THRESHOLD
+    r_in = r * 2.0 if is_prem else r     # input/cache_read/cache_creation: 2x in premium turns
+    out_prem_o15 = 1.5 if is_prem else 1.0   # output: 1.5x (not 2x) in premium turns
     write = t["cache_creation"] * default_write
-    return (t["input"]*r + write*r + t["cache_read"]*READ_MULT*r + t["output"]*OUTPUT_MULT*r) / 1e6
+    return (t["input"]*r_in + write*r_in + t["cache_read"]*READ_MULT*r_in
+            + t["output"]*OUTPUT_MULT*r*out_prem_o15) / 1e6
 
 def detect_real_compactions(sess, drop_frac, big_prefix):
     """Points where reality actually reset context: prefix drops sharply between
@@ -220,10 +230,11 @@ def simulate_threshold(sess, T, summary_size, reset_to, base_tokens, premium,
     extrapolated = T > observed_max_prefix
     for t in sess["turns"]:
         C += t["new"]
-        r = eff_rate(t["model"], C, premium)          # premium flips at 200k
+        r = eff_rate(t["model"], C, premium)          # premium flips at 200k (input/read/write: 2x)
+        r_out = eff_rate_out(t["model"], C, premium)  # premium flips at 200k (output: 1.5x)
         read_rate   = r * READ_MULT
         write_rate  = r * WRITE_MULT_5M               # Claude Code writes 5m cache by default
-        output_rate = r * OUTPUT_MULT
+        output_rate = r_out * OUTPUT_MULT
         # per-turn intrinsic work + the read burden (the lever)
         total += (C * read_rate
                   + t["new"] * write_rate
@@ -242,8 +253,9 @@ def measured_compaction_cost(pre, post, model, premium):
     """$ cost of one REAL compaction event under our pricing:
     big read of pre-context + generate summary (post tokens) + re-cache summary."""
     r = eff_rate(model, pre, premium)
+    r_out = eff_rate_out(model, pre, premium)
     return (pre * r * READ_MULT
-            + post * r * OUTPUT_MULT
+            + post * r_out * OUTPUT_MULT
             + post * r * WRITE_MULT_5M) / 1e6
 
 # =============================================================================

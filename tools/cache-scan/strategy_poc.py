@@ -291,10 +291,12 @@ def turn_spend(t, premium, default_write=WRITE_MULT_5M):
     if r == 0.0:
         return 0.0    # external / non-Anthropic model -> ccusage shows $0
     prefix = t["cache_read"] + t["cache_creation"]
-    if premium and "opus" in (t["model"] or "").lower() and prefix > PREMIUM_THRESHOLD:
-        r *= 2.0
+    is_prem = premium and "opus" in (t["model"] or "").lower() and prefix > PREMIUM_THRESHOLD
+    r_in = r * 2.0 if is_prem else r     # input/cache_read/cache_creation: 2x in premium turns
+    out_prem_o15 = 1.5 if is_prem else 1.0   # output: 1.5x (not 2x) in premium turns
     write = t["cache_creation"] * default_write
-    return (t["input"]*r + write*r + t["cache_read"]*READ_MULT*r + t["output"]*OUTPUT_MULT*r) / 1e6
+    return (t["input"]*r_in + write*r_in + t["cache_read"]*READ_MULT*r_in
+            + t["output"]*OUTPUT_MULT*r*out_prem_o15) / 1e6
 
 # =============================================================================
 # main
