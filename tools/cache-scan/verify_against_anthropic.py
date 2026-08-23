@@ -88,8 +88,12 @@ def scan_local(projects_dir, start_ts, end_ts, stats, seen):
     def slot(nm):
         if nm not in permodel:
             permodel[nm] = {"flat": 0.0, "split": 0.0, "split_prem": 0.0,
+                            "split_prem_o15": 0.0,
                             "input": 0, "output": 0, "cache_read": 0,
-                            "cache_create_1h": 0, "cache_create_5m": 0}
+                            "cache_create_1h": 0, "cache_create_5m": 0,
+                            "turns": 0, "prem_turns": 0,
+                            "prem_delta_input": 0.0, "prem_delta_cread": 0.0,
+                            "prem_delta_ccreate": 0.0, "prem_delta_output": 0.0}
         return permodel[nm]
 
     def account(rec, msg):
@@ -127,6 +131,7 @@ def scan_local(projects_dir, start_ts, end_ts, stats, seen):
         s["cache_read"]      += cr
         s["cache_create_1h"] += e1h
         s["cache_create_5m"] += e5m
+        s["turns"] += 1
         stats["rows_counted"] += 1
 
         if r == 0.0:                          # external model -> $0 (both bases)
@@ -142,10 +147,26 @@ def scan_local(projects_dir, start_ts, end_ts, stats, seen):
         # create) exceeds 200k tokens, Anthropic doubles the base rate for that
         # turn (same premium logic as autocompact_poc.py / strategy_poc.py).
         prefix = inp + cr + cc
-        prem = 2.0 if ("opus" in (model or "").lower() and prefix > PREMIUM_THRESHOLD) else 1.0
+        is_prem = ("opus" in (model or "").lower() and prefix > PREMIUM_THRESHOLD)
+        prem = 2.0 if is_prem else 1.0
         rp = r * prem
-        s["split_prem"] += (inp * rp + (e1h * WRITE_MULT_1H + e5m * WRITE_MULT_5M) * rp
+        write_base = (e1h * WRITE_MULT_1H + e5m * WRITE_MULT_5M) * r   # 1x-base write $ (per-token rate already folds 1h/5m mult)
+        s["split_prem"] += (inp * rp + write_base * prem
                             + cr * READ_MULT * rp + out * OUTPUT_MULT * rp) / 1e6
+        # SPLIT+PREM(o1.5): identical premium logic, EXCEPT output is billed at
+        # 1.5x base instead of 2x base in a premium turn. Input/cache_read/
+        # cache_creation stay at 2x (same as split_prem above).
+        out_prem_o15 = 1.5 if is_prem else 1.0
+        s["split_prem_o15"] += (inp * rp + write_base * prem + cr * READ_MULT * rp
+                                + out * OUTPUT_MULT * r * out_prem_o15) / 1e6
+        if is_prem:
+            s["prem_turns"] += 1
+            # component deltas: extra $ that the 2x premium adds over 1x base,
+            # for this turn, per component (used by the [1b] diagnostic below).
+            s["prem_delta_input"]   += (inp * r * 2.0 - inp * r) / 1e6
+            s["prem_delta_cread"]   += (cr * READ_MULT * r * 2.0 - cr * READ_MULT * r) / 1e6
+            s["prem_delta_ccreate"] += (write_base * 2.0 - write_base) / 1e6
+            s["prem_delta_output"]  += (out * OUTPUT_MULT * r * 2.0 - out * OUTPUT_MULT * r) / 1e6
 
     if not os.path.isdir(projects_dir):
         sys.stderr.write("ERROR: projects dir not found: %s\n"
@@ -361,15 +382,16 @@ def main():
 
     # =================== [1] RECONCILIATION HEADLINE ===================
     P("\n[1] RECONCILIATION HEADLINE  (USD per model)")
-    P("    %-20s %14s %14s %14s %14s %13s"
-      % ("model", "real$ (Src1)", "SPLIT+PREM$", "SPLIT$", "FLAT$", "prem vs real"))
-    P("    " + "-" * 92)
-    t_real = t_split = t_flat = t_prem = 0.0
+    P("    %-20s %14s %14s %14s %14s %14s %13s"
+      % ("model", "real$ (Src1)", "SPLIT+PREM$", "SPLIT+PREM(o1.5)$", "SPLIT$", "FLAT$", "prem vs real"))
+    P("    " + "-" * 108)
+    t_real = t_split = t_flat = t_prem = t_prem15 = 0.0
     for nm in order:
         l = local.get(nm, {})
         sp = l.get("split", 0.0); fl = l.get("flat", 0.0); pr = l.get("split_prem", 0.0)
+        pr15 = l.get("split_prem_o15", 0.0)
         real = cost["permodel"].get(nm) if cost else None
-        t_split += sp; t_flat += fl; t_prem += pr
+        t_split += sp; t_flat += fl; t_prem += pr; t_prem15 += pr15
         real_s = money(real) if real is not None else "   (n/a)"
         if real is not None:
             t_real += real
@@ -379,12 +401,12 @@ def main():
         # skip all-zero external rows to keep the table clean
         if sp == 0 and fl == 0 and pr == 0 and (real is None or real == 0):
             continue
-        P("    %-20s %14s %14s %14s %14s %13s"
-          % (nm[:20], real_s, money(pr), money(sp), money(fl), diff))
-    P("    " + "-" * 92)
+        P("    %-20s %14s %14s %18s %14s %14s %13s"
+          % (nm[:20], real_s, money(pr), money(pr15), money(sp), money(fl), diff))
+    P("    " + "-" * 108)
     real_tot_s = money(t_real) if cost else "   (n/a)"
-    P("    %-20s %14s %14s %14s %14s %13s"
-      % ("TOTAL", real_tot_s, money(t_prem), money(t_split), money(t_flat),
+    P("    %-20s %14s %14s %18s %14s %14s %13s"
+      % ("TOTAL", real_tot_s, money(t_prem), money(t_prem15), money(t_split), money(t_flat),
          pct(t_prem, t_real) if cost else "   n/a"))
     if cost:
         # cost report may include non-token line items (code_execution, web_search,
@@ -398,6 +420,48 @@ def main():
           "the 200k long-context")
         P("          premium (opus turns whose prefix >200k billed at 2x base). "
           "SPLIT/FLAT omit that premium.")
+        P("    note: SPLIT+PREM(o1.5) is a hypothesis test -- same as SPLIT+PREM, "
+          "except OUTPUT tokens in a premium")
+        P("          turn are billed at 1.5x base instead of 2x base. Input/cache_read/"
+          "cache_creation stay at 2x in both.")
+
+    # =================== [1b] PREMIUM DIAGNOSTIC (per model) ===================
+    P("\n[1b] PREMIUM DIAGNOSTIC (per model)")
+    P("    Breaks the SPLIT+PREM delta over SPLIT into its four component deltas, so we")
+    P("    can see exactly how many dollars each component's 2x premium adds, and how much")
+    P("    the gap would shrink if OUTPUT were billed at 1.5x instead of 2x in premium turns.")
+    P("    " + "-" * 108)
+    for nm in order:
+        l = local.get(nm, {})
+        turns = l.get("turns", 0)
+        if turns == 0:
+            continue
+        prem_turns = l.get("prem_turns", 0)
+        if prem_turns == 0:
+            continue    # no premium turns for this model -> nothing to diagnose
+        pct_prem = 100.0 * prem_turns / turns if turns else 0.0
+        sp = l.get("split", 0.0)
+        pr = l.get("split_prem", 0.0)
+        delta = pr - sp
+        d_in  = l.get("prem_delta_input", 0.0)
+        d_cr  = l.get("prem_delta_cread", 0.0)
+        d_cc  = l.get("prem_delta_ccreate", 0.0)
+        d_out = l.get("prem_delta_output", 0.0)
+        d_out15 = d_out / 2.0   # extra $ output premium would add at 1.5x instead of 2x
+        P("    %s" % nm[:40])
+        P("      turns total=%d  premium turns=%d (%.1f%%)"
+          % (turns, prem_turns, pct_prem))
+        P("      SPLIT (no premium) $   = %s" % money(sp))
+        P("      SPLIT+PREM delta  $    = %s   (= SPLIT+PREM - SPLIT)" % money(delta))
+        P("        input-premium$      = %s" % money(d_in))
+        P("        cache_read-prem$    = %s" % money(d_cr))
+        P("        cache_creation-prem$= %s" % money(d_cc))
+        P("        output-premium$     = %s   (2x - 1x on output, premium turns)" % money(d_out))
+        P("        output-premium$@1.5x= %s   (half of above; delta if output were 1.5x not 2x)"
+          % money(d_out15))
+        P("      SPLIT+PREM(o1.5) delta $ = %s   (input+cread+ccreate@2x, output@1.5x)"
+          % money(d_in + d_cr + d_cc + d_out15))
+    P("    " + "-" * 108)
 
     # =================== [2] TOKEN CROSS-CHECK ===================
     P("\n[2] TOKEN CROSS-CHECK  (our JSONL Src3 vs Anthropic usage Src2)")
@@ -482,6 +546,7 @@ def main():
                              "per_day": cost["per_day"]} if cost else None,
             "source2_usage": usage["permodel"] if usage else None,
             "totals": {"real": t_real if cost else None, "split_prem": t_prem,
+                       "split_prem_o15": t_prem15,
                        "split": t_split, "flat": t_flat},
         }
         try:
