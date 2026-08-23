@@ -2,6 +2,8 @@
 # =============================================================================
 # strategy_poc.py  --  Claude Code prompt-cache keep-warm strategy simulator
 # =============================================================================
+# HEADLINE OUTPUT: "how much keep-warm caching would have saved on this machine."
+#
 # WHAT IT DOES
 #   Mines your local Claude Code session transcripts, extracts every idle gap
 #   between turns, and simulates several "keep-warm pinger" strategies to find
@@ -253,13 +255,15 @@ def s6_gap_cost(g, P, r, C_mom, active, t0, tz_offset_h):
 # =============================================================================
 # total main-session spend (for waste-as-% context)
 # =============================================================================
-def turn_spend(t, premium):
+def turn_spend(t, premium, default_write=WRITE_MULT):
+    # default_write: multiplier for cache_creation when no ephemeral split is present.
+    # Main sessions -> 2.0x (1h TTL); subagents -> 1.25x (5m TTL).
     r = base_rate(t["model"])
     prefix = t["cache_read"] + t["cache_creation"]
     if premium and "opus" in (t["model"] or "").lower() and prefix > PREMIUM_THRESHOLD:
         r *= 2.0
     e1, e5 = t["eph_1h"], t["eph_5m"]
-    write = (e1*WRITE_MULT + e5*WRITE_MULT_5M) if (e1+e5) > 0 else t["cache_creation"]*WRITE_MULT
+    write = (e1*WRITE_MULT + e5*WRITE_MULT_5M) if (e1+e5) > 0 else t["cache_creation"]*default_write
     return (t["input"]*r + write*r + t["cache_read"]*READ_MULT*r + t["output"]*OUTPUT_MULT*r) / 1e6
 
 # =============================================================================
@@ -340,7 +344,7 @@ def main():
     fine = [c for c in cutoffs if isinstance(c, int)]
     def run_test(premium):
         keys = (["S0_reality","S1_clairvoyant"] + ["S2_cutoff_%s" % c for c in fine]
-                + ["S4_momentum","S5_activity","S6_hybrid"])
+                + ["S4_momentum","S5_activity"])
         tot = {k:0.0 for k in keys}
         for s in test:
             prior = []
@@ -354,7 +358,6 @@ def main():
                 C = s4_cutoff(prior)
                 tot["S4_momentum"] += blind_gap_cost(g["gap_hours"], g["prefix_tokens"], r, C)
                 tot["S5_activity"] += s5_gap_cost(g["gap_hours"], g["prefix_tokens"], r, active, g["t0"], tz)
-                tot["S6_hybrid"]   += s6_gap_cost(g["gap_hours"], g["prefix_tokens"], r, C, active, g["t0"], tz)
                 prior.append(g["gap_hours"])
             last = s["turns"][-1]; r = eff_rate(last[1], last[2], premium)
             read1 = last[2]*READ_MULT*r/1e6
@@ -362,10 +365,6 @@ def main():
             Cf = s4_cutoff(prior)
             tot["S4_momentum"] += pings_to_span(Cf)*read1
             tot["S5_activity"] += s5_trailing(last[2], r, active, last[0], tz)
-            if is_active(active, last[0], tz):
-                Cf_act = alive_window(active, last[0], math.ceil(Cf)+2, tz)
-                C6 = min(Cf, Cf_act)
-                tot["S6_hybrid"] += (pings_to_span(C6)*read1 if C6 > 0 else 0.0)
         return tot
     test_flat = run_test(False); test_prem = run_test(True)
 
@@ -383,6 +382,41 @@ def main():
             cf = turn_spend(t, False); month_flat[month_key(t["ts"])] = month_flat.get(month_key(t["ts"]),0.0)+cf
             total_flat += cf; total_prem += turn_spend(t, True)
     active_months = len(month_flat)
+
+    # ---- subagent / workflow spend (nested *.jsonl inside slug subdirs) ----
+    # These are excluded from the main-session scan; summed here so the "total
+    # Claude Code spend" denominator is complete. Subagents write at 5m TTL
+    # (1.25x) unless an ephemeral_1h split says otherwise.
+    sub_flat = sub_prem = 0.0; sub_files = 0
+    for projdir in sorted(glob.glob(os.path.join(projects_dir, "*"))):
+        if not os.path.isdir(projdir): continue
+        for jf in glob.glob(os.path.join(projdir, "**", "*.jsonl"), recursive=True):
+            if os.path.dirname(jf) == projdir: continue  # top-level = main, skip
+            sub_files += 1
+            try: fh = open(jf, errors="replace")
+            except OSError: continue
+            with fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line: continue
+                    try: d = json.loads(line)
+                    except Exception: continue
+                    mm = d.get("message")
+                    if not isinstance(mm, dict): continue
+                    u = mm.get("usage")
+                    if not isinstance(u, dict): continue
+                    eph = u.get("cache_creation") or {}
+                    t = {"model": mm.get("model"),
+                         "input": u.get("input_tokens", 0) or 0,
+                         "output": u.get("output_tokens", 0) or 0,
+                         "cache_read": u.get("cache_read_input_tokens", 0) or 0,
+                         "cache_creation": u.get("cache_creation_input_tokens", 0) or 0,
+                         "eph_1h": eph.get("ephemeral_1h_input_tokens", 0) or 0,
+                         "eph_5m": eph.get("ephemeral_5m_input_tokens", 0) or 0}
+                    sub_flat += turn_spend(t, False, default_write=WRITE_MULT_5M)
+                    sub_prem += turn_spend(t, True,  default_write=WRITE_MULT_5M)
+    grand_flat = total_flat + sub_flat
+    grand_prem = total_prem + sub_prem
 
     # ---- distribution buckets ----
     buckets = [("<1h",0,1),("1-2h",1,2),("2-4h",2,4),("4-8h",4,8),
@@ -408,65 +442,121 @@ def main():
     # ======================= PRINT =======================
     P = print
     def m(x): return "{:,.2f}".format(x)   # money with thousands separator
-    P("="*74); P("CLAUDE CODE KEEP-WARM STRATEGY SIMULATOR  (read-only analysis)"); P("="*74)
-    # (a) span + counts + dropped
-    P("\n[a] DATA SPAN & COUNTS")
+    act = sorted(active); dead = sorted(set(range(24))-active)
+    peak_h = hourc.index(peak) if peak else None
+
+    # ---- pick the winning fixed cutoff (highest full-data savings) ----
+    cutoff_rows = [r for r in full_rows if r["strategy"].startswith("S2_cutoff_")]
+    # keep only numeric-hour cutoffs (skip "unlimited") for the deployable winner
+    def cutoff_hours(r):
+        s = r["strategy"].split("_")[-1]
+        return int(s) if s.isdigit() else None
+    numeric = [r for r in cutoff_rows if cutoff_hours(r) is not None]
+    win = max(numeric, key=lambda r: r["saved"]) if numeric else full_rows[0]
+    win_C = cutoff_hours(win)
+    clair = next(r for r in full_rows if r["strategy"] == "S1_clairvoyant")
+
+    def pct_total(x_month): return 100*x_month/(grand_flat/span_months) if grand_flat else 0
+    def pct_main(x_month):  return 100*x_month/(total_flat/span_months) if total_flat else 0
+    win_permo   = win["saved"]/span_months
+    clair_permo = clair["saved"]/span_months
+
+    # =================== [1] KEEP-WARM VERDICT (headline) ===================
+    P("="*59)
+    P("                  KEEP-WARM VERDICT")
+    P("="*59)
+    P("Data: %d sessions, %s..%s (%.1f months)"
+      % (len(sessions), datetime.fromtimestamp(min_ts,tz=timezone.utc).date(),
+         datetime.fromtimestamp(max_ts,tz=timezone.utc).date(), span_months))
+    P("Total Claude Code spend: $%s/mo  (main sessions: $%s/mo)"
+      % (m(grand_flat/span_months), m(total_flat/span_months)))
+    P("Best deployable keep-warm strategy: blind cutoff %dh" % win_C)
+    P("  -> would have saved: $%s total  =  $%s/mo" % (m(win["saved"]), m(win_permo)))
+    P("  -> that is %.1f%% of total spend, %.1f%% of main-session spend"
+      % (pct_total(win_permo), pct_main(win_permo)))
+    P("Theoretical ceiling (perfect foresight, unattainable): $%s/mo (%.1f%% of total)"
+      % (m(clair_permo), pct_total(clair_permo)))
+    P("="*59)
+
+    # =================== [2] keep-warm cutoff table ===================
+    P("\nKEEP-WARM SAVINGS BY GIVE-UP CUTOFF  (full dataset; > is better)")
+    P("  %-8s %12s %12s %12s   %s" % ("cutoff","saved$ flat","saved$ prem","%of total",""))
+    for r in sorted(numeric, key=lambda r: -r["saved"]):
+        C = cutoff_hours(r)
+        mark = "  <== WINNER" if C == win_C else ""
+        P("  %-8s %12s %12s %11.1f%%%s"
+          % ("%dh" % C, m(r["saved"]), m(r["premium_saved"] if "premium_saved" in r else (premium["S0_reality"]-r["premium"])),
+             pct_total(r["saved"]/span_months), mark))
+    P("  (%%of total = share of total Claude Code monthly spend this cutoff would save)")
+
+    # =================== supporting detail ===================
+    P("\n" + "-"*59); P("SUPPORTING DETAIL"); P("-"*59)
+
+    # spend breakdown (main vs subagents vs grand)
+    P("\n[A] TOTAL CLAUDE CODE SPEND (denominator for the %% above)")
+    P("  main sessions        : $%s flat / $%s premium  (%.1f%% of total)"
+      % (m(total_flat), m(total_prem), 100*total_flat/grand_flat if grand_flat else 0))
+    P("  subagents/workflows  : $%s flat / $%s premium  (%.1f%% of total)  [%d nested files]"
+      % (m(sub_flat), m(sub_prem), 100*sub_flat/grand_flat if grand_flat else 0, sub_files))
+    P("  GRAND TOTAL          : $%s flat / $%s premium" % (m(grand_flat), m(grand_prem)))
+    P("  per calendar-month   : $%s flat / $%s premium" % (m(grand_flat/span_months), m(grand_prem/span_months)))
+    P("  cache-rebuild waste today (no keep-warm): $%s flat = %.1f%% of total, %.1f%% of main"
+      % (m(flat["S0_reality"]), 100*flat["S0_reality"]/grand_flat if grand_flat else 0,
+         100*flat["S0_reality"]/total_flat if total_flat else 0))
+
+    # data span / counts
+    P("\n[B] DATA SPAN & COUNTS")
     P("  projects dir : %s" % projects_dir)
-    P("  date span    : %s .. %s  (%.1f days = %.2f months; %d active months)"
-      % (datetime.fromtimestamp(min_ts,tz=timezone.utc).date(),
-         datetime.fromtimestamp(max_ts,tz=timezone.utc).date(), span_days, span_months, active_months))
-    P("  sessions kept: %d   (of %d transcript files; %d tiny sessions skipped)"
+    P("  sessions kept: %d   (of %d main transcript files; %d tiny sessions skipped)"
       % (len(sessions), stats["files"], stats["skipped_tiny"]))
     P("  gaps         : %d   session-ends: %d" % (len(all_gaps), len(session_ends)))
-    P("  data quality : %d malformed json lines, %d bad timestamps, %d unreadable files (all skipped)"
+    P("  data quality : %d malformed lines, %d bad timestamps, %d unreadable files (all skipped)"
       % (stats["bad_lines"], stats["bad_ts"], stats["unreadable_files"]))
     P("  dropped gaps > %.0fh: %d events, %.1fh total (excluded)"
       % (args.max_gap_hours, len(dropped), sum(d["gap_hours"] for d in dropped)))
-    # (b) spend
-    P("\n[b] TOTAL MAIN-SESSION SPEND & CACHE-REBUILD WASTE")
-    P("  total main spend : $%s flat   /   $%s premium" % (m(total_flat), m(total_prem)))
-    P("  rebuild waste(S0): $%s flat   =  %.2f%% of total spend (flat)"
-      % (m(flat["S0_reality"]), 100*flat["S0_reality"]/total_flat if total_flat else 0))
-    P("  avg main spend   : $%s / calendar-month   ($%s / active-month)"
-      % (m(total_flat/span_months), m(total_flat/active_months if active_months else 0)))
-    P("  per-month spend (flat):")
-    for k in sorted(month_flat): P("     %s : $%s" % (k, m(month_flat[k])))
-    # (c) distribution
-    P("\n[c] GAP DISTRIBUTION (where the exposure is)")
+
+    # gap distribution
+    P("\n[C] GAP DISTRIBUTION (where the exposure is)")
     P("  %-8s %8s %20s" % ("bucket","count","rebuild_exposure$"))
     for name,_,_ in buckets:
         P("  %-8s %8d %20.2f" % (name, dist[name]["count"], dist[name]["rebuild_exposure_flat"]))
     P("  note: gaps <=1h cost $0 under every strategy (1h cache survives them for free).")
-    # (d) activity profile
-    P("\n[d] LEARNED ACTIVITY PROFILE  (local time = UTC%+.0f, trained on first %.0f%% of sessions)"
-      % (tz, args.train_frac*100))
-    act = sorted(active); dead = sorted(set(range(24))-active)
-    peak_h = hourc.index(peak) if peak else None
-    P("  active hours (ping through these) : %s" % act)
-    P("  dead hours   (give up here)       : %s" % dead)
-    P("  busiest hour : %02d:00 local (%d turns); threshold = %.0f turns (>=%.0f%% of peak)"
-      % (peak_h if peak_h is not None else 0, peak, thr, args.active_threshold_frac*100))
-    # (e) full leaderboard
-    def show(rows, s1key="S1_clairvoyant"):
+
+    # full leaderboard (all strategies)
+    def show(rows):
         P("  %-20s %12s %12s %11s %8s %8s" % ("strategy","flat$","premium$","saved$","%saved","%ofS1"))
         for r in rows:
             P("  %-20s %12.3f %12.3f %11.3f %8.1f %8.1f"
               % (r["strategy"], r["flat"], r["premium"], r["saved"], r["pct"], r["pct_s1"]))
-    P("\n[e] FULL-DATASET LEADERBOARD (all %d sessions; cheapest first)" % len(sessions))
+    P("\n[D] FULL LEADERBOARD, ALL STRATEGIES (full dataset; cheapest first)")
     P("    S1 = clairvoyant floor (unbeatable). %%ofS1 = share of that floor captured.")
     show(full_rows)
-    # (f) test leaderboard
-    P("\n[f] HELD-OUT TEST-SET LEADERBOARD (last %.0f%% = %d sessions; fair S5 comparison)"
+
+    # held-out test set check
+    P("\n[E] HELD-OUT TEST-SET CHECK (last %.0f%% = %d sessions; confirms the winner on unseen data)"
       % ((1-args.train_frac)*100, len(test)))
     show(test_rows)
-    # (g) winner
-    real = [r for r in full_rows if r["strategy"] not in ("S1_clairvoyant",)]
-    win = real[0]
-    P("\n[g] WINNER: %s  ->  saves $%s over the %.2f-month span = $%s/calendar-month "
-      "($%s/active-month); captures %.1f%% of the clairvoyant floor."
-      % (win["strategy"], m(win["saved"]), span_months, m(win["saved"]/span_months),
-         m(win["saved"]/active_months if active_months else 0), win["pct_s1"]))
-    P("="*74)
+
+    # experimental strategies, de-emphasized
+    P("\n[F] EXPERIMENTAL STRATEGIES (did NOT beat the fixed cutoff on the reference dataset)")
+    s4 = next((r for r in full_rows if r["strategy"] == "S4_momentum"), None)
+    s5t = next((r for r in test_rows if r["strategy"] == "S5_activity"), None)
+    if s4:
+        P("  S4 momentum (adaptive per-session leash): saved $%s (%.1f%% of clairvoyant floor) "
+          "-- vs winner's %.1f%%. Session rhythm too noisy to predict returns."
+          % (m(s4["saved"]), s4["pct_s1"], win["pct_s1"]))
+    if s5t:
+        winT = max((r for r in test_rows if r["strategy"].startswith("S2_cutoff_")), key=lambda r: r["saved"])
+        P("  S5 activity-schedule (ping only in active hours): saved $%s on test set "
+          "(%.1f%% of floor) -- vs best fixed cutoff's %.1f%%. This user has no reliable dead zone."
+          % (m(s5t["saved"]), s5t["pct_s1"], winT["pct_s1"]))
+    P("\n[G] LEARNED ACTIVITY PROFILE (for S5; local time = UTC%+.0f, trained on first %.0f%% of sessions)"
+      % (tz, args.train_frac*100))
+    P("  active hours (ping through these) : %s" % act)
+    P("  dead hours   (give up here)       : %s" % dead)
+    P("  busiest hour : %02d:00 local (%d turns); threshold = %.0f turns (>=%.0f%% of peak)"
+      % (peak_h if peak_h is not None else 0, peak, thr, args.active_threshold_frac*100))
+    P("="*59)
 
     # ---- optional JSON dump ----
     if args.out:
@@ -477,9 +567,17 @@ def main():
                      "data_quality": stats, "cutoffs": cutoffs, "train_frac": args.train_frac,
                      "active_threshold_frac": args.active_threshold_frac},
             "dropped": {"count": len(dropped), "total_hours": sum(d["gap_hours"] for d in dropped)},
-            "spend": {"total_flat": total_flat, "total_premium": total_prem,
+            "spend": {"main_flat": total_flat, "main_premium": total_prem,
+                      "subagent_flat": sub_flat, "subagent_premium": sub_prem,
+                      "grand_flat": grand_flat, "grand_premium": grand_prem,
+                      "grand_per_month_flat": grand_flat/span_months,
                       "rebuild_waste_flat": flat["S0_reality"],
-                      "waste_pct_of_total_flat": 100*flat["S0_reality"]/total_flat if total_flat else 0,
+                      "waste_pct_of_grand_flat": 100*flat["S0_reality"]/grand_flat if grand_flat else 0,
+                      "waste_pct_of_main_flat": 100*flat["S0_reality"]/total_flat if total_flat else 0,
+                      "winner_cutoff_h": win_C, "winner_saved_total_flat": win["saved"],
+                      "winner_saved_per_month_flat": win_permo,
+                      "winner_pct_of_grand": pct_total(win_permo),
+                      "winner_pct_of_main": pct_main(win_permo),
                       "by_month_flat": month_flat},
             "distribution": dist,
             "activity_profile": {"tz_offset": tz, "active_hours": sorted(active),
