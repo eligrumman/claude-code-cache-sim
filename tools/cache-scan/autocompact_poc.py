@@ -26,24 +26,46 @@
 # Safe to copy to another machine and run against that machine's own history.
 # =============================================================================
 
-import argparse, json, os, glob, math, sys
+import argparse, json, os, glob, math, sys, re
 from datetime import datetime, timezone, timedelta
 
 # ---- fixed pricing model (base $/1M input tokens by model substring) --------
 # (identical to strategy_poc.py so the numbers reconcile with the keep-warm run)
+# Calibrated to reproduce `ccusage` (LiteLLM pricing) to the cent on this machine.
 READ_MULT     = 0.1    # cache read  = 0.1x base
 WRITE_MULT    = 2.0    # cache write, 1h TTL = 2.0x base
-WRITE_MULT_5M = 1.25   # cache write, 5m TTL = 1.25x base
+WRITE_MULT_5M = 1.25   # cache write, 5m TTL = 1.25x base  (ccusage bills ALL creation here)
 OUTPUT_MULT   = 5.0    # output tokens = 5x base
 PREMIUM_THRESHOLD = 200000  # >200K-token prefix on opus => long-context 2x tier
 
+# ccusage per-model spend on THIS machine (source of truth for reconciliation).
+CCUSAGE_TARGETS = {
+    "claude-opus-4-6": 8124.67, "claude-opus-4-8": 3163.71, "claude-sonnet-5": 2073.64,
+    "claude-sonnet-4-6": 1398.06, "claude-fable-5": 877.52, "claude-haiku-4-5": 116.45,
+    "claude-opus-4-7": 95.73, "claude-opus-4-5": 17.67, "claude-sonnet-4-5": 13.27,
+    "claude-opus-5": 0.59, "tencent/hy3": 0.00,
+}
+
 def base_rate(model):
     m = (model or "").lower()
-    if "opus"   in m: return 5.0
-    if "sonnet" in m: return 3.0
-    if "haiku"  in m: return 1.0
-    if "fable"  in m: return 10.0
-    return 5.0
+    if "opus"     in m: return 5.0
+    if "sonnet-5" in m: return 2.0    # intro pricing thru 2026-08-31 ($2/$10/$0.20/$2.50)
+    if "sonnet"   in m: return 3.0
+    if "haiku"    in m: return 1.0
+    if "fable"    in m: return 10.0
+    return 0.0                        # non-Anthropic / external -> ccusage bills $0
+
+def norm_model(model):
+    # strip a trailing -YYYYMMDD date suffix so ids match ccusage model names
+    if not model: return model or "?"
+    return re.sub(r"-\d{8}$", "", model)
+
+def dedup_key(rec, msg):
+    # ccusage-style dedup: skip repeated (messageId, requestId) pairs across
+    # resumed/compacted session files so shared assistant rows aren't double-counted.
+    mid = msg.get("id"); rid = rec.get("requestId")
+    if mid and rid: return (mid, rid)
+    return None
 
 def eff_rate(model, prefix, premium):
     r = base_rate(model)
@@ -67,7 +89,7 @@ def parse_ts(s):
 # =============================================================================
 # STEP 1 -- mine main-session transcripts
 # =============================================================================
-def mine(projects_dir, min_prefix, stats):
+def mine(projects_dir, min_prefix, stats, seen):
     sessions = []
     if not os.path.isdir(projects_dir):
         sys.stderr.write("ERROR: projects dir not found: %s\n"
@@ -115,6 +137,12 @@ def mine(projects_dir, min_prefix, stats):
                     if m.get("model"): last_model = m.get("model")
                     u = m.get("usage")
                     if not isinstance(u, dict): continue
+                    key = dedup_key(d, m)          # ccusage-style dedup (global set)
+                    if key is not None:
+                        if key in seen:
+                            stats["dup_rows"] += 1
+                            continue
+                        seen.add(key)
                     ts = parse_ts(d.get("timestamp"))
                     if ts is None:
                         stats["bad_ts"] += 1
@@ -147,14 +175,18 @@ def mine(projects_dir, min_prefix, stats):
 # =============================================================================
 # STEP 2 -- reality accounting + real compaction detection
 # =============================================================================
-def turn_spend(t, premium, default_write=WRITE_MULT):
-    """Actual $ cost of one assistant turn from its usage fields (same as strategy_poc)."""
+def turn_spend(t, premium, default_write=WRITE_MULT_5M):
+    """Actual $ cost of one assistant turn from its usage fields (same as strategy_poc).
+    Cache creation is billed at the 5m rate (1.25x) by default -- ccusage/LiteLLM does
+    NOT honor the ephemeral 1h/5m split, so billing all creation at 5m reconciles to
+    the cent (billing the 1h portion at 2.0x overshoots ccusage by ~9-46% per model)."""
     r = base_rate(t["model"])
+    if r == 0.0:
+        return 0.0    # external / non-Anthropic model -> ccusage shows $0
     prefix = t["cache_read"] + t["cache_creation"]
     if premium and "opus" in (t["model"] or "").lower() and prefix > PREMIUM_THRESHOLD:
         r *= 2.0
-    e1, e5 = t["eph_1h"], t["eph_5m"]
-    write = (e1*WRITE_MULT + e5*WRITE_MULT_5M) if (e1+e5) > 0 else t["cache_creation"]*default_write
+    write = t["cache_creation"] * default_write
     return (t["input"]*r + write*r + t["cache_read"]*READ_MULT*r + t["output"]*OUTPUT_MULT*r) / 1e6
 
 def detect_real_compactions(sess, drop_frac, big_prefix):
@@ -190,7 +222,7 @@ def simulate_threshold(sess, T, summary_size, reset_to, base_tokens, premium,
         C += t["new"]
         r = eff_rate(t["model"], C, premium)          # premium flips at 200k
         read_rate   = r * READ_MULT
-        write_rate  = r * WRITE_MULT
+        write_rate  = r * WRITE_MULT_5M               # Claude Code writes 5m cache by default
         output_rate = r * OUTPUT_MULT
         # per-turn intrinsic work + the read burden (the lever)
         total += (C * read_rate
@@ -212,7 +244,7 @@ def measured_compaction_cost(pre, post, model, premium):
     r = eff_rate(model, pre, premium)
     return (pre * r * READ_MULT
             + post * r * OUTPUT_MULT
-            + post * r * WRITE_MULT) / 1e6
+            + post * r * WRITE_MULT_5M) / 1e6
 
 # =============================================================================
 # main
@@ -249,8 +281,9 @@ def main():
     thresholds = [int(x.strip()) for x in args.thresholds.split(",") if x.strip()]
     thresholds.sort()
 
-    stats = {"files":0,"unreadable_files":0,"bad_lines":0,"bad_ts":0,"skipped_tiny":0}
-    sessions = mine(projects_dir, args.min_prefix, stats)
+    stats = {"files":0,"unreadable_files":0,"bad_lines":0,"bad_ts":0,"skipped_tiny":0,"dup_rows":0}
+    seen = set()   # ONE global (messageId, requestId) set across main + subagent files
+    sessions = mine(projects_dir, args.min_prefix, stats, seen)
     if not sessions:
         print("No sessions with a context >= %d tokens found under %s."
               % (args.min_prefix, projects_dir))
@@ -274,10 +307,12 @@ def main():
         lt = datetime.fromtimestamp(ts, tz=timezone.utc) + timedelta(hours=tz)
         return "%04d-%02d" % (lt.year, lt.month)
     month_flat = {}
+    permodel = {}   # normalized model id -> flat $ (for ccusage reconciliation)
     for t in all_turns:
         cf = turn_spend(t, False)
         s0_flat += cf; s0_prem += turn_spend(t, True)
         month_flat[month_key(t["ts"])] = month_flat.get(month_key(t["ts"]),0.0)+cf
+        nm = norm_model(t["model"]); permodel[nm] = permodel.get(nm,0.0)+cf
 
     # ---- subagent / workflow spend (nested *.jsonl) for the total denominator ----
     sub_flat = sub_prem = 0.0; sub_files = 0
@@ -298,6 +333,12 @@ def main():
                     if not isinstance(mm, dict): continue
                     u = mm.get("usage")
                     if not isinstance(u, dict): continue
+                    key = dedup_key(d, mm)          # same global dedup set as main sessions
+                    if key is not None:
+                        if key in seen:
+                            stats["dup_rows"] += 1
+                            continue
+                        seen.add(key)
                     eph = u.get("cache_creation") or {}
                     t = {"model": mm.get("model"),
                          "input": u.get("input_tokens", 0) or 0,
@@ -306,8 +347,10 @@ def main():
                          "cache_creation": u.get("cache_creation_input_tokens", 0) or 0,
                          "eph_1h": eph.get("ephemeral_1h_input_tokens", 0) or 0,
                          "eph_5m": eph.get("ephemeral_5m_input_tokens", 0) or 0}
-                    sub_flat += turn_spend(t, False, default_write=WRITE_MULT_5M)
+                    scf = turn_spend(t, False, default_write=WRITE_MULT_5M)
+                    sub_flat += scf
                     sub_prem += turn_spend(t, True,  default_write=WRITE_MULT_5M)
+                    nm = norm_model(t["model"]); permodel[nm] = permodel.get(nm,0.0)+scf
     grand_flat = s0_flat + sub_flat
     grand_prem = s0_prem + sub_prem
 
@@ -437,6 +480,30 @@ def main():
              100*win["extrapolated_flat"]/win["flat"] if win["flat"] else 0))
     P("="*63)
 
+    # =================== CCUSAGE RECONCILIATION ===================
+    P("\n" + "="*63)
+    P("CCUSAGE RECONCILIATION  (script-computed Anthropic spend per model)")
+    P("="*63)
+    P("  Should match `ccusage` (LiteLLM pricing) within ~2%. Basis: dedup by")
+    P("  messageId+requestId; cache-create billed @5m (1.25x); sonnet-5 intro")
+    P("  pricing; external/non-Anthropic models billed $0.")
+    P("  %-22s %13s %13s %9s" % ("model","computed$","ccusage$","diff%"))
+    tot_c = tot_t = 0.0
+    rkeys = sorted(set(list(permodel) + list(CCUSAGE_TARGETS)),
+                   key=lambda kk: -CCUSAGE_TARGETS.get(kk, permodel.get(kk, 0.0)))
+    for kk in rkeys:
+        c = permodel.get(kk, 0.0); tgt = CCUSAGE_TARGETS.get(kk)
+        tot_c += c
+        if tgt is not None:
+            tot_t += tgt
+            ds = "%+8.1f%%" % (((c-tgt)/tgt*100) if tgt else 0.0)
+            P("  %-22s %13.2f %13.2f %s" % (kk, c, tgt, ds))
+        else:
+            P("  %-22s %13.2f %13s %9s" % (kk, c, "(n/a)", "-"))
+    dtot = ((tot_c-tot_t)/tot_t*100) if tot_t else 0.0
+    P("  %-22s %13.2f %13.2f %+8.2f%%" % ("TOTAL", tot_c, tot_t, dtot))
+    P("="*63)
+
     # =================== [2] threshold sweep table ===================
     P("\nTHRESHOLD SWEEP  (total simulated cost; lower is better)")
     P("  %-9s %12s %12s %12s %12s %8s %6s"
@@ -453,14 +520,16 @@ def main():
     if summary_source == "MEASURED":
         P("  ASSUMPTIONS: summary/reset size = %s tok  (MEASURED: mean of %d real compactions;"
           % (k(sim_summary), len(all_events)))
-        P("               NOT the --summary-tokens default). read %.2fx / write1h %.1fx / output %dx base;"
-          % (READ_MULT, WRITE_MULT, int(OUTPUT_MULT)))
+        P("               NOT the --summary-tokens default). read %.2fx / write5m %.2fx / output %dx base;"
+          % (READ_MULT, WRITE_MULT_5M, int(OUTPUT_MULT)))
     else:
         P("  ASSUMPTIONS: summary=%s tok, base=%s tok  (ASSUMED -- no real compactions found);"
           % (k(args.summary_tokens), k(args.base_tokens)))
-        P("               read %.2fx / write1h %.1fx / output %dx base;"
-          % (READ_MULT, WRITE_MULT, int(OUTPUT_MULT)))
+        P("               read %.2fx / write5m %.2fx / output %dx base;"
+          % (READ_MULT, WRITE_MULT_5M, int(OUTPUT_MULT)))
     P("               compaction cost = full read + summary output + summary re-cache.")
+    P("  DEDUP: rows deduped by messageId+requestId (ccusage-style); cache-create")
+    P("         billed @5m (1.25x) default; sonnet-5 intro pricing; external models $0.")
 
     # =================== supporting detail ===================
     P("\n" + "-"*63); P("SUPPORTING DETAIL"); P("-"*63)
@@ -482,6 +551,8 @@ def main():
     P("  turns        : %d   real resets detected: %d" % (len(all_turns), len(real_points)))
     P("  data quality : %d malformed lines, %d bad timestamps, %d unreadable files (all skipped)"
       % (stats["bad_lines"], stats["bad_ts"], stats["unreadable_files"]))
+    P("  dedup        : %d duplicate (messageId+requestId) rows skipped (ccusage-style)"
+      % stats["dup_rows"])
 
     # [C] context-size distribution
     P("\n[C] CONTEXT-SIZE DISTRIBUTION ACROSS TURNS (where the read exposure is)")

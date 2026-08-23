@@ -23,13 +23,14 @@
 # Safe to copy to another machine and run against that machine's own history.
 # =============================================================================
 
-import argparse, json, os, glob, math, sys
+import argparse, json, os, glob, math, sys, re
 from datetime import datetime, timezone, timedelta
 
 # ---- fixed pricing model (base $/1M input tokens by model substring) --------
+# Calibrated to reproduce `ccusage` (LiteLLM pricing) to the cent on this machine.
 READ_MULT   = 0.1    # cache read  = 0.1x base
 WRITE_MULT  = 2.0    # cache write, 1h TTL = 2.0x base
-WRITE_MULT_5M = 1.25 # cache write, 5m TTL = 1.25x base
+WRITE_MULT_5M = 1.25 # cache write, 5m TTL = 1.25x base  (ccusage bills ALL creation here)
 OUTPUT_MULT = 5.0    # output tokens = 5x base (for total-spend accounting)
 TTL_H       = 1.0    # 1h cache lifetime
 PING_H      = 55.0/60.0   # ping every 55 minutes
@@ -37,13 +38,34 @@ PREMIUM_THRESHOLD = 200000  # >200K-token prefix on opus => long-context 2x tier
 UNLIMITED_H = 1e9
 UNLIMITED_TRAIL_CAP_H = 168.0  # a blind "unlimited" pinger left running: cap at 1 week
 
+# ccusage per-model spend on THIS machine (source of truth for reconciliation).
+CCUSAGE_TARGETS = {
+    "claude-opus-4-6": 8124.67, "claude-opus-4-8": 3163.71, "claude-sonnet-5": 2073.64,
+    "claude-sonnet-4-6": 1398.06, "claude-fable-5": 877.52, "claude-haiku-4-5": 116.45,
+    "claude-opus-4-7": 95.73, "claude-opus-4-5": 17.67, "claude-sonnet-4-5": 13.27,
+    "claude-opus-5": 0.59, "tencent/hy3": 0.00,
+}
+
 def base_rate(model):
     m = (model or "").lower()
-    if "opus"   in m: return 5.0
-    if "sonnet" in m: return 3.0
-    if "haiku"  in m: return 1.0
-    if "fable"  in m: return 10.0
-    return 5.0
+    if "opus"     in m: return 5.0
+    if "sonnet-5" in m: return 2.0    # intro pricing thru 2026-08-31 ($2/$10/$0.20/$2.50)
+    if "sonnet"   in m: return 3.0
+    if "haiku"    in m: return 1.0
+    if "fable"    in m: return 10.0
+    return 0.0                        # non-Anthropic / external -> ccusage bills $0
+
+def norm_model(model):
+    # strip a trailing -YYYYMMDD date suffix so ids match ccusage model names
+    if not model: return model or "?"
+    return re.sub(r"-\d{8}$", "", model)
+
+def dedup_key(rec, msg):
+    # ccusage-style dedup: skip repeated (messageId, requestId) pairs across
+    # resumed/compacted session files so shared assistant rows aren't double-counted.
+    mid = msg.get("id"); rid = rec.get("requestId")
+    if mid and rid: return (mid, rid)
+    return None
 
 def eff_rate(model, prefix, premium):
     r = base_rate(model)
@@ -70,7 +92,7 @@ def parse_ts(s):
 # =============================================================================
 # STEP 1 -- mine main-session transcripts
 # =============================================================================
-def mine(projects_dir, min_prefix, max_gap_h, stats):
+def mine(projects_dir, min_prefix, max_gap_h, stats, seen):
     sessions = []
     if not os.path.isdir(projects_dir):
         sys.stderr.write("ERROR: projects dir not found: %s\n"
@@ -104,6 +126,12 @@ def mine(projects_dir, min_prefix, max_gap_h, stats):
                     if not isinstance(m, dict): continue
                     u = m.get("usage")
                     if not isinstance(u, dict): continue
+                    key = dedup_key(d, m)          # ccusage-style dedup (global set)
+                    if key is not None:
+                        if key in seen:
+                            stats["dup_rows"] += 1
+                            continue
+                        seen.add(key)
                     ts = parse_ts(d.get("timestamp"))
                     if ts is None:
                         stats["bad_ts"] += 1
@@ -255,15 +283,17 @@ def s6_gap_cost(g, P, r, C_mom, active, t0, tz_offset_h):
 # =============================================================================
 # total main-session spend (for waste-as-% context)
 # =============================================================================
-def turn_spend(t, premium, default_write=WRITE_MULT):
-    # default_write: multiplier for cache_creation when no ephemeral split is present.
-    # Main sessions -> 2.0x (1h TTL); subagents -> 1.25x (5m TTL).
+def turn_spend(t, premium, default_write=WRITE_MULT_5M):
+    # Cache creation billed at 5m (1.25x) by default -- ccusage/LiteLLM does NOT
+    # honor the ephemeral 1h/5m split, so all-creation-at-5m reconciles to the cent
+    # (billing the 1h portion at 2.0x overshoots ccusage by ~9-46% per model).
     r = base_rate(t["model"])
+    if r == 0.0:
+        return 0.0    # external / non-Anthropic model -> ccusage shows $0
     prefix = t["cache_read"] + t["cache_creation"]
     if premium and "opus" in (t["model"] or "").lower() and prefix > PREMIUM_THRESHOLD:
         r *= 2.0
-    e1, e5 = t["eph_1h"], t["eph_5m"]
-    write = (e1*WRITE_MULT + e5*WRITE_MULT_5M) if (e1+e5) > 0 else t["cache_creation"]*default_write
+    write = t["cache_creation"] * default_write
     return (t["input"]*r + write*r + t["cache_read"]*READ_MULT*r + t["output"]*OUTPUT_MULT*r) / 1e6
 
 # =============================================================================
@@ -297,8 +327,9 @@ def main():
     cutoffs = [int(c) if c.isdigit() else c for c in cutoffs]
     tz = args.tz_offset
 
-    stats = {"files":0,"unreadable_files":0,"bad_lines":0,"bad_ts":0,"skipped_tiny":0}
-    sessions = mine(projects_dir, args.min_prefix, args.max_gap_hours, stats)
+    stats = {"files":0,"unreadable_files":0,"bad_lines":0,"bad_ts":0,"skipped_tiny":0,"dup_rows":0}
+    seen = set()   # ONE global (messageId, requestId) set across main + subagent files
+    sessions = mine(projects_dir, args.min_prefix, args.max_gap_hours, stats, seen)
     if not sessions:
         print("No sessions with a warm prefix (>= %d tokens) found under %s."
               % (args.min_prefix, projects_dir))
@@ -377,10 +408,12 @@ def main():
     span_days = (max_ts - min_ts)/86400.0
     span_months = max(span_days/30.4375, 1e-9)
     total_flat = total_prem = 0.0; month_flat = {}
+    permodel = {}   # normalized model id -> flat $ (for ccusage reconciliation)
     for s in sessions:
         for t in s["spend_turns"]:
             cf = turn_spend(t, False); month_flat[month_key(t["ts"])] = month_flat.get(month_key(t["ts"]),0.0)+cf
             total_flat += cf; total_prem += turn_spend(t, True)
+            nm = norm_model(t["model"]); permodel[nm] = permodel.get(nm,0.0)+cf
     active_months = len(month_flat)
 
     # ---- subagent / workflow spend (nested *.jsonl inside slug subdirs) ----
@@ -405,6 +438,12 @@ def main():
                     if not isinstance(mm, dict): continue
                     u = mm.get("usage")
                     if not isinstance(u, dict): continue
+                    key = dedup_key(d, mm)          # same global dedup set as main sessions
+                    if key is not None:
+                        if key in seen:
+                            stats["dup_rows"] += 1
+                            continue
+                        seen.add(key)
                     eph = u.get("cache_creation") or {}
                     t = {"model": mm.get("model"),
                          "input": u.get("input_tokens", 0) or 0,
@@ -413,8 +452,10 @@ def main():
                          "cache_creation": u.get("cache_creation_input_tokens", 0) or 0,
                          "eph_1h": eph.get("ephemeral_1h_input_tokens", 0) or 0,
                          "eph_5m": eph.get("ephemeral_5m_input_tokens", 0) or 0}
-                    sub_flat += turn_spend(t, False, default_write=WRITE_MULT_5M)
+                    scf = turn_spend(t, False, default_write=WRITE_MULT_5M)
+                    sub_flat += scf
                     sub_prem += turn_spend(t, True,  default_write=WRITE_MULT_5M)
+                    nm = norm_model(t["model"]); permodel[nm] = permodel.get(nm,0.0)+scf
     grand_flat = total_flat + sub_flat
     grand_prem = total_prem + sub_prem
 
@@ -478,6 +519,30 @@ def main():
       % (m(clair_permo), pct_total(clair_permo)))
     P("="*59)
 
+    # =================== CCUSAGE RECONCILIATION ===================
+    P("\n" + "="*59)
+    P("CCUSAGE RECONCILIATION  (script-computed Anthropic spend per model)")
+    P("="*59)
+    P("  Should match `ccusage` (LiteLLM pricing) within ~2%. Basis: dedup by")
+    P("  messageId+requestId; cache-create billed @5m (1.25x); sonnet-5 intro")
+    P("  pricing; external/non-Anthropic models billed $0.")
+    P("  %-22s %13s %13s %9s" % ("model","computed$","ccusage$","diff%"))
+    tot_c = tot_t = 0.0
+    rkeys = sorted(set(list(permodel) + list(CCUSAGE_TARGETS)),
+                   key=lambda kk: -CCUSAGE_TARGETS.get(kk, permodel.get(kk, 0.0)))
+    for kk in rkeys:
+        c = permodel.get(kk, 0.0); tgt = CCUSAGE_TARGETS.get(kk)
+        tot_c += c
+        if tgt is not None:
+            tot_t += tgt
+            ds = "%+8.1f%%" % (((c-tgt)/tgt*100) if tgt else 0.0)
+            P("  %-22s %13.2f %13.2f %s" % (kk, c, tgt, ds))
+        else:
+            P("  %-22s %13.2f %13s %9s" % (kk, c, "(n/a)", "-"))
+    dtot = ((tot_c-tot_t)/tot_t*100) if tot_t else 0.0
+    P("  %-22s %13.2f %13.2f %+8.2f%%" % ("TOTAL", tot_c, tot_t, dtot))
+    P("="*59)
+
     # =================== [2] keep-warm cutoff table ===================
     P("\nKEEP-WARM SAVINGS BY GIVE-UP CUTOFF  (full dataset; > is better)")
     P("  %-8s %12s %12s %12s   %s" % ("cutoff","saved$ flat","saved$ prem","%of total",""))
@@ -512,6 +577,9 @@ def main():
     P("  gaps         : %d   session-ends: %d" % (len(all_gaps), len(session_ends)))
     P("  data quality : %d malformed lines, %d bad timestamps, %d unreadable files (all skipped)"
       % (stats["bad_lines"], stats["bad_ts"], stats["unreadable_files"]))
+    P("  dedup        : %d duplicate (messageId+requestId) rows skipped (ccusage-style)"
+      % stats["dup_rows"])
+    P("  pricing      : cache-create @5m (1.25x); sonnet-5 intro pricing; external models $0")
     P("  dropped gaps > %.0fh: %d events, %.1fh total (excluded)"
       % (args.max_gap_hours, len(dropped), sum(d["gap_hours"] for d in dropped)))
 
