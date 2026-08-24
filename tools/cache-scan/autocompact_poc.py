@@ -10,8 +10,7 @@
 #   per-turn context growth from message.usage, and simulates firing auto-compact
 #   at a range of candidate context thresholds T. Every turn pays a cache READ of
 #   the whole running context (0.1x base) -- so the bigger the context, the more
-#   each turn costs, and once opus context passes 200K tokens the base rate itself
-#   doubles (long-context premium). Compacting shrinks the context back down, but
+#   each turn costs. Compacting shrinks the context back down, but
 #   compacting is not free: it costs one full read of the current context to
 #   summarize it, plus generating the summary (output) and re-caching the new
 #   smaller base (a 1h cache WRITE). This tool finds the T that minimizes
@@ -36,7 +35,6 @@ READ_MULT     = 0.1    # cache read  = 0.1x base
 WRITE_MULT    = 2.0    # cache write, 1h TTL = 2.0x base
 WRITE_MULT_5M = 1.25   # cache write, 5m TTL = 1.25x base  (ccusage bills ALL creation here)
 OUTPUT_MULT   = 5.0    # output tokens = 5x base
-PREMIUM_THRESHOLD = 200000  # >200K-token prefix on opus => long-context 2x tier
 
 # ccusage per-model spend on THIS machine (source of truth for reconciliation).
 CCUSAGE_TARGETS = {
@@ -66,20 +64,6 @@ def dedup_key(rec, msg):
     mid = msg.get("id"); rid = rec.get("requestId")
     if mid and rid: return (mid, rid)
     return None
-
-def eff_rate(model, prefix, premium):
-    r = base_rate(model)
-    if premium and "opus" in (model or "").lower() and prefix > PREMIUM_THRESHOLD:
-        r *= 2.0
-    return r
-
-def eff_rate_out(model, prefix, premium):
-    """Output rate: base rate scaled by 1.5x (not 2x) in a premium turn --
-    matches SPLIT+PREM(o1.5) in verify_against_anthropic.py."""
-    r = base_rate(model)
-    if premium and "opus" in (model or "").lower() and prefix > PREMIUM_THRESHOLD:
-        r *= 1.5
-    return r
 
 def percentile(vals, p):
     if not vals: return None
@@ -183,21 +167,18 @@ def mine(projects_dir, min_prefix, stats, seen):
 # =============================================================================
 # STEP 2 -- reality accounting + real compaction detection
 # =============================================================================
-def turn_spend(t, premium, default_write=WRITE_MULT_5M):
+def turn_spend(t, default_write=WRITE_MULT_5M):
     """Actual $ cost of one assistant turn from its usage fields (same as strategy_poc).
     Cache creation is billed at the 5m rate (1.25x) by default -- ccusage/LiteLLM does
     NOT honor the ephemeral 1h/5m split, so billing all creation at 5m reconciles to
-    the cent (billing the 1h portion at 2.0x overshoots ccusage by ~9-46% per model)."""
+    the cent (billing the 1h portion at 2.0x overshoots ccusage by ~9-46% per model).
+    Pure SPLIT pricing -- no >200k long-context premium tier exists on current models."""
     r = base_rate(t["model"])
     if r == 0.0:
         return 0.0    # external / non-Anthropic model -> ccusage shows $0
-    prefix = t["cache_read"] + t["cache_creation"]
-    is_prem = premium and "opus" in (t["model"] or "").lower() and prefix > PREMIUM_THRESHOLD
-    r_in = r * 2.0 if is_prem else r     # input/cache_read/cache_creation: 2x in premium turns
-    out_prem_o15 = 1.5 if is_prem else 1.0   # output: 1.5x (not 2x) in premium turns
     write = t["cache_creation"] * default_write
-    return (t["input"]*r_in + write*r_in + t["cache_read"]*READ_MULT*r_in
-            + t["output"]*OUTPUT_MULT*r*out_prem_o15) / 1e6
+    return (t["input"]*r + write*r + t["cache_read"]*READ_MULT*r
+            + t["output"]*OUTPUT_MULT*r) / 1e6
 
 def detect_real_compactions(sess, drop_frac, big_prefix):
     """Points where reality actually reset context: prefix drops sharply between
@@ -213,7 +194,7 @@ def detect_real_compactions(sess, drop_frac, big_prefix):
 # =============================================================================
 # STEP 3 -- the auto-compact economic simulation
 # =============================================================================
-def simulate_threshold(sess, T, summary_size, reset_to, base_tokens, premium,
+def simulate_threshold(sess, T, summary_size, reset_to, base_tokens,
                        observed_max_prefix):
     """Walk one session's turns tracking simulated running context C.
     Returns (total_cost, compactions, was_extrapolated).
@@ -230,11 +211,10 @@ def simulate_threshold(sess, T, summary_size, reset_to, base_tokens, premium,
     extrapolated = T > observed_max_prefix
     for t in sess["turns"]:
         C += t["new"]
-        r = eff_rate(t["model"], C, premium)          # premium flips at 200k (input/read/write: 2x)
-        r_out = eff_rate_out(t["model"], C, premium)  # premium flips at 200k (output: 1.5x)
+        r = base_rate(t["model"])                     # pure SPLIT pricing, no premium tier
         read_rate   = r * READ_MULT
         write_rate  = r * WRITE_MULT_5M               # Claude Code writes 5m cache by default
-        output_rate = r_out * OUTPUT_MULT
+        output_rate = r * OUTPUT_MULT
         # per-turn intrinsic work + the read burden (the lever)
         total += (C * read_rate
                   + t["new"] * write_rate
@@ -249,13 +229,13 @@ def simulate_threshold(sess, T, summary_size, reset_to, base_tokens, premium,
     return total, compactions, extrapolated
 
 
-def measured_compaction_cost(pre, post, model, premium):
+def measured_compaction_cost(pre, post, model):
     """$ cost of one REAL compaction event under our pricing:
-    big read of pre-context + generate summary (post tokens) + re-cache summary."""
-    r = eff_rate(model, pre, premium)
-    r_out = eff_rate_out(model, pre, premium)
+    big read of pre-context + generate summary (post tokens) + re-cache summary.
+    Pure SPLIT pricing -- no >200k long-context premium tier exists."""
+    r = base_rate(model)
     return (pre * r * READ_MULT
-            + post * r_out * OUTPUT_MULT
+            + post * r * OUTPUT_MULT
             + post * r * WRITE_MULT_5M) / 1e6
 
 # =============================================================================
@@ -314,20 +294,20 @@ def main():
     span_months = max(span_days/30.4375, 1e-9)
 
     # ---- S0 reality: actual total cost straight from usage ----
-    s0_flat = s0_prem = 0.0
+    s0_flat = 0.0
     def month_key(ts):
         lt = datetime.fromtimestamp(ts, tz=timezone.utc) + timedelta(hours=tz)
         return "%04d-%02d" % (lt.year, lt.month)
     month_flat = {}
     permodel = {}   # normalized model id -> flat $ (for ccusage reconciliation)
     for t in all_turns:
-        cf = turn_spend(t, False)
-        s0_flat += cf; s0_prem += turn_spend(t, True)
+        cf = turn_spend(t)
+        s0_flat += cf
         month_flat[month_key(t["ts"])] = month_flat.get(month_key(t["ts"]),0.0)+cf
         nm = norm_model(t["model"]); permodel[nm] = permodel.get(nm,0.0)+cf
 
     # ---- subagent / workflow spend (nested *.jsonl) for the total denominator ----
-    sub_flat = sub_prem = 0.0; sub_files = 0
+    sub_flat = 0.0; sub_files = 0
     for projdir in sorted(glob.glob(os.path.join(projects_dir, "*"))):
         if not os.path.isdir(projdir): continue
         for jf in glob.glob(os.path.join(projdir, "**", "*.jsonl"), recursive=True):
@@ -359,12 +339,10 @@ def main():
                          "cache_creation": u.get("cache_creation_input_tokens", 0) or 0,
                          "eph_1h": eph.get("ephemeral_1h_input_tokens", 0) or 0,
                          "eph_5m": eph.get("ephemeral_5m_input_tokens", 0) or 0}
-                    scf = turn_spend(t, False, default_write=WRITE_MULT_5M)
+                    scf = turn_spend(t, default_write=WRITE_MULT_5M)
                     sub_flat += scf
-                    sub_prem += turn_spend(t, True,  default_write=WRITE_MULT_5M)
                     nm = norm_model(t["model"]); permodel[nm] = permodel.get(nm,0.0)+scf
     grand_flat = s0_flat + sub_flat
-    grand_prem = s0_prem + sub_prem
 
     # ---- REAL compaction events (empirical, from compactMetadata) ----
     all_events = [e for s in sessions for e in s["events"]]
@@ -396,19 +374,17 @@ def main():
     # ---- sweep candidate thresholds ----
     results = {}   # T -> dict
     for T in thresholds:
-        tf = tp = 0.0
+        tf = 0.0
         comps = 0
         meas_flat = extr_flat = 0.0
         n_extr_sessions = 0
         for s in sessions:
             cf, c, extr = simulate_threshold(s, T, sim_summary, sim_reset, args.base_tokens,
-                                             False, s["observed_max_prefix"])
-            cp, _, _    = simulate_threshold(s, T, sim_summary, sim_reset, args.base_tokens,
-                                             True, s["observed_max_prefix"])
-            tf += cf; tp += cp; comps += c
+                                             s["observed_max_prefix"])
+            tf += cf; comps += c
             if extr: extr_flat += cf; n_extr_sessions += 1
             else:    meas_flat += cf
-        results[T] = {"flat": tf, "premium": tp, "compactions": comps,
+        results[T] = {"flat": tf, "compactions": comps,
                       "measured_flat": meas_flat, "extrapolated_flat": extr_flat,
                       "n_extrapolated_sessions": n_extr_sessions}
 
@@ -428,19 +404,11 @@ def main():
 
     # savings vs S0 reality
     def saved_flat(T): return s0_flat - results[T]["flat"]
-    def saved_prem(T): return s0_prem - results[T]["premium"]
     win_saved_flat = saved_flat(win_T)
-    win_saved_prem = saved_prem(win_T)
     win_saved_permo = win_saved_flat / span_months
 
     def pct_total(x_month): return 100*x_month/(grand_flat/span_months) if grand_flat else 0
     def pct_main(x_month):  return 100*x_month/(s0_flat/span_months) if s0_flat else 0
-
-    # ---- 200k premium cliff effect ----
-    # how much of the winner's premium-basis saving comes from staying below 200k.
-    prem_gap_s0  = s0_prem - s0_flat            # premium surcharge reality paid
-    prem_gap_win = win["premium"] - win["flat"] # premium surcharge winner pays
-    cliff_saved  = prem_gap_s0 - prem_gap_win   # premium surcharge avoided
 
     # ---- context-size distribution across turns ----
     dbuckets = [("<50k",0,50000),("50-100k",50000,100000),("100-150k",100000,150000),
@@ -473,8 +441,6 @@ def main():
       % (m(win_saved_flat), m(win_saved_permo)))
     P("  -> that is %.1f%% of total spend, %.1f%% of main-session spend"
       % (pct_total(win_saved_permo), pct_main(win_saved_permo)))
-    P("  -> premium-basis saving: $%s total ($%s/mo)"
-      % (m(win_saved_prem), m(win_saved_prem/span_months)))
     if real_median is not None:
         P("Reality compacts today at ~%s tokens (median of %d observed resets, %s)"
           % (k(real_median), len(real_points), real_points_src))
@@ -483,8 +449,6 @@ def main():
     P("Compaction cost model: %s summary size = %s tok (%s)"
       % (summary_source, k(sim_summary),
          ("mean of %d real events" % len(all_events)) if have_measured else "assumed default"))
-    P("200k premium cliff: winner avoids $%s of long-context surcharge"
-      % m(cliff_saved))
     if win["n_extrapolated_sessions"]:
         P("CAVEAT: winner is EXTRAPOLATED in %d/%d sessions ($%s of $%s = %.1f%% of its cost)"
           % (win["n_extrapolated_sessions"], len(sessions),
@@ -518,17 +482,17 @@ def main():
 
     # =================== [2] threshold sweep table ===================
     P("\nTHRESHOLD SWEEP  (total simulated cost; lower is better)")
-    P("  %-9s %12s %12s %12s %12s %8s %6s"
-      % ("threshold","total flat$","total prem$","saved$ flat","saved$ prem","%of tot","comps"))
+    P("  %-9s %12s %12s %8s %6s"
+      % ("threshold","total flat$","saved$ flat","%of tot","comps"))
     for T in thresholds:
         r = results[T]
         mark = "  <== WINNER" if T == win_T else ""
-        P("  %-9s %12s %12s %12s %12s %7.1f%% %6d%s"
-          % (k(T), m(r["flat"]), m(r["premium"]),
-             m(saved_flat(T)), m(saved_prem(T)),
+        P("  %-9s %12s %12s %7.1f%% %6d%s"
+          % (k(T), m(r["flat"]),
+             m(saved_flat(T)),
              pct_total(saved_flat(T)/span_months), r["compactions"], mark))
-    P("  (saved$ = vs S0 reality $%s flat / $%s prem ; %%of tot = share of total CC monthly spend)"
-      % (m(s0_flat), m(s0_prem)))
+    P("  (saved$ = vs S0 reality $%s flat ; %%of tot = share of total CC monthly spend)"
+      % m(s0_flat))
     if summary_source == "MEASURED":
         P("  ASSUMPTIONS: summary/reset size = %s tok  (MEASURED: mean of %d real compactions;"
           % (k(sim_summary), len(all_events)))
@@ -548,12 +512,12 @@ def main():
 
     # [A] spend breakdown
     P("\n[A] TOTAL CLAUDE CODE SPEND (denominator for the %% above)")
-    P("  main sessions        : $%s flat / $%s premium  (%.1f%% of total)"
-      % (m(s0_flat), m(s0_prem), 100*s0_flat/grand_flat if grand_flat else 0))
-    P("  subagents/workflows  : $%s flat / $%s premium  (%.1f%% of total)  [%d nested files]"
-      % (m(sub_flat), m(sub_prem), 100*sub_flat/grand_flat if grand_flat else 0, sub_files))
-    P("  GRAND TOTAL          : $%s flat / $%s premium" % (m(grand_flat), m(grand_prem)))
-    P("  per calendar-month   : $%s flat / $%s premium" % (m(grand_flat/span_months), m(grand_prem/span_months)))
+    P("  main sessions        : $%s  (%.1f%% of total)"
+      % (m(s0_flat), 100*s0_flat/grand_flat if grand_flat else 0))
+    P("  subagents/workflows  : $%s  (%.1f%% of total)  [%d nested files]"
+      % (m(sub_flat), 100*sub_flat/grand_flat if grand_flat else 0, sub_files))
+    P("  GRAND TOTAL          : $%s" % m(grand_flat))
+    P("  per calendar-month   : $%s" % m(grand_flat/span_months))
 
     # [B] data span / counts
     P("\n[B] DATA SPAN & COUNTS")
@@ -575,13 +539,13 @@ def main():
 
     # [D] full leaderboard
     P("\n[D] FULL LEADERBOARD, ALL THRESHOLDS (cheapest total first)")
-    P("  %-9s %12s %12s %12s %8s %6s %10s"
-      % ("threshold","flat$","premium$","saved$flat","%saved","comps","extrap$"))
+    P("  %-9s %12s %12s %8s %6s %10s"
+      % ("threshold","flat$","saved$flat","%saved","comps","extrap$"))
     for T in sorted(thresholds, key=lambda T: results[T]["flat"]):
         r = results[T]
         pct = 100*saved_flat(T)/s0_flat if s0_flat else 0
-        P("  %-9s %12.2f %12.2f %12.2f %7.1f%% %6d %10.2f"
-          % (k(T), r["flat"], r["premium"], saved_flat(T), pct,
+        P("  %-9s %12.2f %12.2f %7.1f%% %6d %10.2f"
+          % (k(T), r["flat"], saved_flat(T), pct,
              r["compactions"], r["extrapolated_flat"]))
 
     # [E] MEASURED compaction cost vs context size (empirical, from compactMetadata)
@@ -596,22 +560,19 @@ def main():
         if scale_note: P("  %s" % scale_note)
         cb = [("<150k",0,150000),("150-200k",150000,200000),("200-300k",200000,300000),
               ("300-500k",300000,500000),(">500k",500000,1e18)]
-        P("  %-10s %6s %12s %12s %12s %12s"
-          % ("bucket","events","mean ctx","mean summ","mean $/comp","mean $prem"))
+        P("  %-10s %6s %12s %12s %12s"
+          % ("bucket","events","mean ctx","mean summ","mean $/comp"))
         for name,lo,hi in cb:
             sel = [e for e in all_events if e["pre"] and lo <= e["pre"] < hi]
             if not sel:
-                P("  %-10s %6d %12s %12s %12s %12s" % (name,0,"-","-","-","-")); continue
+                P("  %-10s %6d %12s %12s %12s" % (name,0,"-","-","-")); continue
             mc = sum(e["pre"] for e in sel)/len(sel)
             ms = sum(e["post"] for e in sel)/len(sel)
-            cf = sum(measured_compaction_cost(e["pre"], e["post"], e["model"], False) for e in sel)/len(sel)
-            cp = sum(measured_compaction_cost(e["pre"], e["post"], e["model"], True)  for e in sel)/len(sel)
-            P("  %-10s %6d %12s %12s %12.4f %12.4f"
-              % (name, len(sel), k(mc), k(ms), cf, cp))
-        tot_cf = sum(measured_compaction_cost(e["pre"], e["post"], e["model"], False) for e in all_events)
-        tot_cp = sum(measured_compaction_cost(e["pre"], e["post"], e["model"], True)  for e in all_events)
-        P("  TOTAL measured compaction spend already paid: $%s flat / $%s premium"
-          % (m(tot_cf), m(tot_cp)))
+            cf = sum(measured_compaction_cost(e["pre"], e["post"], e["model"]) for e in sel)/len(sel)
+            P("  %-10s %6d %12s %12s %12.4f"
+              % (name, len(sel), k(mc), k(ms), cf))
+        tot_cf = sum(measured_compaction_cost(e["pre"], e["post"], e["model"]) for e in all_events)
+        P("  TOTAL measured compaction spend already paid: $%s" % m(tot_cf))
     else:
         P("  NO compaction events detected on this machine.")
         P("  This can mean 1M-context sessions rarely fill enough to trigger auto-compact.")
@@ -662,17 +623,16 @@ def main():
                      "data_quality": stats, "thresholds": thresholds,
                      "summary_tokens": args.summary_tokens, "base_tokens": args.base_tokens,
                      "reset_drop_frac": args.reset_drop_frac, "big_prefix": args.big_prefix},
-            "spend": {"main_flat": s0_flat, "main_premium": s0_prem,
-                      "subagent_flat": sub_flat, "subagent_premium": sub_prem,
-                      "grand_flat": grand_flat, "grand_premium": grand_prem,
+            "spend": {"main_flat": s0_flat,
+                      "subagent_flat": sub_flat,
+                      "grand_flat": grand_flat,
                       "grand_per_month_flat": grand_flat/span_months,
                       "by_month_flat": month_flat},
-            "winner": {"threshold": win_T, "flat": win["flat"], "premium": win["premium"],
-                       "saved_flat": win_saved_flat, "saved_premium": win_saved_prem,
+            "winner": {"threshold": win_T, "flat": win["flat"],
+                       "saved_flat": win_saved_flat,
                        "saved_per_month_flat": win_saved_permo,
                        "pct_of_total": pct_total(win_saved_permo),
                        "pct_of_main": pct_main(win_saved_permo),
-                       "cliff_saved": cliff_saved,
                        "n_extrapolated_sessions": win["n_extrapolated_sessions"]},
             "sweep": {str(T): results[T] for T in thresholds},
             "real_compactions": {"count": len(real_points), "median": real_median,

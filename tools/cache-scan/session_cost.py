@@ -12,8 +12,8 @@
 # OUTPUT
 #   [A] SESSION SUMMARY   : file, session id, row counts, timestamp range, models
 #   [B] TOKEN TOTALS       : per model input/output/cache_read/cc_1h/cc_5m, max prefix
-#   [C] COST               : per model + TOTAL, FLAT / SPLIT / SPLIT+PREM(o1.5)
-#   [D] PER-TURN TABLE     : turns with prefix > 150,000 tokens (the >200k evidence)
+#   [C] COST               : per model + TOTAL, FLAT / SPLIT
+#   [D] PER-TURN TABLE     : turns with prefix > 150,000 tokens
 #   [E] EXPERIMENT NOTE    : how to read the eventual Anthropic billing comparison
 #
 # READ-ONLY. Python 3 standard library only. Pricing core copied verbatim
@@ -29,7 +29,6 @@ READ_MULT     = 0.1    # cache read           = 0.1x  base
 WRITE_MULT_1H = 2.0    # cache create, 1h TTL = 2.0x  base
 WRITE_MULT_5M = 1.25   # cache create, 5m TTL = 1.25x base
 OUTPUT_MULT   = 5.0    # output tokens        = 5x    base
-PREMIUM_THRESHOLD = 200000  # >200K-token prefix on opus => long-context 2x tier
 
 
 def base_rate(model):
@@ -97,10 +96,10 @@ def session_id_from_path(path):
 
 
 def compute_turn_costs(model, inp, cr, cc, out, e1h, e5m):
-    """Return (flat$, split$, split_prem_o15$) for one assistant turn, in USD."""
+    """Return (flat$, split$) for one assistant turn, in USD."""
     r = base_rate(model)
     if r == 0.0:
-        return 0.0, 0.0, 0.0
+        return 0.0, 0.0
     read_cost = cr * READ_MULT * r
     out_cost  = out * OUTPUT_MULT * r
     inp_cost  = inp * r
@@ -111,19 +110,7 @@ def compute_turn_costs(model, inp, cr, cc, out, e1h, e5m):
     split_write = (e1h * WRITE_MULT_1H + e5m * WRITE_MULT_5M) * r
     split = (inp_cost + split_write + read_cost + out_cost) / 1e6
 
-    # SPLIT + long-context premium (o1.5 output variant): on opus turns whose
-    # prefix (input + cache_read + cache_creation) exceeds 200k tokens,
-    # input/cache_read/cache_creation are billed at 2x base, output at 1.5x base.
-    prefix = inp + cr + cc
-    is_prem = ("opus" in (model or "").lower() and prefix > PREMIUM_THRESHOLD)
-    prem = 2.0 if is_prem else 1.0
-    out_prem_o15 = 1.5 if is_prem else 1.0
-    rp = r * prem
-    write_base = (e1h * WRITE_MULT_1H + e5m * WRITE_MULT_5M) * r
-    split_prem_o15 = (inp * rp + write_base * prem + cr * READ_MULT * rp
-                       + out * OUTPUT_MULT * r * out_prem_o15) / 1e6
-
-    return flat, split, split_prem_o15
+    return flat, split
 
 
 def scan_file(path, after_ts, seen, turns):
@@ -181,15 +168,14 @@ def scan_file(path, after_ts, seen, turns):
             if e1h == 0 and e5m == 0 and cc > 0:
                 e5m = cc  # no split reported -> treat all creation as 5m (FLAT assumption)
 
-            flat, split, split_prem_o15 = compute_turn_costs(model, inp, cr, cc, out, e1h, e5m)
+            flat, split = compute_turn_costs(model, inp, cr, cc, out, e1h, e5m)
             prefix = inp + cr + cc
 
             turns.append({
                 "ts": ts, "ts_raw": ts_raw, "model": norm_model(model), "raw_model": model,
                 "input": inp, "output": out, "cache_read": cr,
                 "cc_1h": e1h, "cc_5m": e5m, "prefix": prefix,
-                "flat": flat, "split": split, "split_prem_o15": split_prem_o15,
-                "over200k": prefix > PREMIUM_THRESHOLD,
+                "flat": flat, "split": split,
             })
             stats["rows_counted"] += 1
     return stats
@@ -248,7 +234,7 @@ def main():
 
     def slot(nm):
         if nm not in permodel:
-            permodel[nm] = {"flat": 0.0, "split": 0.0, "split_prem_o15": 0.0,
+            permodel[nm] = {"flat": 0.0, "split": 0.0,
                              "input": 0, "output": 0, "cache_read": 0,
                              "cc_1h": 0, "cc_5m": 0, "max_prefix": 0, "turns": 0}
         return permodel[nm]
@@ -256,7 +242,6 @@ def main():
     for t in turns:
         s = slot(t["model"])
         s["flat"] += t["flat"]; s["split"] += t["split"]
-        s["split_prem_o15"] += t["split_prem_o15"]
         s["input"] += t["input"]; s["output"] += t["output"]
         s["cache_read"] += t["cache_read"]
         s["cc_1h"] += t["cc_1h"]; s["cc_5m"] += t["cc_5m"]
@@ -312,21 +297,19 @@ def main():
 
     # ---- [C] COST per model + TOTAL ----
     P("\n[C] COST per model  (USD)")
-    P("    %-22s %14s %14s %18s" % ("model", "FLAT$", "SPLIT$", "SPLIT+PREM(o1.5)$"))
-    P("    " + "-" * 72)
-    t_flat = t_split = t_prem = 0.0
+    P("    %-22s %14s %14s" % ("model", "FLAT$", "SPLIT$"))
+    P("    " + "-" * 52)
+    t_flat = t_split = 0.0
     for nm in order:
         s = permodel[nm]
-        t_flat += s["flat"]; t_split += s["split"]; t_prem += s["split_prem_o15"]
-        P("    %-22s %14s %14s %18s"
-          % (nm[:22], money(s["flat"]), money(s["split"]), money(s["split_prem_o15"])))
-    P("    " + "-" * 72)
-    P("    %-22s %14s %14s %18s" % ("TOTAL", money(t_flat), money(t_split), money(t_prem)))
+        t_flat += s["flat"]; t_split += s["split"]
+        P("    %-22s %14s %14s"
+          % (nm[:22], money(s["flat"]), money(s["split"])))
+    P("    " + "-" * 52)
+    P("    %-22s %14s %14s" % ("TOTAL", money(t_flat), money(t_split)))
     P("    FLAT  = all cache-creation billed @5m (ccusage-equivalent, buggy basis)")
-    P("    SPLIT = honors the 1h/5m cache-creation split, no premium "
+    P("    SPLIT = honors the 1h/5m cache-creation split "
       "(our official-correct flat-pricing basis)")
-    P("    SPLIT+PREM(o1.5) = SPLIT + >200k long-context premium hypothesis "
-      "(opus-only; input/read/write 2x, output 1.5x)")
 
     # ---- [D] PER-TURN TABLE (prefix > 150,000) ----
     P("\n[D] PER-TURN TABLE  (turns with prefix > 150,000 tokens)")
@@ -335,23 +318,22 @@ def main():
         P("    (no turns exceeded 150,000 prefix tokens)")
     else:
         big.sort(key=lambda t: t["ts"])
-        P("    %-6s %-26s %-22s %14s %10s %14s %18s"
-          % ("turn#", "timestamp", "model", "prefix", "over200k?", "SPLIT$", "SPLIT+PREM(o1.5)$"))
-        P("    " + "-" * 108)
+        P("    %-6s %-26s %-22s %14s %14s"
+          % ("turn#", "timestamp", "model", "prefix", "SPLIT$"))
+        P("    " + "-" * 90)
         # build turn index over ALL turns in timestamp order for stable numbering
         all_sorted = sorted(turns, key=lambda t: t["ts"])
         idx_of = {id(t): i for i, t in enumerate(all_sorted, start=1)}
         for t in big:
-            P("    %-6d %-26s %-22s %14s %10s %14s %18s"
+            P("    %-6d %-26s %-22s %14s %14s"
               % (idx_of[id(t)], t["ts_raw"] or "?", t["model"][:22], toks(t["prefix"]),
-                 "Y" if t["over200k"] else "N", money(t["split"]), money(t["split_prem_o15"])))
+                 money(t["split"])))
 
     # ---- [E] EXPERIMENT NOTE ----
     P("\n[E] EXPERIMENT NOTE")
     P("    Compare the day's Anthropic Console cost for this model to the SPLIT total.")
     P("    If billing ~= SPLIT, flat pricing is confirmed and JSONL is complete.")
-    P("    If billing ~= SPLIT+PREM, the >200k premium is live.")
-    P("    If billing >> both, other usage hit this key or transcripts are missing.")
+    P("    If billing >> SPLIT, other usage hit this key or transcripts are missing.")
     P("=" * 90)
 
 
