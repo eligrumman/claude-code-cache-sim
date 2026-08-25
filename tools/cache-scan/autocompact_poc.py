@@ -167,17 +167,20 @@ def mine(projects_dir, min_prefix, stats, seen):
 # =============================================================================
 # STEP 2 -- reality accounting + real compaction detection
 # =============================================================================
-def turn_spend(t, default_write=WRITE_MULT_5M):
+def turn_spend(t):
     """Actual $ cost of one assistant turn from its usage fields (same as strategy_poc).
-    Cache creation is billed at the 5m rate (1.25x) by default -- ccusage/LiteLLM does
-    NOT honor the ephemeral 1h/5m split, so billing all creation at 5m reconciles to
-    the cent (billing the 1h portion at 2.0x overshoots ccusage by ~9-46% per model).
+    Cache-write cost honors the per-turn 1h/5m split: 1h-TTL tokens bill at
+    WRITE_MULT (2.0x), everything else (5m-TTL + any unlabeled remainder of
+    cache_creation) bills at WRITE_MULT_5M (1.25x).
     Pure SPLIT pricing -- no >200k long-context premium tier exists on current models."""
     r = base_rate(t["model"])
     if r == 0.0:
         return 0.0    # external / non-Anthropic model -> ccusage shows $0
-    write = t["cache_creation"] * default_write
-    return (t["input"]*r + write*r + t["cache_read"]*READ_MULT*r
+    eph_1h = t.get("eph_1h", 0) or 0
+    eph_5m = t.get("eph_5m", 0) or 0
+    remainder = max(0, t["cache_creation"] - eph_1h - eph_5m)
+    write_cost = eph_1h*WRITE_MULT + eph_5m*WRITE_MULT_5M + remainder*WRITE_MULT_5M
+    return (t["input"]*r + write_cost*r + t["cache_read"]*READ_MULT*r
             + t["output"]*OUTPUT_MULT*r) / 1e6
 
 def detect_real_compactions(sess, drop_frac, big_prefix):
@@ -339,7 +342,7 @@ def main():
                          "cache_creation": u.get("cache_creation_input_tokens", 0) or 0,
                          "eph_1h": eph.get("ephemeral_1h_input_tokens", 0) or 0,
                          "eph_5m": eph.get("ephemeral_5m_input_tokens", 0) or 0}
-                    scf = turn_spend(t, default_write=WRITE_MULT_5M)
+                    scf = turn_spend(t)
                     sub_flat += scf
                     nm = norm_model(t["model"]); permodel[nm] = permodel.get(nm,0.0)+scf
     grand_flat = s0_flat + sub_flat

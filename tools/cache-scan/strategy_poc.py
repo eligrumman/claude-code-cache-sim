@@ -281,15 +281,20 @@ def s6_gap_cost(g, P, r, C_mom, active, t0, tz_offset_h):
 # =============================================================================
 # total main-session spend (for waste-as-% context)
 # =============================================================================
-def turn_spend(t, default_write=WRITE_MULT_5M):
+def turn_spend(t):
     # Pure SPLIT pricing -- Anthropic's current models (Opus 4.8, Sonnet 5, etc.)
     # bill flat rates across the full 1M context; there is no >200k long-context
-    # premium tier.
+    # premium tier. Cache-write cost honors the per-turn 1h/5m split: 1h-TTL
+    # tokens bill at WRITE_MULT (2.0x), everything else (5m-TTL + any unlabeled
+    # remainder of cache_creation) bills at WRITE_MULT_5M (1.25x).
     r = base_rate(t["model"])
     if r == 0.0:
         return 0.0    # external / non-Anthropic model -> ccusage shows $0
-    write = t["cache_creation"] * default_write
-    return (t["input"]*r + write*r + t["cache_read"]*READ_MULT*r
+    eph_1h = t.get("eph_1h", 0) or 0
+    eph_5m = t.get("eph_5m", 0) or 0
+    remainder = max(0, t["cache_creation"] - eph_1h - eph_5m)
+    write_cost = eph_1h*WRITE_MULT + eph_5m*WRITE_MULT_5M + remainder*WRITE_MULT_5M
+    return (t["input"]*r + write_cost*r + t["cache_read"]*READ_MULT*r
             + t["output"]*OUTPUT_MULT*r) / 1e6
 
 # =============================================================================
@@ -448,7 +453,7 @@ def main():
                          "cache_creation": u.get("cache_creation_input_tokens", 0) or 0,
                          "eph_1h": eph.get("ephemeral_1h_input_tokens", 0) or 0,
                          "eph_5m": eph.get("ephemeral_5m_input_tokens", 0) or 0}
-                    scf = turn_spend(t, default_write=WRITE_MULT_5M)
+                    scf = turn_spend(t)
                     sub_flat += scf
                     nm = norm_model(t["model"]); permodel[nm] = permodel.get(nm,0.0)+scf
     grand_flat = total_flat + sub_flat
