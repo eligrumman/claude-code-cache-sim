@@ -367,7 +367,10 @@ export function main(argv = process.argv.slice(2)) {
   if (options.mode === "backtest") {
     const since = Date.now() - options.days * 86_400_000;
     const sessions = transcripts(options.dir, since).map((file) => readTurns(file).filter((turn) => turn.at >= since)).filter((turns) => turns.length > 1);
-    console.log(formatBacktest(backtest(sessions), options.days));
+    const first = Math.min(...sessions.map((turns) => turns[0].at));
+    const covered = sessions.length ? Math.max(1, Math.ceil((Date.now() - first) / 86_400_000)) : 0;
+    console.log(formatBacktest(backtest(sessions), covered || options.days));
+    if (covered && covered < options.days - 1) console.log(`\nYou asked for ${options.days} days, but your logs only go back ${covered} (to ${new Date(first).toISOString().slice(0, 10)}). Claude Code deletes old transcripts; raise "cleanupPeriodDays" in ~/.claude/settings.json to keep more.`);
     return 0;
   }
   runOnce(options);
