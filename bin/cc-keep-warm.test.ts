@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { backtest, economics, formatBacktest, parseTurns, pickTestSession, ping, plan, report, runOnce, summarize, verify } from "./cc-keep-warm.mjs";
+import { backtest, economics, formatBacktest, learnReturns, smartPolicy, parseTurns, pickTestSession, ping, plan, report, runOnce, summarize, verify } from "./cc-keep-warm.mjs";
 
 const MIN = 60_000;
 const T0 = Date.parse("2026-10-17T12:00:00Z");
@@ -180,33 +180,63 @@ describe("pickTestSession", () => {
 
 describe("backtest", () => {
   const H = 60 * MIN;
+  const NOW = T0 + 30 * H;
   const coldReturn = (at: number) => turn(at, { input_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 100_000, cache_creation: { ephemeral_1h_input_tokens: 100_000 } });
-  const day = (gapAfterLunch: number) => parseTurns([warmTurn(T0), coldReturn(T0 + gapAfterLunch)]);
+  const day = (gap: number, start = T0) => parseTurns([warmTurn(start), coldReturn(start + gap)]);
 
-  it("ignores returns while the cache was still warm", () => {
-    expect(backtest([parseTurns([warmTurn(T0), warmTurn(T0 + 30 * MIN)])]).gaps).toHaveLength(0);
+  it("ignores returns before the first ping would fire", () => {
+    expect(backtest([parseTurns([warmTurn(T0), warmTurn(T0 + 30 * MIN)])], [3 * H], null, NOW).policies[0].spent).toBe(0);
+  });
+
+  it("charges the ping sent before you came back anyway", () => {
+    const policy = backtest([parseTurns([warmTurn(T0), warmTurn(T0 + 55 * MIN)])], [3 * H], null, NOW).policies[0];
+    expect(policy.spent).toBeCloseTo(0.116);
+    expect(policy.saved).toBe(0);
   });
 
   it("rescues a lunch break and books the rebuild it avoids", () => {
-    const result = backtest([day(1.5 * H)], [3 * H]);
-    const policy = result.policies[0];
+    const policy = backtest([day(1.5 * H)], [3 * H], null, NOW).policies[0];
     expect(policy.rescued).toBe(1);
     expect(policy.saved).toBeCloseTo(0.78);
     expect(policy.spent).toBeCloseTo(0.116);
-    expect(policy.net).toBeGreaterThan(0);
   });
 
   it("charges the pings it sent before giving up on an overnight gap", () => {
-    const policy = backtest([day(16 * H)], [3 * H]).policies[0];
+    const policy = backtest([day(16 * H)], [3 * H], null, NOW).policies[0];
     expect(policy.rescued).toBe(0);
-    expect(policy.saved).toBe(0);
     expect(policy.spent).toBeCloseTo(3 * 0.116);
+  });
+
+  it("counts pings sent to a session you never came back to", () => {
+    const policy = backtest([parseTurns([warmTurn(T0)])], [3 * H], null, T0 + 72 * H).policies[0];
+    expect(policy.spent).toBeCloseTo(3 * 0.116);
+  });
+
+  it("stops pinging when working hours end", () => {
+    const evening = new Date(T0); evening.setHours(18, 30, 0, 0);
+    const policy = backtest([day(14 * H, evening.getTime())], [Infinity], { from: 9, to: 19, days: [0, 1, 2, 3, 4, 5, 6] }, evening.getTime() + 30 * H).policies[0];
+    expect(policy.spent).toBe(0);
   });
 
   it("recommends the limit with the best net", () => {
     const sessions = [day(1.5 * H), day(1.5 * H), day(1.5 * H), day(16 * H)];
-    const text = formatBacktest(backtest(sessions), 30);
+    const text = formatBacktest(backtest(sessions, undefined, null, NOW), 30);
     expect(text).toContain("came back to an expired cache 4 times");
-    expect(text).toMatch(/Best for you: keep sessions warm for up to 1.5h/);
+    expect(text).toMatch(/Best for you: keep sessions warm up to 1.5h/);
+  });
+});
+
+describe("smart mode", () => {
+  const H = 60 * MIN;
+  it("pings after a short absence it has learned you return from, not overnight", () => {
+    const at = (hour: number, d: number) => { const t = new Date(T0); t.setDate(t.getDate() + d); t.setHours(hour, 0, 0, 0); return t.getTime(); };
+    const periods = [];
+    for (let d = 0; d < 20; d += 1) {
+      periods.push({ start: at(12, d), end: at(12, d) + 1.5 * H, ttl: "1h", ping: 0.116, expected: 0.78, saving: 0.78 });
+      periods.push({ start: at(20, d), end: at(9, d + 1), ttl: "1h", ping: 0.116, expected: 0.78, saving: 0.78 });
+    }
+    const decide = smartPolicy(learnReturns(periods));
+    expect(decide(at(12, 30) + 52 * MIN, { start: at(12, 30), expected: 0.78, ping: 0.116 })).toBe(true);
+    expect(decide(at(20, 30) + 52 * MIN, { start: at(20, 30), expected: 0.78, ping: 0.116 })).toBe(false);
   });
 });

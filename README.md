@@ -25,7 +25,7 @@ see whether each return was actually warm, and keeps a ledger of ping spend vs. 
 ```
 node bin/cc-keep-warm.mjs --backtest # replay your last 30 days: would it have paid off, and for how long? (free)
 node bin/cc-keep-warm.mjs --test     # ping a warm session once; shows what it read and cost
-node bin/cc-keep-warm.mjs --watch    # keep idle sessions warm (stops at --max-idle, default 2h)
+node bin/cc-keep-warm.mjs --watch --smart --hours 9-19   # keep idle sessions warm when you're likely back soon
 node bin/cc-keep-warm.mjs --report   # did it pay off?
 ```
 
