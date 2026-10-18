@@ -6,10 +6,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-// Keep this block in sync with src/engine/pricing.ts, the source of truth.
-// Prices are USD per 1M input tokens; RATE values are billing multipliers.
-export const RATE = Object.freeze({ input: 1, read: 0.1, w5m: 1.25, w1h: 2, out: 5 });
-export const MODEL_IN = Object.freeze({ haiku: 1, sonnet: 3, opus: 5, fable: 10 });
+import { priceFor } from "./prices.mjs";
 
 const DAY_MS = 86_400_000;
 const ZERO_USAGE = () => ({ input: 0, read: 0, write5m: 0, write1h: 0, output: 0 });
@@ -55,14 +52,13 @@ function usageFromEvent(event) {
 }
 
 export function priceUsage(usage, model = "sonnet") {
-  const family = modelFamily(model);
-  const base = MODEL_IN[family] / 1_000_000;
+  const price = priceFor(model);
   const byClass = {
-    input: finiteNumber(usage?.input) * RATE.input * base,
-    read: finiteNumber(usage?.read) * RATE.read * base,
-    write5m: finiteNumber(usage?.write5m) * RATE.w5m * base,
-    write1h: finiteNumber(usage?.write1h) * RATE.w1h * base,
-    output: finiteNumber(usage?.output) * RATE.out * base,
+    input: (finiteNumber(usage?.input) * price.input) / 1_000_000,
+    read: (finiteNumber(usage?.read) * price.read) / 1_000_000,
+    write5m: (finiteNumber(usage?.write5m) * price.write5m) / 1_000_000,
+    write1h: (finiteNumber(usage?.write1h) * price.write1h) / 1_000_000,
+    output: (finiteNumber(usage?.output) * price.output) / 1_000_000,
   };
   return { byClass, total: Object.values(byClass).reduce((sum, value) => sum + value, 0) };
 }
@@ -168,7 +164,7 @@ function insightsFor(report) {
   const opus = report.models.filter((model) => model.family === "opus");
   const opusCost = opus.reduce((sum, model) => sum + model.cost, 0);
   if (opusCost > 0) {
-    const eligibleSaving = opusCost * (1 - MODEL_IN.sonnet / MODEL_IN.opus);
+    const eligibleSaving = opus.reduce((sum, model) => sum + model.cost - priceUsage(model, "claude-sonnet-5-5").total, 0);
     insights.push(`Opus accounted for ${money(opusCost)}. If that work were eligible for Sonnet, the same token mix would cost about ${money(eligibleSaving)} less.`);
   } else {
     const largest = report.models[0];
@@ -211,7 +207,7 @@ export function renderReport(report, options = {}) {
 <section class="card"><h2>Spend by billing class</h2><div class="stack" aria-label="Spend by billing class">${bar}</div><ul class="legend">${legend}</ul></section>
 <section class="grid"><article class="card"><h2>Per model</h2><table><thead><tr><th>Model</th><th>Tokens</th><th>Hit rate</th><th>Spend</th></tr></thead><tbody>${models}</tbody></table></article><article class="card"><h2>Biggest sessions</h2><ul class="sessions">${biggest}</ul></article></section>
 <section class="card"><h2>What the numbers say</h2><ol class="insights">${insights}</ol></section>
-<p class="fine">Built only from your own local Claude Code logs. No data leaves this machine. Rates mirror <code>src/engine/pricing.ts</code>: input 1×, cache read 0.1×, 5m write 1.25×, 1h write 2×, output 5×, multiplied by model input price. Cache creation without a 5m/1h split is priced at 5m; unknown models use the Sonnet rate. On a subscription/Max plan, this is a counterfactual valuation at list prices, not what you were billed.</p>
+<p class="fine">Built only from your own local Claude Code logs. No data leaves this machine. Anthropic list prices per model (<code>bin/prices.mjs</code>): 5m cache write 1.25×, 1h write 2× and output 5× the model's input price; cache reads 0.1× on most models, 0.05× on Opus 5.5, 0.025× on Fable 5.1. Cache creation without a 5m/1h split is priced at 5m; unknown models use the current Sonnet price. On a subscription/Max plan, this is a counterfactual valuation at list prices, not what you were billed.</p>
 </main></body></html>`;
 }
 

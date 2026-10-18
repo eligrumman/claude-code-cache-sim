@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { WRITE, priceFor } from "./prices.mjs";
 
 // Keeps idle Claude Code sessions' prompt cache warm, and measures whether that actually paid off.
 //
@@ -13,28 +14,12 @@ import { fileURLToPath } from "node:url";
 // cached prefix, which resets its TTL. The fork is never written to disk, so the original transcript
 // is untouched and nothing shows up in /resume. Everything stays local except that one request.
 
-// USD per 1M tokens, Anthropic list prices (Oct 2026). Writes are multipliers on input.
-export const WRITE = Object.freeze({ "5m": 1.25, "1h": 2 });
-const PRICES = [
-  [/fable|mythos/, { input: 10, read: 0.25 }],
-  [/opus-5-5/, { input: 4, read: 0.2 }],
-  [/opus/, { input: 5, read: 0.5 }],
-  [/sonnet-5/, { input: 2, read: 0.2 }],
-  [/sonnet/, { input: 3, read: 0.3 }],
-  [/haiku-5/, { input: 0.1, read: 0.01 }],
-  [/haiku/, { input: 1, read: 0.1 }],
-];
 const TTL_MS = Object.freeze({ "5m": 5 * 60_000, "1h": 60 * 60_000 });
 // Ping this long before expiry: enough slack for a slow `claude` start, small enough to matter.
 const MARGIN_MS = Object.freeze({ "5m": 60_000, "1h": 8 * 60_000 });
 const PROMPT = "Keep-alive ping from cc-keep-warm. Do not use any tools. Reply with exactly: ok";
 // Env a parent Claude Code session leaks into child processes; inheriting it hijacks the child's session id.
 const STRIP_ENV = ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_REMOTE_SESSION_ID"];
-
-export function priceFor(model) {
-  const name = String(model || "").toLowerCase();
-  return (PRICES.find(([pattern]) => pattern.test(name)) ?? PRICES[3])[1];
-}
 
 /** Rebuild vs ping cost for a prefix; `maxPings` is how many pings one avoided rebuild pays for. */
 export function economics(prefixTokens, model, ttl) {
@@ -176,7 +161,10 @@ export function ping(session, options, run = spawnSync) {
   const env = { ...process.env };
   for (const key of STRIP_ENV) delete env[key];
   const args = ["-p", PROMPT, "--resume", session.sessionId, "--fork-session", "--no-session-persistence", "--output-format", "json", "--model", session.model];
-  const result = run(options.claude, args, { cwd: session.cwd && fs.existsSync(session.cwd) ? session.cwd : undefined, env, encoding: "utf8", timeout: 180_000 });
+  // Windows installs claude as a .cmd shim, which Node only launches through a shell.
+  const windows = process.platform === "win32";
+  const result = run(windows ? `"${options.claude}"` : options.claude, windows ? args.map((arg) => `"${arg}"`) : args, { cwd: session.cwd && fs.existsSync(session.cwd) ? session.cwd : undefined, env, encoding: "utf8", timeout: 180_000, shell: windows });
+  if (result.error?.code === "ENOENT") return { ok: false, error: `can't find "${options.claude}". Is Claude Code installed? Pass its path with --claude <path>.` };
   if (result.error || result.status !== 0) return { ok: false, error: String(result.error?.message ?? result.stderr ?? "").trim().slice(0, 300) || `exit ${result.status}` };
   let out;
   try { out = JSON.parse(result.stdout); } catch { return { ok: false, error: "claude printed no JSON result" }; }

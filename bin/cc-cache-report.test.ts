@@ -42,3 +42,15 @@ describe("cc-cache-report aggregation", () => {
     expect(aggregateUsage([]).totalCost).toBe(0);
   });
 });
+
+describe("cc-cache-report current prices", () => {
+  it("prices Opus 5.5 cache reads at 0.05x of its $4 input", () => {
+    const priced = priceUsage({ input: 0, read: 1_000_000, write5m: 0, write1h: 1_000_000, output: 0 }, "claude-opus-5-5");
+    expect(priced.byClass.read).toBeCloseTo(0.2);
+    expect(priced.byClass.write1h).toBeCloseTo(8);
+  });
+
+  it("prices Fable 5.1 cache reads at $0.25", () => {
+    expect(priceUsage({ input: 0, read: 1_000_000, write5m: 0, write1h: 0, output: 0 }, "claude-fable-5-1").byClass.read).toBeCloseTo(0.25);
+  });
+});
