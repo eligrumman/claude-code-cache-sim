@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { economics, parseTurns, ping, plan, report, runOnce, summarize, verify } from "./cc-keep-warm.mjs";
+import { economics, parseTurns, pickTestSession, ping, plan, report, runOnce, summarize, verify } from "./cc-keep-warm.mjs";
 
 const MIN = 60_000;
 const T0 = Date.parse("2026-10-17T12:00:00Z");
@@ -156,5 +156,24 @@ describe("runOnce cost guard", () => {
     const options = { dir: path.join(root, "projects"), state: path.join(root, "state.json"), maxIdleMs: 8 * 60 * MIN, claude: "claude", dryRun: false };
     const state = runOnce(options, T0 + 55 * MIN, () => ({ ok: true, read: 100_000, write: 100_000, cost: 0.9, hit: 1 }), () => {});
     expect(state.sessions.s1.disabled).toMatch(/more than the/);
+  });
+});
+
+describe("pickTestSession", () => {
+  const old = { ...session, sessionId: "old", lastActivity: T0 - 57 * 60 * MIN };
+  const fresh = { ...session, sessionId: "fresh", lastActivity: T0 - 10 * MIN };
+  it("skips a newer cold session for an older warm one", () => {
+    expect(pickTestSession([old, { ...fresh, lastActivity: T0 - 30 * MIN }], "latest", T0).session?.sessionId).toBe("fresh");
+  });
+
+  it("refuses to test when every match is cold, and names the cold one", () => {
+    const picked = pickTestSession([old], "latest", T0);
+    expect(picked.session).toBeUndefined();
+    expect(picked.coldMatch?.sessionId).toBe("old");
+  });
+
+  it("honours an explicit session id", () => {
+    expect(pickTestSession([old, fresh], "fre", T0).session?.sessionId).toBe("fresh");
+    expect(pickTestSession([old, fresh], "old", T0).session).toBeUndefined();
   });
 });

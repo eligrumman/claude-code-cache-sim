@@ -241,17 +241,27 @@ export function report(state) {
   ].join("\n");
 }
 
+/** The session --test should ping: one whose cache is still warm, since a cold one can only show a rebuild. */
+export function pickTestSession(sessions, wanted, now) {
+  const matches = wanted === "latest" ? sessions : sessions.filter((session) => session.sessionId.startsWith(wanted));
+  const warm = matches.filter((session) => now - session.lastActivity < TTL_MS[session.ttl] - 60_000);
+  const newest = (list) => [...list].sort((a, b) => b.lastActivity - a.lastActivity)[0];
+  return { session: newest(warm), coldMatch: warm.length ? undefined : newest(matches) };
+}
+
 function selfTest(options, log = console.log) {
-  const all = activeSessions({ ...options, maxIdleMs: 30 * 86_400_000 }, Date.now());
-  const pick = options.testSession === "latest"
-    ? all.sort((a, b) => b.session.lastActivity - a.session.lastActivity)[0]
-    : all.find(({ session }) => session.sessionId.startsWith(options.testSession));
-  if (!pick) { log("No matching session found. Use a session from the last 30 days."); return 1; }
-  const { session } = pick;
-  const idle = Date.now() - session.lastActivity;
+  const now = Date.now();
+  const sessions = activeSessions({ ...options, maxIdleMs: 30 * 86_400_000 }, now).map(({ session }) => session);
+  const { session, coldMatch } = pickTestSession(sessions, options.testSession, now);
+  if (!session) {
+    if (coldMatch) log(`Session ${short(coldMatch.sessionId)} was last used ${mins(now - coldMatch.lastActivity)} ago, so its cache is gone and a ping would just pay for a rebuild.`);
+    else log("No matching Claude Code session found in the last 30 days.");
+    log("Use Claude Code for a minute (any session), then run --test again within the hour.");
+    return 1;
+  }
+  const idle = now - session.lastActivity;
   const { rebuild, ping: estimate, maxPings } = economics(session.prefix, session.model, session.ttl);
   log(`Session ${short(session.sessionId)}  ${session.model}  ${Math.round(session.prefix / 1000)}k-token prefix  ${session.ttl} TTL  idle ${mins(idle)}`);
-  if (idle >= TTL_MS[session.ttl]) log("Its cache has already expired, so this ping will rebuild it; the test still shows what a ping reads and costs.");
   const result = ping(session, options);
   if (!result.ok) { log(`Ping failed: ${result.error}`); return 1; }
   log(`Ping read ${Math.round(result.read / 1000)}k of ${Math.round(session.prefix / 1000)}k prefix tokens (${Math.round(result.hit * 100)}%), wrote ${Math.round(result.write / 1000)}k, cost ${money(result.cost)}.`);
