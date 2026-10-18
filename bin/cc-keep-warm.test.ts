@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { economics, parseTurns, pickTestSession, ping, plan, report, runOnce, summarize, verify } from "./cc-keep-warm.mjs";
+import { backtest, economics, formatBacktest, parseTurns, pickTestSession, ping, plan, report, runOnce, summarize, verify } from "./cc-keep-warm.mjs";
 
 const MIN = 60_000;
 const T0 = Date.parse("2026-10-17T12:00:00Z");
@@ -23,15 +23,15 @@ const warmTurn = (at: number) => turn(at, { input_tokens: 2, cache_read_input_to
 const session = { sessionId: "s1", model: "claude-opus-5-5", cwd: "/work", lastActivity: T0, prefix: 100_000, ttl: "1h" };
 
 describe("economics", () => {
-  it("prices a rebuild at 40 reads on Opus 5.5 with the 1h TTL", () => {
+  it("prices a ping as a cache read plus the tail it writes", () => {
     const e = economics(100_000, "claude-opus-5-5", "1h");
     expect(e.rebuild).toBeCloseTo(0.8);
-    expect(e.ping).toBeCloseTo(0.02);
-    expect(e.maxPings).toBe(39);
+    expect(e.ping).toBeCloseTo(0.02 + 0.096);
+    expect(e.maxPings).toBe(5);
   });
 
-  it("uses the cheaper Fable 5.1 cache read", () => {
-    expect(economics(100_000, "claude-fable-5-1", "1h").maxPings).toBe(79);
+  it("lets pings pay off longer on bigger sessions, where the fixed tail matters less", () => {
+    expect(economics(400_000, "claude-opus-5-5", "1h").maxPings).toBeGreaterThan(economics(100_000, "claude-opus-5-5", "1h").maxPings);
   });
 });
 
@@ -175,5 +175,38 @@ describe("pickTestSession", () => {
   it("honours an explicit session id", () => {
     expect(pickTestSession([old, fresh], "fre", T0).session?.sessionId).toBe("fresh");
     expect(pickTestSession([old, fresh], "old", T0).session).toBeUndefined();
+  });
+});
+
+describe("backtest", () => {
+  const H = 60 * MIN;
+  const coldReturn = (at: number) => turn(at, { input_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 100_000, cache_creation: { ephemeral_1h_input_tokens: 100_000 } });
+  const day = (gapAfterLunch: number) => parseTurns([warmTurn(T0), coldReturn(T0 + gapAfterLunch)]);
+
+  it("ignores returns while the cache was still warm", () => {
+    expect(backtest([parseTurns([warmTurn(T0), warmTurn(T0 + 30 * MIN)])]).gaps).toHaveLength(0);
+  });
+
+  it("rescues a lunch break and books the rebuild it avoids", () => {
+    const result = backtest([day(1.5 * H)], [3 * H]);
+    const policy = result.policies[0];
+    expect(policy.rescued).toBe(1);
+    expect(policy.saved).toBeCloseTo(0.78);
+    expect(policy.spent).toBeCloseTo(0.116);
+    expect(policy.net).toBeGreaterThan(0);
+  });
+
+  it("charges the pings it sent before giving up on an overnight gap", () => {
+    const policy = backtest([day(16 * H)], [3 * H]).policies[0];
+    expect(policy.rescued).toBe(0);
+    expect(policy.saved).toBe(0);
+    expect(policy.spent).toBeCloseTo(3 * 0.116);
+  });
+
+  it("recommends the limit with the best net", () => {
+    const sessions = [day(1.5 * H), day(1.5 * H), day(1.5 * H), day(16 * H)];
+    const text = formatBacktest(backtest(sessions), 30);
+    expect(text).toContain("came back to an expired cache 4 times");
+    expect(text).toMatch(/Best for you: keep sessions warm for up to 1.5h/);
   });
 });

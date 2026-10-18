@@ -21,12 +21,79 @@ const PROMPT = "Keep-alive ping from cc-keep-warm. Do not use any tools. Reply w
 // Env a parent Claude Code session leaks into child processes; inheriting it hijacks the child's session id.
 const STRIP_ENV = ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_REMOTE_SESSION_ID"];
 
+// Besides reading the session, every ping writes its own tail to the cache: the resumed session's
+// last turn re-rendered plus the ping message. Measured at 11-13k tokens on a real ping.
+export const PING_TAIL = 12_000;
+
 /** Rebuild vs ping cost for a prefix; `maxPings` is how many pings one avoided rebuild pays for. */
 export function economics(prefixTokens, model, ttl) {
   const price = priceFor(model);
   const rebuild = (prefixTokens * price.input * WRITE[ttl]) / 1e6;
-  const ping = (prefixTokens * price.read) / 1e6;
+  const ping = (prefixTokens * price.read + PING_TAIL * price.input * WRITE[ttl]) / 1e6;
   return { rebuild, ping, maxPings: ping > 0 ? Math.floor(rebuild / ping) - 1 : 0 };
+}
+
+const HOUR = 3_600_000;
+export const BACKTEST_LIMITS = [1.5, 2, 3, 4, 6, 8, 12, 24].map((hours) => hours * HOUR);
+
+/**
+ * Replay real sessions against "keep warm for up to N hours" policies. For every time you came back
+ * after the cache expired: if the policy would have bridged the gap, it pays for the pings and saves
+ * the rebuild; if the gap was longer, it pays for the pings it sent before giving up and saves nothing.
+ */
+export function backtest(sessions, limits = BACKTEST_LIMITS) {
+  const gaps = [];
+  for (const turns of sessions) {
+    const ttl = summarize(turns)?.ttl ?? "1h";
+    for (let index = 1; index < turns.length; index += 1) {
+      const before = turns[index - 1];
+      const after = turns[index];
+      const gap = after.at - before.at;
+      if (gap < TTL_MS[ttl]) continue;
+      const prefix = before.input + before.read + before.write;
+      const price = priceFor(before.model);
+      const rebuilt = Math.min(after.write, prefix);
+      gaps.push({ gap, ttl, ping: economics(prefix, before.model, ttl).ping, saving: (rebuilt * (price.input * WRITE[ttl] - price.read)) / 1e6 });
+    }
+  }
+  const policies = limits.map((limit) => {
+    let spent = 0;
+    let saved = 0;
+    let rescued = 0;
+    for (const { gap, ttl, ping, saving } of gaps) {
+      const every = TTL_MS[ttl] - MARGIN_MS[ttl];
+      const needed = Math.floor((gap - TTL_MS[ttl]) / every) + 1;
+      const sent = Math.floor(limit / every);
+      if (needed <= sent) { spent += needed * ping; saved += saving; rescued += 1; }
+      else spent += sent * ping;
+    }
+    return { limit, rescued, spent, saved, net: saved - spent };
+  });
+  return { gaps, policies, rebuildCost: gaps.reduce((sum, g) => sum + g.saving, 0) };
+}
+
+export function formatBacktest({ gaps, policies, rebuildCost }, days) {
+  if (!gaps.length) return `No returns to an expired cache in the last ${days} days. Keep-warm has nothing to save for you.`;
+  const buckets = [[1, 2], [2, 4], [4, 8], [8, 24], [24, Infinity]].map(([from, to]) => {
+    const inside = gaps.filter((g) => g.gap >= from * HOUR && g.gap < to * HOUR);
+    return `  ${to === Infinity ? `${from}h+` : `${from}-${to}h`}`.padEnd(9) + `${String(inside.length).padStart(5)} times   rebuilds ${money(inside.reduce((sum, g) => sum + g.saving, 0))}`;
+  });
+  const best = policies.reduce((a, b) => (b.net > a.net ? b : a));
+  const row = (p) => `  up to ${String(p.limit / HOUR).padEnd(4)}h  ${String(p.rescued).padStart(5)} rescued   pings ${money(p.spent).padStart(8)}   saved ${money(p.saved).padStart(8)}   net ${money(p.net).padStart(8)}`;
+  return [
+    `Last ${days} days: you came back to an expired cache ${gaps.length} time${gaps.length === 1 ? "" : "s"}. Those rebuilds cost ${money(rebuildCost)}.`,
+    "",
+    "How long you were away:",
+    ...buckets,
+    "",
+    "If keep-warm had been running, keeping sessions warm for at most...",
+    ...policies.map(row),
+    "",
+    best.net > 0
+      ? `Best for you: keep sessions warm for up to ${best.limit / HOUR}h. Net ${money(best.net)} over ${days} days (~${money((best.net * 30) / days)}/month).`
+      : "Keep-warm would not have paid off for how you work: the pings cost more than the rebuilds they avoid.",
+    `Each ping is priced as a cache read of the session plus ~${PING_TAIL / 1000}k new tokens written (measured). List prices, not your subscription bill.`,
+  ].join("\n");
 }
 
 function usageOf(event) {
@@ -113,6 +180,7 @@ function parseArgs(argv) {
     if (arg === "--help" || arg === "-h") options.mode = "help";
     else if (arg === "--watch") options.mode = "watch";
     else if (arg === "--report") options.mode = "report";
+    else if (arg === "--backtest") { options.mode = "backtest"; options.days = /^\d+$/.test(argv[index + 1] ?? "") ? Number(argv[++index]) : 30; }
     else if (arg === "--test") { options.mode = "test"; options.testSession = argv[index + 1] && !argv[index + 1].startsWith("--") ? argv[++index] : "latest"; }
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--max-idle") options.maxIdleMs = parseDuration(value());
@@ -174,7 +242,7 @@ export function ping(session, options, run = spawnSync) {
   return { ok: true, read, write: Number(usage.cache_creation_input_tokens) || 0, cost: Number(out.total_cost_usd) || 0, hit: session.prefix ? read / session.prefix : 0 };
 }
 
-const money = (value) => `$${value < 0.1 ? value.toFixed(4) : value.toFixed(2)}`;
+const money = (value) => `${value < 0 ? "-" : ""}$${Math.abs(value) < 0.1 ? Math.abs(value).toFixed(4) : Math.abs(value).toFixed(2)}`;
 const mins = (ms) => `${Math.round(ms / 60_000)}m`;
 const short = (id) => String(id).slice(0, 8);
 
@@ -197,7 +265,8 @@ export function runOnce(options, now = Date.now(), pinger = ping, log = console.
     const outcome = verify(record, turns);
     if (outcome) {
       const pings = record.pings;
-      const { rebuild, ping: readCost } = economics(pings.at(-1).prefix, session.model, session.ttl);
+      const { rebuild } = economics(pings.at(-1).prefix, session.model, session.ttl);
+      const readCost = (pings.at(-1).prefix * priceFor(session.model).read) / 1e6;
       state.ledger.push({ session: id, model: session.model, pings: pings.length, pingCost: pings.reduce((sum, p) => sum + p.cost, 0), warm: outcome.warm, avoided: outcome.warm ? rebuild - readCost : 0, at: outcome.at });
       record.outcome = outcome.warm ? "warm" : "cold";
       log(`${short(id)}  you came back ${outcome.warm ? "to a WARM cache" : "to a COLD cache"} after ${pings.length} ping(s)`);
@@ -265,7 +334,7 @@ function selfTest(options, log = console.log) {
   const result = ping(session, options);
   if (!result.ok) { log(`Ping failed: ${result.error}`); return 1; }
   log(`Ping read ${Math.round(result.read / 1000)}k of ${Math.round(session.prefix / 1000)}k prefix tokens (${Math.round(result.hit * 100)}%), wrote ${Math.round(result.write / 1000)}k, cost ${money(result.cost)}.`);
-  log(`A cold rebuild of this session costs ~${money(rebuild)}. Ideal ping ~${money(estimate)}: one avoided rebuild pays for ~${maxPings} pings.`);
+  log(`A cold rebuild of this session costs ~${money(rebuild)}. Expected ping ~${money(estimate)}: one avoided rebuild pays for ~${maxPings} pings.`);
   if (result.hit < 0.8) log("VERDICT: the ping did not reuse this session's cache (different model/effort/settings?). Keep-warm won't help this session.");
   else if (result.cost >= rebuild) log("VERDICT: the ping hit the cache, but extra requests made it cost more than the rebuild. Keep-warm loses money in this setup; don't run it.");
   else if (result.cost > rebuild / 3) log("VERDICT: the ping hit the cache, but extra requests made it expensive. Run --report after a few days before trusting it.");
@@ -280,6 +349,8 @@ Keeps idle Claude Code sessions' prompt cache warm, then measures whether it pai
   (no flag)        One pass: ping sessions about to go cold (run from cron every ~5 min)
   --watch          Keep running, one pass per minute
   --test [id]      Ping one session now (default: latest) and show what it read and cost
+  --backtest [days] Replay your last 30 days (or N): would keep-warm have paid off, and for how long?
+                   Sends nothing, costs nothing.
   --report         What pinging has spent vs. the rebuilds it avoided
   --dry-run        Show what would be pinged, send nothing
   --max-idle <d>   Stop pinging after this much idle time (default 8h; e.g. 90m, 12h)
@@ -293,6 +364,12 @@ export function main(argv = process.argv.slice(2)) {
   if (options.mode === "help") { console.log(HELP); return 0; }
   if (options.mode === "report") { console.log(report(loadState(options.state))); return 0; }
   if (options.mode === "test") return selfTest(options);
+  if (options.mode === "backtest") {
+    const since = Date.now() - options.days * 86_400_000;
+    const sessions = transcripts(options.dir, since).map((file) => readTurns(file).filter((turn) => turn.at >= since)).filter((turns) => turns.length > 1);
+    console.log(formatBacktest(backtest(sessions), options.days));
+    return 0;
+  }
   runOnce(options);
   if (options.mode === "watch") setInterval(() => runOnce(options), options.interval);
   return 0;

@@ -23,7 +23,8 @@ coming back from lunch reads the cache instead of rebuilding it. It then checks 
 see whether each return was actually warm, and keeps a ledger of ping spend vs. rebuilds avoided.
 
 ```
-node bin/cc-keep-warm.mjs --test     # ping your latest session once; shows what it read and cost
+node bin/cc-keep-warm.mjs --backtest # replay your last 30 days: would it have paid off, and for how long? (free)
+node bin/cc-keep-warm.mjs --test     # ping a warm session once; shows what it read and cost
 node bin/cc-keep-warm.mjs --watch    # keep idle sessions warm (stops at --max-idle, default 8h)
 node bin/cc-keep-warm.mjs --report   # did it pay off?
 ```
