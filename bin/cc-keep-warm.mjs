@@ -169,7 +169,7 @@ function parseDuration(value) {
 
 function parseArgs(argv) {
   const home = os.homedir();
-  const options = { dir: path.join(home, ".claude", "projects"), state: path.join(home, ".claude", "keep-warm", "state.json"), maxIdleMs: 8 * 3_600_000, claude: "claude", mode: "once", dryRun: false, interval: 60_000 };
+  const options = { dir: path.join(home, ".claude", "projects"), state: path.join(home, ".claude", "keep-warm", "state.json"), maxIdleMs: 2 * 3_600_000, claude: "claude", mode: "once", dryRun: false, interval: 60_000 };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     const value = () => {
@@ -353,7 +353,7 @@ Keeps idle Claude Code sessions' prompt cache warm, then measures whether it pai
                    Sends nothing, costs nothing.
   --report         What pinging has spent vs. the rebuilds it avoided
   --dry-run        Show what would be pinged, send nothing
-  --max-idle <d>   Stop pinging after this much idle time (default 8h; e.g. 90m, 12h)
+  --max-idle <d>   Stop pinging after this much idle time (default 2h; run --backtest to find yours)
   --dir <path>     Claude projects directory (default ~/.claude/projects)
   --state <file>   State file (default ~/.claude/keep-warm/state.json)
   --claude <bin>   claude executable (default: claude on PATH)`;
