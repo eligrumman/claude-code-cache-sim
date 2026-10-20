@@ -24,12 +24,15 @@ const STRIP_ENV = ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SE
 // Besides reading the session, every ping writes its own tail to the cache: the resumed session's
 // last turn re-rendered plus the ping message. Measured at 11-13k tokens on a real ping.
 export const PING_TAIL = 12_000;
+let pingTail = PING_TAIL;
+/** Override the per-ping tail (e.g. 0 for an API keep-alive with max_tokens: 0). */
+export function setPingTail(tokens) { pingTail = tokens; }
 
 /** Rebuild vs ping cost for a prefix; `maxPings` is how many pings one avoided rebuild pays for. */
 export function economics(prefixTokens, model, ttl) {
   const price = priceFor(model);
   const rebuild = (prefixTokens * price.input * WRITE[ttl]) / 1e6;
-  const ping = (prefixTokens * price.read + PING_TAIL * price.input * WRITE[ttl]) / 1e6;
+  const ping = (prefixTokens * price.read + pingTail * price.input * WRITE[ttl]) / 1e6;
   return { rebuild, ping, maxPings: ping > 0 ? Math.floor(rebuild / ping) - 1 : 0 };
 }
 
@@ -186,7 +189,7 @@ export function formatBacktest({ gaps, periods, policies, rebuildCost }, days, w
     best.net > 0
       ? `Best for you: keep sessions warm ${label(best.limit)}${window ? ` during ${describeWindow(window)}` : ""}. Net ${money(best.net)} over ${days} days (~${money((best.net * 30) / days)}/month).`
       : "Keep-warm would not have paid off for how you work: the pings cost more than the rebuilds they avoid.",
-    `Each ping is priced as a cache read of the session plus ~${PING_TAIL / 1000}k new tokens written (measured). List prices, not your subscription bill.`,
+    `Each ping is priced as a cache read of the session plus ~${pingTail / 1000}k new tokens written${pingTail === PING_TAIL ? " (measured)" : " (--tail)"}. List prices, not your subscription bill.`,
   ].join("\n");
 }
 
@@ -303,6 +306,7 @@ function parseArgs(argv) {
     else if (arg === "--test") { options.mode = "test"; options.testSession = argv[index + 1] && !argv[index + 1].startsWith("--") ? argv[++index] : "latest"; }
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--smart") options.smart = true;
+    else if (arg === "--tail") { const tail = Number(value()); if (!Number.isFinite(tail) || tail < 0) throw new Error("--tail must be a token count"); setPingTail(tail); }
     else if (arg === "--max-idle") options.maxIdleMs = parseDuration(value());
     else if (arg === "--dir") options.dir = path.resolve(value().replace(/^~(?=$|\/)/, home));
     else if (arg === "--state") options.state = path.resolve(value().replace(/^~(?=$|\/)/, home));
@@ -487,6 +491,7 @@ Keeps idle Claude Code sessions' prompt cache warm, then measures whether it pai
                    Sends nothing, costs nothing.
   --report         What pinging has spent vs. the rebuilds it avoided
   --dry-run        Show what would be pinged, send nothing
+  --tail <tokens>  What-if for --backtest: tokens each ping writes (default 12000, measured; 0 = API keep-alive)
   --smart          Only ping when your history says you're likely back before the cache dies
   --hours <a-b>    Only ping during these local hours, e.g. 9-19 (also used by --backtest)
   --workdays <d>   Only ping on these days, e.g. sun-thu or mon-fri
