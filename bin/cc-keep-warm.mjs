@@ -45,6 +45,10 @@ export function economics(prefixTokens, model, ttl) {
 }
 
 /** What `sent` pings in one chain cost. */
+let modelOverride = null;
+/** What-if for the backtest: price every session as if it ran on this model. */
+export function setModelOverride(model) { modelOverride = model; }
+
 export function chainCost(period, sent) {
   return sent ? period.ping + (sent - 1) * period.pingNext : 0;
 }
@@ -78,10 +82,11 @@ export function idlePeriods(sessions, now = Date.now()) {
     const every = TTL_MS[ttl] - MARGIN_MS[ttl];
     const push = (before, end, rebuilt) => {
       const prefix = before.input + before.read + before.write;
-      const price = priceFor(before.model);
+      const model = modelOverride ?? before.model;
+      const price = priceFor(model);
       const perToken = (price.input * WRITE[ttl] - price.read) / 1e6;
-      const cost = economics(prefix, before.model, ttl);
-      periods.push({ session: before.sessionId, model: before.model, prefix, start: before.at, end, ttl, ping: cost.ping, pingNext: cost.pingNext, expected: prefix * perToken, saving: Math.min(rebuilt, prefix) * perToken });
+      const cost = economics(prefix, model, ttl);
+      periods.push({ session: before.sessionId, model, prefix, start: before.at, end, ttl, ping: cost.ping, pingNext: cost.pingNext, expected: prefix * perToken, saving: Math.min(rebuilt, prefix) * perToken });
     };
     for (let index = 1; index < turns.length; index += 1) {
       if (turns[index].at - turns[index - 1].at >= every) push(turns[index - 1], turns[index].at, turns[index].write);
@@ -187,8 +192,8 @@ export function formatDetails(rows, limit) {
     `Policy: keep warm up to ${limit / HOUR}h. Every idle stretch long enough for a ping, by what happened:`,
     ...groups("outcome"),
     "",
-    "By cache lifetime (1h = main Claude Code sessions; 5m sessions need a ping every ~4 minutes):",
-    ...groups("ttl"),
+    "By model (each priced at its own list price; --as-model reprices everything):",
+    ...groups("model"),
     "",
     "Sessions that lost the most:",
     ...sessions.slice(0, 10).map(line),
@@ -386,6 +391,7 @@ function parseArgs(argv) {
     else if (arg === "--test") { options.mode = "test"; options.testSession = argv[index + 1] && !argv[index + 1].startsWith("--") ? argv[++index] : "latest"; }
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--smart") options.smart = true;
+    else if (arg === "--as-model") setModelOverride(value());
     else if (arg === "--min-size") { const k = /^(\d+)k?$/i.exec(value()); if (!k) throw new Error("--min-size takes a token count like 300k"); options.minPrefix = Number(k[1]) * (/k$/i.test(argv[index]) ? 1000 : 1); }
     else if (arg === "--tail") { const tail = Number(value()); if (!Number.isFinite(tail) || tail < 0) throw new Error("--tail must be a token count"); setPingTail(tail); }
     else if (arg === "--max-idle") options.maxIdleMs = parseDuration(value());
@@ -577,6 +583,7 @@ Keeps idle Claude Code sessions' prompt cache warm, then measures whether it pai
   --dry-run        Show what would be pinged, send nothing
   --tail <tokens>  What-if for --backtest: tokens each ping writes (default 12000, measured; 0 = API keep-alive)
   --min-size <n>   Only keep sessions at least this big warm (default 200k; 0 = all; see --backtest)
+  --as-model <m>   What-if for --backtest/--details: price all history as this model (e.g. claude-opus-5-5)
   --smart          Only ping when your history says you're likely back before the cache dies
   --hours <a-b>    Only ping during these local hours, e.g. 9-19 (also used by --backtest)
   --workdays <d>   Only ping on these days, e.g. sun-thu or mon-fri

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { backtest, backtestBySize, backtestDetails, economics, formatBacktest, formatDetails, learnReturns, smartPolicy, parseTurns, pickTestSession, ping, plan, report, runOnce, summarize, verify } from "./cc-keep-warm.mjs";
+import { setModelOverride, backtest, backtestBySize, backtestDetails, economics, formatBacktest, formatDetails, learnReturns, smartPolicy, parseTurns, pickTestSession, ping, plan, report, runOnce, summarize, verify } from "./cc-keep-warm.mjs";
 
 const MIN = 60_000;
 const T0 = Date.parse("2026-10-17T12:00:00Z");
@@ -271,5 +271,18 @@ describe("size threshold", () => {
     expect(rows[1].net).toBeGreaterThan(rows[0].net);
     expect(rows[1].rescued).toBe(1);
     expect(plan({ ...session, prefix: 50_000 }, undefined, T0 + 58 * MIN, 8 * H, null, 300_000).reason).toMatch(/min-size/);
+  });
+});
+
+describe("--as-model", () => {
+  it("reprices old-model history at the chosen model", () => {
+    const H = 60 * MIN;
+    const old = (at: number, write: number) => JSON.stringify({ type: "assistant", sessionId: "o", cwd: "/w", timestamp: new Date(at).toISOString(), message: { model: "claude-opus-4-8", usage: { input_tokens: 2, cache_read_input_tokens: 300_000 - write, cache_creation_input_tokens: write, cache_creation: { ephemeral_1h_input_tokens: write } } } });
+    const turns = parseTurns([old(T0, 1000), old(T0 + 1.5 * H, 300_000)]);
+    const asIs = backtest([turns], [2 * H], null, T0 + 3 * H).policies[0];
+    setModelOverride("claude-opus-5-5");
+    const asNew = backtest([turns], [2 * H], null, T0 + 3 * H).policies[0];
+    setModelOverride(null);
+    expect(asNew.spent).toBeLessThan(asIs.spent);
   });
 });
