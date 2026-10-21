@@ -60,6 +60,8 @@ export function idlePeriods(sessions, now = Date.now()) {
   const periods = [];
   for (const turns of sessions) {
     const ttl = summarize(turns)?.ttl ?? "1h";
+    // Keep-warm is for main sessions, which cache for 1h; a 5m session would need a ping every ~4 minutes.
+    if (ttl !== "1h") continue;
     const every = TTL_MS[ttl] - MARGIN_MS[ttl];
     const push = (before, end, rebuilt) => {
       const prefix = before.input + before.read + before.write;
@@ -283,6 +285,7 @@ export function plan(session, record, now, maxIdleMs, window = null) {
   const sinceTouch = now - lastTouch;
   const ttl = TTL_MS[session.ttl];
   if (record?.disabled) return { action: "skip", reason: record.disabled };
+  if (session.ttl !== "1h") return { action: "skip", reason: "not a main session (5-minute cache)" };
   if (sinceTouch >= ttl) return { action: "skip", reason: "already cold" };
   if (sinceTouch < ttl - MARGIN_MS[session.ttl]) return { action: "wait", inMs: ttl - MARGIN_MS[session.ttl] - sinceTouch };
   if (idle > maxIdleMs) return { action: "skip", reason: "past --max-idle" };

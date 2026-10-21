@@ -251,3 +251,12 @@ describe("details", () => {
     expect(formatDetails(rows, 2 * H)).toContain("Sessions that lost the most");
   });
 });
+
+describe("5-minute sessions", () => {
+  const fiveMin = (at: number) => turn(at, { input_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 50_000, cache_creation: { ephemeral_5m_input_tokens: 50_000 } });
+  it("are left alone: keep-warm only handles 1h main sessions", () => {
+    const turns = parseTurns([fiveMin(T0), fiveMin(T0 + 30 * MIN)]);
+    expect(backtest([turns], [2 * 60 * MIN], null, T0 + 72 * 60 * MIN).policies[0].spent).toBe(0);
+    expect(plan({ ...session, ttl: "5m" }, undefined, T0 + 4 * MIN, 8 * 60 * MIN).action).toBe("skip");
+  });
+});
