@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { backtest, economics, formatBacktest, learnReturns, smartPolicy, parseTurns, pickTestSession, ping, plan, report, runOnce, summarize, verify } from "./cc-keep-warm.mjs";
+import { backtest, backtestDetails, economics, formatBacktest, formatDetails, learnReturns, smartPolicy, parseTurns, pickTestSession, ping, plan, report, runOnce, summarize, verify } from "./cc-keep-warm.mjs";
 
 const MIN = 60_000;
 const T0 = Date.parse("2026-10-17T12:00:00Z");
@@ -238,5 +238,16 @@ describe("smart mode", () => {
     const decide = smartPolicy(learnReturns(periods));
     expect(decide(at(12, 30) + 52 * MIN, { start: at(12, 30), expected: 0.78, ping: 0.116 })).toBe(true);
     expect(decide(at(20, 30) + 52 * MIN, { start: at(20, 30), expected: 0.78, ping: 0.116 })).toBe(false);
+  });
+});
+
+describe("details", () => {
+  const H = 60 * MIN;
+  it("labels every idle stretch with what the pings cost and what happened", () => {
+    const cold = (at: number) => turn(at, { input_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 100_000, cache_creation: { ephemeral_1h_input_tokens: 100_000 } });
+    const sessions = [parseTurns([warmTurn(T0), cold(T0 + 1.5 * H)]), parseTurns([warmTurn(T0), cold(T0 + 16 * H)]), parseTurns([warmTurn(T0)])];
+    const rows = backtestDetails(sessions, 2 * H, null, T0 + 72 * H);
+    expect(rows.map((r) => r.outcome).sort()).toEqual(["came back cold anyway (gone too long)", "never came back", "never came back", "never came back", "rescued: came back warm"].sort());
+    expect(formatDetails(rows, 2 * H)).toContain("Sessions that lost the most");
   });
 });
