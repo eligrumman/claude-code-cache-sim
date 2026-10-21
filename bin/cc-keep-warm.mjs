@@ -15,25 +15,38 @@ import { WRITE, priceFor } from "./prices.mjs";
 // is untouched and nothing shows up in /resume. Everything stays local except that one request.
 
 const TTL_MS = Object.freeze({ "5m": 5 * 60_000, "1h": 60 * 60_000 });
-// Ping this long before expiry: enough slack for a slow `claude` start, small enough to matter.
-const MARGIN_MS = Object.freeze({ "5m": 60_000, "1h": 8 * 60_000 });
+// Ping this long before expiry: enough slack for a slow `claude` start (pings land every 57 minutes).
+const MARGIN_MS = Object.freeze({ "5m": 60_000, "1h": 3 * 60_000 });
 const PROMPT = "Keep-alive ping from cc-keep-warm. Do not use any tools. Reply with exactly: ok";
 // Env a parent Claude Code session leaks into child processes; inheriting it hijacks the child's session id.
 const STRIP_ENV = ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_REMOTE_SESSION_ID"];
 
-// Besides reading the session, every ping writes its own tail to the cache: the resumed session's
-// last turn re-rendered plus the ping message. Measured at 11-13k tokens on a real ping.
+// Besides reading the session, every ping writes a tail to the cache: the resumed session's last
+// turn re-rendered plus the ping message. Measured: ~12k tokens on the first ping of a chain
+// (12,406 / 11k / 13k), ~5.4k on each ping after it (5,424 and 5,418), which reuses the first's write.
 export const PING_TAIL = 12_000;
+export const PING_TAIL_NEXT = 5_500;
 let pingTail = PING_TAIL;
+let pingTailNext = PING_TAIL_NEXT;
 /** Override the per-ping tail (e.g. 0 for an API keep-alive with max_tokens: 0). */
-export function setPingTail(tokens) { pingTail = tokens; }
+export function setPingTail(tokens) { pingTail = tokens; pingTailNext = Math.min(tokens, PING_TAIL_NEXT); }
 
-/** Rebuild vs ping cost for a prefix; `maxPings` is how many pings one avoided rebuild pays for. */
+/**
+ * Rebuild vs ping cost for a prefix. `ping` is the first ping of a chain, `pingNext` each one after it;
+ * `maxPings` is how many pings one avoided rebuild pays for.
+ */
 export function economics(prefixTokens, model, ttl) {
   const price = priceFor(model);
   const rebuild = (prefixTokens * price.input * WRITE[ttl]) / 1e6;
-  const ping = (prefixTokens * price.read + pingTail * price.input * WRITE[ttl]) / 1e6;
-  return { rebuild, ping, maxPings: ping > 0 ? Math.floor(rebuild / ping) - 1 : 0 };
+  const read = (prefixTokens * price.read) / 1e6;
+  const ping = read + (pingTail * price.input * WRITE[ttl]) / 1e6;
+  const pingNext = read + (pingTailNext * price.input * WRITE[ttl]) / 1e6;
+  return { rebuild, ping, pingNext, maxPings: ping > 0 ? Math.floor((rebuild - ping) / pingNext) : 0 };
+}
+
+/** What `sent` pings in one chain cost. */
+export function chainCost(period, sent) {
+  return sent ? period.ping + (sent - 1) * period.pingNext : 0;
 }
 
 const HOUR = 3_600_000;
@@ -67,7 +80,8 @@ export function idlePeriods(sessions, now = Date.now()) {
       const prefix = before.input + before.read + before.write;
       const price = priceFor(before.model);
       const perToken = (price.input * WRITE[ttl] - price.read) / 1e6;
-      periods.push({ session: before.sessionId, model: before.model, prefix, start: before.at, end, ttl, ping: economics(prefix, before.model, ttl).ping, expected: prefix * perToken, saving: Math.min(rebuilt, prefix) * perToken });
+      const cost = economics(prefix, before.model, ttl);
+      periods.push({ session: before.sessionId, model: before.model, prefix, start: before.at, end, ttl, ping: cost.ping, pingNext: cost.pingNext, expected: prefix * perToken, saving: Math.min(rebuilt, prefix) * perToken });
     };
     for (let index = 1; index < turns.length; index += 1) {
       if (turns[index].at - turns[index - 1].at >= every) push(turns[index - 1], turns[index].at, turns[index].write);
@@ -102,7 +116,7 @@ function score(periods, decide, limit) {
   let rescued = 0;
   for (const period of periods) {
     const result = simulate(period, decide);
-    spent += result.sent * period.ping;
+    spent += chainCost(period, result.sent);
     if (result.rescued) { saved += period.saving; rescued += 1; }
   }
   return { limit, rescued, spent, saved, net: saved - spent };
@@ -149,7 +163,7 @@ export function backtestDetails(sessions, limit, window = null, now = Date.now()
     const outcome = period.end === Infinity ? "never came back"
       : gap < TTL_MS[period.ttl] ? (sent ? "back before cache expired (ping not needed)" : "back while warm")
       : rescued ? "rescued: came back warm" : "came back cold anyway (gone too long)";
-    const cost = sent * period.ping;
+    const cost = chainCost(period, sent);
     const saved = rescued ? period.saving : 0;
     return { ...period, gap, sent, cost, saved, net: saved - cost, outcome };
   });
@@ -251,7 +265,7 @@ export function formatBacktest({ gaps, periods, policies, rebuildCost }, days, w
     best.net > 0
       ? `Best for you: keep sessions warm ${label(best.limit)}${window ? ` during ${describeWindow(window)}` : ""}. Net ${money(best.net)} over ${days} days (~${money((best.net * 30) / days)}/month).`
       : "Keep-warm would not have paid off for how you work: the pings cost more than the rebuilds they avoid.",
-    `Each ping is priced as a cache read of the session plus ~${pingTail / 1000}k new tokens written${pingTail === PING_TAIL ? " (measured)" : " (--tail)"}. List prices, not your subscription bill.`,
+    `Each ping is priced as a cache read of the session plus new tokens written: ~${pingTail / 1000}k on the first ping of a break, ~${pingTailNext / 1000}k on each after it${pingTail === PING_TAIL ? " (measured)" : " (--tail)"}. List prices, not your subscription bill.`,
   ].join("\n");
 }
 

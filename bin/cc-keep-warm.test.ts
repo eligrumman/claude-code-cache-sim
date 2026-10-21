@@ -27,7 +27,7 @@ describe("economics", () => {
     const e = economics(100_000, "claude-opus-5-5", "1h");
     expect(e.rebuild).toBeCloseTo(0.8);
     expect(e.ping).toBeCloseTo(0.02 + 0.096);
-    expect(e.maxPings).toBe(5);
+    expect(e.maxPings).toBe(10);
   });
 
   it("lets pings pay off longer on bigger sessions, where the fixed tail matters less", () => {
@@ -60,13 +60,13 @@ describe("plan", () => {
   });
 
   it("pings just before the TTL runs out", () => {
-    expect(plan(session, undefined, T0 + 55 * MIN, hours).action).toBe("ping");
+    expect(plan(session, undefined, T0 + 58 * MIN, hours).action).toBe("ping");
   });
 
   it("measures the next deadline from the last ping, not the last message", () => {
     const record = { since: T0, pings: [{ at: T0 + 55 * MIN }] };
     expect(plan(session, record, T0 + 70 * MIN, hours).action).toBe("wait");
-    expect(plan(session, record, T0 + 108 * MIN, hours).action).toBe("ping");
+    expect(plan(session, record, T0 + 113 * MIN, hours).action).toBe("ping");
   });
 
   it("never pings an already-expired cache (that would just pay for the rebuild)", () => {
@@ -75,13 +75,13 @@ describe("plan", () => {
 
   it("stops at --max-idle", () => {
     const record = { since: T0, pings: [{ at: T0 + 9 * 60 * MIN }] };
-    expect(plan(session, record, T0 + 9 * 60 * MIN + 55 * MIN, hours).reason).toBe("past --max-idle");
+    expect(plan(session, record, T0 + 9 * 60 * MIN + 58 * MIN, hours).reason).toBe("past --max-idle");
   });
 
   it("stops once more pings would cost more than the rebuild they protect", () => {
     const record = { since: T0, pings: Array.from({ length: 39 }, (_, i) => ({ at: T0 + i })) };
     const late = { ...record, pings: [...record.pings.slice(0, -1), { at: T0 + 100 * MIN }] };
-    expect(plan(session, late, T0 + 155 * MIN, 100 * hours).reason).toMatch(/cost more/);
+    expect(plan(session, late, T0 + 158 * MIN, 100 * hours).reason).toMatch(/cost more/);
   });
 });
 
@@ -125,7 +125,7 @@ describe("runOnce end to end", () => {
     const pinger = () => ({ ok: true, read: 100_000, write: 300, cost: 0.02, hit: 1 });
     const quiet = () => {};
 
-    runOnce(options, T0 + 55 * MIN, pinger, quiet);
+    runOnce(options, T0 + 58 * MIN, pinger, quiet);
     fs.appendFileSync(file, `${warmTurn(T0 + 90 * MIN)}\n`);
     const state = runOnce(options, T0 + 91 * MIN, pinger, quiet);
 
@@ -141,7 +141,7 @@ describe("runOnce end to end", () => {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "s1.jsonl"), `${warmTurn(T0)}\n`);
     const options = { dir: path.join(root, "projects"), state: path.join(root, "state.json"), maxIdleMs: 8 * 60 * MIN, claude: "claude", dryRun: false };
-    const state = runOnce(options, T0 + 55 * MIN, () => ({ ok: true, read: 30_000, write: 70_000, cost: 0.5, hit: 0.3 }), () => {});
+    const state = runOnce(options, T0 + 58 * MIN, () => ({ ok: true, read: 30_000, write: 70_000, cost: 0.5, hit: 0.3 }), () => {});
     expect(state.sessions.s1.disabled).toMatch(/30%/);
     expect(plan(session, state.sessions.s1, T0 + 108 * MIN, 8 * 60 * MIN).action).toBe("skip");
   });
@@ -154,7 +154,7 @@ describe("runOnce cost guard", () => {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "s1.jsonl"), `${warmTurn(T0)}\n`);
     const options = { dir: path.join(root, "projects"), state: path.join(root, "state.json"), maxIdleMs: 8 * 60 * MIN, claude: "claude", dryRun: false };
-    const state = runOnce(options, T0 + 55 * MIN, () => ({ ok: true, read: 100_000, write: 100_000, cost: 0.9, hit: 1 }), () => {});
+    const state = runOnce(options, T0 + 58 * MIN, () => ({ ok: true, read: 100_000, write: 100_000, cost: 0.9, hit: 1 }), () => {});
     expect(state.sessions.s1.disabled).toMatch(/more than the/);
   });
 });
@@ -189,7 +189,7 @@ describe("backtest", () => {
   });
 
   it("charges the ping sent before you came back anyway", () => {
-    const policy = backtest([parseTurns([warmTurn(T0), warmTurn(T0 + 55 * MIN)])], [3 * H], null, NOW).policies[0];
+    const policy = backtest([parseTurns([warmTurn(T0), warmTurn(T0 + 58 * MIN)])], [3 * H], null, NOW).policies[0];
     expect(policy.spent).toBeCloseTo(0.116);
     expect(policy.saved).toBe(0);
   });
@@ -204,12 +204,12 @@ describe("backtest", () => {
   it("charges the pings it sent before giving up on an overnight gap", () => {
     const policy = backtest([day(16 * H)], [3 * H], null, NOW).policies[0];
     expect(policy.rescued).toBe(0);
-    expect(policy.spent).toBeCloseTo(3 * 0.116);
+    expect(policy.spent).toBeCloseTo(0.116 + 2 * 0.064);
   });
 
   it("counts pings sent to a session you never came back to", () => {
     const policy = backtest([parseTurns([warmTurn(T0)])], [3 * H], null, T0 + 72 * H).policies[0];
-    expect(policy.spent).toBeCloseTo(3 * 0.116);
+    expect(policy.spent).toBeCloseTo(0.116 + 2 * 0.064);
   });
 
   it("stops pinging when working hours end", () => {
@@ -270,6 +270,6 @@ describe("size threshold", () => {
     const rows = backtestBySize([small, large], 2 * H, [0, 300_000], null, T0 + 72 * H);
     expect(rows[1].net).toBeGreaterThan(rows[0].net);
     expect(rows[1].rescued).toBe(1);
-    expect(plan({ ...session, prefix: 50_000 }, undefined, T0 + 55 * MIN, 8 * H, null, 300_000).reason).toMatch(/min-size/);
+    expect(plan({ ...session, prefix: 50_000 }, undefined, T0 + 58 * MIN, 8 * H, null, 300_000).reason).toMatch(/min-size/);
   });
 });
