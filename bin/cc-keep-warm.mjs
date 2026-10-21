@@ -440,7 +440,7 @@ function parseDuration(value) {
 
 function parseArgs(argv) {
   const home = os.homedir();
-  const options = { dir: path.join(home, ".claude", "projects"), state: path.join(home, ".claude", "keep-warm", "state.json"), maxIdleMs: 1.5 * 3_600_000, minPrefix: 200_000, claude: "claude", mode: "once", dryRun: false, interval: 60_000 };
+  const options = { dir: path.join(home, ".claude", "projects"), state: path.join(home, ".claude", "keep-warm", "state.json"), maxIdleMs: 2 * 3_600_000, minPrefix: 200_000, claude: "claude", mode: "once", dryRun: false, interval: 60_000 };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     const value = () => {
@@ -673,7 +673,7 @@ Keeps idle Claude Code sessions' prompt cache warm, then measures whether it pai
   --smart          Only ping when your history says you're likely back before the cache dies
   --hours <a-b>    Only ping during these local hours, e.g. 9-19 (also used by --backtest)
   --workdays <d>   Only ping on these days, e.g. sun-thu or mon-fri
-  --max-idle <d>   Stop pinging after this much idle time (default 1.5h; run --backtest to find yours)
+  --max-idle <d>   Stop pinging after this much idle time (default 2h; run --backtest to find yours)
   --dir <path>     Claude projects directory (default ~/.claude/projects)
   --state <file>   State file (default ~/.claude/keep-warm/state.json)
   --claude <bin>   claude executable (default: claude on PATH)`;
