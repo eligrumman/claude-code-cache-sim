@@ -196,6 +196,23 @@ export function backtest(sessions, limits = BACKTEST_LIMITS, window = null, now 
   return { gaps: cold.map((p) => ({ ...p, gap: p.end - p.start })), periods, policies, rebuildCost: cold.reduce((sum, g) => sum + g.saving, 0) };
 }
 
+export const SIZE_THRESHOLDS = [0, 100_000, 200_000, 300_000, 400_000, 500_000];
+
+/** Same policy, but only for sessions at least this big: the ping's fixed tail matters less on big ones. */
+export function backtestBySize(sessions, limit, thresholds = SIZE_THRESHOLDS, window = null, now = Date.now()) {
+  const periods = idlePeriods(sessions, now);
+  return thresholds.map((min) => ({ min, ...score(periods.filter((p) => p.prefix >= min), (at, period) => at - period.start <= limit && inWindow(window, at), limit) }));
+}
+
+export function formatBySize(rows, limit) {
+  const best = rows.reduce((x, y) => (y.net > x.net ? y : x));
+  return [
+    `Keeping only big sessions warm (up to ${limit / HOUR}h), by session size:`,
+    ...rows.map((r) => `  ${(r.min ? `${r.min / 1000}k+ tokens` : "all sessions").padEnd(16)} ${String(r.rescued).padStart(5)} rescued   pings ${money(r.spent).padStart(8)}   saved ${money(r.saved).padStart(8)}   net ${money(r.net).padStart(8)}`),
+    !(best.net > 0) ? "No size threshold makes it pay off." : best.min ? `Best: only sessions of ${best.min / 1000}k+ tokens (--min-size ${best.min / 1000}k). Net ${money(best.net)}.` : `Best: no size filter. Net ${money(best.net)}.`,
+  ].join("\n");
+}
+
 /** Learn return patterns from the older half of your history, then score on the newer half. */
 export function backtestSmart(sessions, now = Date.now()) {
   const periods = idlePeriods(sessions, now);
@@ -278,7 +295,7 @@ export function summarize(turns) {
 }
 
 /** Decide what to do with one session right now. Pure: every input is explicit. */
-export function plan(session, record, now, maxIdleMs, window = null) {
+export function plan(session, record, now, maxIdleMs, window = null, minPrefix = 0) {
   const pings = record?.since === session.lastActivity ? record.pings : [];
   const lastTouch = Math.max(session.lastActivity, pings.at(-1)?.at ?? 0);
   const idle = now - session.lastActivity;
@@ -286,6 +303,7 @@ export function plan(session, record, now, maxIdleMs, window = null) {
   const ttl = TTL_MS[session.ttl];
   if (record?.disabled) return { action: "skip", reason: record.disabled };
   if (session.ttl !== "1h") return { action: "skip", reason: "not a main session (5-minute cache)" };
+  if (session.prefix < minPrefix) return { action: "skip", reason: "smaller than --min-size" };
   if (sinceTouch >= ttl) return { action: "skip", reason: "already cold" };
   if (sinceTouch < ttl - MARGIN_MS[session.ttl]) return { action: "wait", inMs: ttl - MARGIN_MS[session.ttl] - sinceTouch };
   if (idle > maxIdleMs) return { action: "skip", reason: "past --max-idle" };
@@ -354,6 +372,7 @@ function parseArgs(argv) {
     else if (arg === "--test") { options.mode = "test"; options.testSession = argv[index + 1] && !argv[index + 1].startsWith("--") ? argv[++index] : "latest"; }
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--smart") options.smart = true;
+    else if (arg === "--min-size") { const k = /^(\d+)k?$/i.exec(value()); if (!k) throw new Error("--min-size takes a token count like 300k"); options.minPrefix = Number(k[1]) * (/k$/i.test(argv[index]) ? 1000 : 1); }
     else if (arg === "--tail") { const tail = Number(value()); if (!Number.isFinite(tail) || tail < 0) throw new Error("--tail must be a token count"); setPingTail(tail); }
     else if (arg === "--max-idle") options.maxIdleMs = parseDuration(value());
     else if (arg === "--dir") options.dir = path.resolve(value().replace(/^~(?=$|\/)/, home));
@@ -457,7 +476,7 @@ export function runOnce(options, now = Date.now(), pinger = ping, log = console.
       log(`${short(id)}  you came back ${outcome.warm ? "to a WARM cache" : "to a COLD cache"} after ${pings.length} ping(s)`);
     }
     if (record && record.since !== session.lastActivity) record = state.sessions[id] = { since: session.lastActivity, pings: [], disabled: record.disabled };
-    const decision = plan(session, record, now, options.maxIdleMs, options.window);
+    const decision = plan(session, record, now, options.maxIdleMs, options.window, options.minPrefix);
     if (decision.action !== "ping") continue;
     const { rebuild, ping: estimate } = economics(session.prefix, session.model, session.ttl);
     if (options.smart && !smartPolicy(returnModel(options, now))(now, { start: session.lastActivity, expected: rebuild, ping: estimate })) continue;
@@ -543,6 +562,7 @@ Keeps idle Claude Code sessions' prompt cache warm, then measures whether it pai
   --report         What pinging has spent vs. the rebuilds it avoided
   --dry-run        Show what would be pinged, send nothing
   --tail <tokens>  What-if for --backtest: tokens each ping writes (default 12000, measured; 0 = API keep-alive)
+  --min-size <n>   Only keep sessions at least this big warm, e.g. 300k (also shown in --backtest)
   --smart          Only ping when your history says you're likely back before the cache dies
   --hours <a-b>    Only ping during these local hours, e.g. 9-19 (also used by --backtest)
   --workdays <d>   Only ping on these days, e.g. sun-thu or mon-fri
@@ -575,7 +595,12 @@ export function main(argv = process.argv.slice(2)) {
     const first = Math.min(...sessions.map((turns) => turns[0].at));
     const covered = sessions.length ? Math.max(1, Math.ceil((Date.now() - first) / 86_400_000)) : 0;
     const days = covered || options.days;
-    console.log(formatBacktest(backtest(sessions), days));
+    const plain = backtest(sessions);
+    console.log(formatBacktest(plain, days));
+    if (plain.gaps.length) {
+      const bestLimit = plain.policies.reduce((x, y) => (y.net > x.net ? y : x)).limit;
+      console.log(`\n${formatBySize(backtestBySize(sessions, bestLimit), bestLimit)}`);
+    }
     const window = options.window ?? { from: 9, to: 19, days: [0, 1, 2, 3, 4, 5, 6] };
     console.log(`\n${"-".repeat(72)}\n`);
     console.log(formatBacktest(backtest(sessions, [2 * HOUR, 4 * HOUR, 8 * HOUR, Infinity], window), days, window));

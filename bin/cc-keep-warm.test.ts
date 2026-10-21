@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { backtest, backtestDetails, economics, formatBacktest, formatDetails, learnReturns, smartPolicy, parseTurns, pickTestSession, ping, plan, report, runOnce, summarize, verify } from "./cc-keep-warm.mjs";
+import { backtest, backtestBySize, backtestDetails, economics, formatBacktest, formatDetails, learnReturns, smartPolicy, parseTurns, pickTestSession, ping, plan, report, runOnce, summarize, verify } from "./cc-keep-warm.mjs";
 
 const MIN = 60_000;
 const T0 = Date.parse("2026-10-17T12:00:00Z");
@@ -258,5 +258,18 @@ describe("5-minute sessions", () => {
     const turns = parseTurns([fiveMin(T0), fiveMin(T0 + 30 * MIN)]);
     expect(backtest([turns], [2 * 60 * MIN], null, T0 + 72 * 60 * MIN).policies[0].spent).toBe(0);
     expect(plan({ ...session, ttl: "5m" }, undefined, T0 + 4 * MIN, 8 * 60 * MIN).action).toBe("skip");
+  });
+});
+
+describe("size threshold", () => {
+  const H = 60 * MIN;
+  const big = (at: number, size: number, write: number) => turn(at, { input_tokens: 2, cache_read_input_tokens: size - write, cache_creation_input_tokens: write, cache_creation: { ephemeral_1h_input_tokens: write } });
+  it("keeping only big sessions warm drops the small sessions' wasted pings", () => {
+    const small = parseTurns([big(T0, 50_000, 1000)]);           // abandoned, small
+    const large = parseTurns([big(T0, 600_000, 1000), big(T0 + 1.5 * H, 600_000, 600_000)]); // rescued, big
+    const rows = backtestBySize([small, large], 2 * H, [0, 300_000], null, T0 + 72 * H);
+    expect(rows[1].net).toBeGreaterThan(rows[0].net);
+    expect(rows[1].rescued).toBe(1);
+    expect(plan({ ...session, prefix: 50_000 }, undefined, T0 + 55 * MIN, 8 * H, null, 300_000).reason).toMatch(/min-size/);
   });
 });
