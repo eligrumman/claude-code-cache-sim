@@ -6,6 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WRITE, priceFor } from "./prices.mjs";
+import { activityIndex, explain, featuresAt, parseSignals, predict, stopSignals, train } from "./return-model.mjs";
 
 // Keeps idle Claude Code sessions' prompt cache warm, and measures whether that actually paid off.
 //
@@ -77,6 +78,7 @@ export function idlePeriods(sessions, now = Date.now()) {
   const periods = [];
   for (const turns of sessions) {
     const ttl = summarize(turns)?.ttl ?? "1h";
+    const signals = turns.signals ?? { prompts: [], replies: [], cwd: null };
     // Keep-warm is for main sessions, which cache for 1h; a 5m session would need a ping every ~4 minutes.
     if (ttl !== "1h") continue;
     const every = TTL_MS[ttl] - MARGIN_MS[ttl];
@@ -86,7 +88,7 @@ export function idlePeriods(sessions, now = Date.now()) {
       const price = priceFor(model);
       const perToken = (price.input * WRITE[ttl] - price.read) / 1e6;
       const cost = economics(prefix, model, ttl);
-      periods.push({ session: before.sessionId, model, prefix, start: before.at, end, ttl, ping: cost.ping, pingNext: cost.pingNext, expected: prefix * perToken, saving: Math.min(rebuilt, prefix) * perToken });
+      periods.push({ session: before.sessionId, cwd: signals.cwd ?? before.cwd, signals: stopSignals(signals, before.at, prefix), model, prefix, start: before.at, end, ttl, ping: cost.ping, pingNext: cost.pingNext, expected: prefix * perToken, saving: Math.min(rebuilt, prefix) * perToken });
     };
     for (let index = 1; index < turns.length; index += 1) {
       if (turns[index].at - turns[index - 1].at >= every) push(turns[index - 1], turns[index].at, turns[index].write);
@@ -233,19 +235,53 @@ export function formatBySize(rows, limit) {
 }
 
 /** Learn return patterns from the older half of your history, then score on the newer half. */
+/** Index of every prompt you typed, across sessions, for the "active elsewhere since?" signals. */
+export function sessionIndex(sessions) {
+  return activityIndex(sessions.map((turns) => ({ sessionId: summarize(turns)?.sessionId, cwd: turns.signals?.cwd, prompts: turns.signals?.prompts ?? [] })));
+}
+
+/** Training rows: at every ping moment of every idle stretch, were you back before the cache died? */
+export function trainingRows(periods, index) {
+  const rows = [];
+  for (const period of periods) {
+    const every = TTL_MS[period.ttl] - MARGIN_MS[period.ttl];
+    for (let at = period.start + every; at < Math.min(period.end, period.start + 24 * HOUR); at += every) {
+      rows.push({ x: featuresAt(period, at, index), y: period.end <= at + TTL_MS[period.ttl] ? 1 : 0 });
+    }
+  }
+  return rows;
+}
+
+/** Ping only when the predicted chance you're back in time, times the rebuild it saves, beats the ping. */
+export function behaviorPolicy(model, index, limit) {
+  return (at, period) => {
+    if (at - period.start > limit) return false;
+    const first = at - period.start <= TTL_MS[period.ttl] - MARGIN_MS[period.ttl] + 1000;
+    return predict(model, featuresAt(period, at, index)) * period.expected >= (first ? period.ping : period.pingNext);
+  };
+}
+
+/**
+ * Learn on the older half of your history, score on the newer half: a time-only model, a behavior model
+ * (how the session stopped, what you did next), and the best fixed limit picked with hindsight.
+ */
 export function backtestSmart(sessions, now = Date.now()) {
   const periods = idlePeriods(sessions, now);
+  const index = sessionIndex(sessions);
   const split = Math.floor(periods.length / 2);
-  const train = periods.slice(0, split);
+  const train_ = periods.slice(0, split);
   const test = periods.slice(split);
   const fixed = (limit) => (at, period) => at - period.start <= limit;
   const best = (scores) => scores.reduce((x, y) => (y.net > x.net ? y : x));
-  // Everything smart decides comes from the older half: its time limit and its return odds.
-  const learnedLimit = best(BACKTEST_LIMITS.map((limit) => score(train, fixed(limit), limit))).limit;
-  const p = learnReturns(train);
+  const learnedLimit = best(BACKTEST_LIMITS.map((limit) => score(train_, fixed(limit), limit))).limit;
+  const p = learnReturns(train_);
   const smart = score(test, (at, period) => fixed(learnedLimit)(at, period) && smartPolicy(p)(at, period), learnedLimit);
+  const model = train(trainingRows(train_, index));
+  const behaviorLimit = best([learnedLimit, 4 * HOUR, 24 * HOUR].map((limit) => score(train_, behaviorPolicy(model, index, limit), limit))).limit;
+  const behavior = score(test, behaviorPolicy(model, index, behaviorLimit), behaviorLimit);
   const bestSimple = best(BACKTEST_LIMITS.map((limit) => score(test, fixed(limit), limit)));
-  return { smart, learnedLimit, bestSimple, testFrom: test[0]?.start, testCount: test.length };
+  const fullModel = train(trainingRows(periods, index));
+  return { smart, behavior, learnedLimit, bestSimple, testFrom: test[0]?.start, testCount: test.length, signals: explain(fullModel) };
 }
 
 export function formatBacktest({ gaps, periods, policies, rebuildCost }, days, window = null) {
@@ -425,7 +461,18 @@ function transcripts(dir, newerThan) {
 }
 
 function readTurns(file) {
-  try { return parseTurns(fs.readFileSync(file, "utf8").split(/\r?\n/)); } catch { return []; }
+  let lines;
+  try { lines = fs.readFileSync(file, "utf8").split(/\r?\n/); } catch { return []; }
+  const turns = parseTurns(lines);
+  turns.signals = parseSignals(lines);
+  return turns;
+}
+
+/** Turns from `since` on, keeping the session's prompt/reply signals attached. */
+function keepSince(turns, since) {
+  const kept = turns.filter((turn) => turn.at >= since);
+  kept.signals = turns.signals;
+  return kept;
 }
 
 function loadState(file) {
@@ -467,15 +514,15 @@ function activeSessions(options, now) {
     .filter(({ session }) => session?.sessionId && now - session.lastActivity <= window);
 }
 
-let learned = { at: -Infinity, p: null };
-/** Your return patterns from the last 120 days of transcripts, relearned at most hourly. */
+let learned = { at: -Infinity, model: null };
+/** Your return model from the last 120 days of transcripts, relearned at most hourly. */
 function returnModel(options, now) {
   if (now - learned.at > HOUR) {
     const since = now - 120 * 86_400_000;
-    const sessions = transcripts(options.dir, since).map((file) => readTurns(file).filter((turn) => turn.at >= since)).filter((turns) => turns.length);
-    learned = { at: now, p: learnReturns(idlePeriods(sessions, now)) };
+    const sessions = transcripts(options.dir, since).map((file) => keepSince(readTurns(file), since)).filter((turns) => turns.length);
+    learned = { at: now, model: train(trainingRows(idlePeriods(sessions, now), sessionIndex(sessions))) };
   }
-  return learned.p;
+  return learned.model;
 }
 
 /** One pass over recent sessions: settle outcomes of earlier pings, then ping whatever is about to expire. */
@@ -483,7 +530,9 @@ export function runOnce(options, now = Date.now(), pinger = ping, log = console.
   const state = loadState(options.state);
   state.sessions ??= {};
   state.ledger ??= [];
-  for (const { session, turns } of activeSessions(options, now)) {
+  const active = activeSessions(options, now);
+  const liveIndex = sessionIndex(active.map(({ turns }) => turns));
+  for (const { session, turns } of active) {
     const id = session.sessionId;
     let record = state.sessions[id];
     const outcome = verify(record, turns);
@@ -499,7 +548,11 @@ export function runOnce(options, now = Date.now(), pinger = ping, log = console.
     const decision = plan(session, record, now, options.maxIdleMs, options.window, options.minPrefix);
     if (decision.action !== "ping") continue;
     const { rebuild, ping: estimate } = economics(session.prefix, session.model, session.ttl);
-    if (options.smart && !smartPolicy(returnModel(options, now))(now, { start: session.lastActivity, expected: rebuild, ping: estimate })) continue;
+    if (options.smart) {
+      const period = { session: id, cwd: turns.signals?.cwd, start: session.lastActivity, ttl: session.ttl, signals: stopSignals(turns.signals ?? {}, session.lastActivity, session.prefix) };
+      const chance = predict(returnModel(options, now), featuresAt(period, now, liveIndex));
+      if (chance * rebuild < estimate) { log(`${short(id)}  skipped: ${Math.round(chance * 100)}% chance you're back in time`); continue; }
+    }
     if (options.dryRun) {
       log(`${short(id)}  would ping (${session.model}, ${Math.round(session.prefix / 1000)}k prefix, idle ${mins(now - session.lastActivity)}): ~${money(estimate)} now vs ${money(rebuild)} rebuild`);
       continue;
@@ -600,7 +653,7 @@ export function main(argv = process.argv.slice(2)) {
   if (options.mode === "test") return selfTest(options);
   if (options.mode === "details") {
     const since = Date.now() - (options.days ?? 120) * 86_400_000;
-    const sessions = transcripts(options.dir, since).map((file) => readTurns(file).filter((turn) => turn.at >= since)).filter((turns) => turns.length);
+    const sessions = transcripts(options.dir, since).map((file) => keepSince(readTurns(file), since)).filter((turns) => turns.length);
     const rows = backtestDetails(sessions, options.detailsLimit, options.window);
     const out = path.join(os.homedir(), "claude-keep-warm-details.csv");
     const csv = ["session,model,ttl,prefix_tokens,idle_start,idle_minutes,pings,ping_cost_usd,saved_usd,net_usd,outcome",
@@ -612,7 +665,7 @@ export function main(argv = process.argv.slice(2)) {
   }
   if (options.mode === "backtest") {
     const since = Date.now() - options.days * 86_400_000;
-    const sessions = transcripts(options.dir, since).map((file) => readTurns(file).filter((turn) => turn.at >= since)).filter((turns) => turns.length > 1);
+    const sessions = transcripts(options.dir, since).map((file) => keepSince(readTurns(file), since)).filter((turns) => turns.length > 1);
     const first = Math.min(...sessions.map((turns) => turns[0].at));
     const covered = sessions.length ? Math.max(1, Math.ceil((Date.now() - first) / 86_400_000)) : 0;
     const days = covered || options.days;
@@ -630,11 +683,15 @@ export function main(argv = process.argv.slice(2)) {
     console.log(`\n${"-".repeat(72)}\n`);
     if (smart.testCount < 40) console.log("Smart mode needs more history to learn your patterns (try --backtest 120).");
     else console.log([
-      "Smart mode: learns when you usually come back (by hour of day and how long you've been away),",
-      "and pings only when that chance pays for the ping. Learned on your older half, scored on the newer half:",
-      `  smart (≤${smart.learnedLimit / HOUR}h + odds)   ${String(smart.smart.rescued).padStart(5)} rescued   pings ${money(smart.smart.spent).padStart(8)}   saved ${money(smart.smart.saved).padStart(8)}   net ${money(smart.smart.net).padStart(8)}`,
-      `  best fixed limit (${smart.bestSimple.limit / HOUR}h) ${String(smart.bestSimple.rescued).padStart(5)} rescued   pings ${money(smart.bestSimple.spent).padStart(8)}   saved ${money(smart.bestSimple.saved).padStart(8)}   net ${money(smart.bestSimple.net).padStart(8)}`,
-      `  (newer half starts ${new Date(smart.testFrom).toISOString().slice(0, 10)}; the fixed limit is picked with hindsight, smart is not)`,
+      "Smart mode: predicts whether you'll be back before the cache dies, and pings only when that pays.",
+      "Learned on your older half, scored on the newer half (no peeking):",
+      `  time only (≤${smart.learnedLimit / HOUR}h)       ${String(smart.smart.rescued).padStart(5)} rescued   pings ${money(smart.smart.spent).padStart(8)}   saved ${money(smart.smart.saved).padStart(8)}   net ${money(smart.smart.net).padStart(8)}`,
+      `  behavior (≤${smart.behavior.limit / HOUR}h)        ${String(smart.behavior.rescued).padStart(5)} rescued   pings ${money(smart.behavior.spent).padStart(8)}   saved ${money(smart.behavior.saved).padStart(8)}   net ${money(smart.behavior.net).padStart(8)}`,
+      `  best fixed limit (${smart.bestSimple.limit / HOUR}h)  ${String(smart.bestSimple.rescued).padStart(5)} rescued   pings ${money(smart.bestSimple.spent).padStart(8)}   saved ${money(smart.bestSimple.saved).padStart(8)}   net ${money(smart.bestSimple.net).padStart(8)}   (picked with hindsight)`,
+      `  (newer half starts ${new Date(smart.testFrom).toISOString().slice(0, 10)})`,
+      "",
+      "What predicts you coming back (odds multiplier for a typical change; >1 = more likely back):",
+      ...smart.signals.slice(0, 8).map((sig) => `  ${sig.odds.toFixed(2).padStart(5)}x  ${sig.label}`),
     ].join("\n"));
     if (covered && covered < options.days - 1) console.log(`\nYou asked for ${options.days} days, but your logs only go back ${covered} (to ${new Date(first).toISOString().slice(0, 10)}). Claude Code deletes old transcripts; raise "cleanupPeriodDays" in ~/.claude/settings.json to keep more.`);
     return 0;
