@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { activeElsewhere, activityIndex, explain, parseSignals, predict, stopSignals, train } from "./return-model.mjs";
+import { activeElsewhere, activityIndex, explain, needsInput, parseSignals, predict, stopSignals, train } from "./return-model.mjs";
 
 const T0 = Date.parse("2026-10-17T12:00:00Z");
 const ev = (o: Record<string, unknown>, at: number) => JSON.stringify({ sessionId: "s1", cwd: "/p", timestamp: new Date(at).toISOString(), ...o });
@@ -41,12 +41,34 @@ describe("train", () => {
   it("learns a signal that separates the outcomes", () => {
     const rows = Array.from({ length: 200 }, (_, i) => {
       const asked = i % 2;
-      const x = [asked, 1 - asked, 0, 0, 0, 1, 1, 0, 0, 1, 0];
+      const x = [0, asked, 1 - asked, 0, 0, 0, 1, 1, 0, 0, 1, 0];
       return { x, y: asked && i % 10 !== 1 ? 1 : 0 };
     });
     const model = train(rows);
-    expect(predict(model, [1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0])).toBeGreaterThan(0.7);
-    expect(predict(model, [0, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0])).toBeLessThan(0.3);
+    expect(predict(model, [0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0])).toBeGreaterThan(0.7);
+    expect(predict(model, [0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0])).toBeLessThan(0.3);
     expect(explain(model).find((s) => s.key === "asked")!.odds).toBeGreaterThan(1);
+  });
+});
+
+describe("needs input", () => {
+  it("spots Claude stuck on a permission prompt: a tool call with no result when you left", () => {
+    const s = parseSignals([
+      ev({ type: "user", message: { content: "deploy it" } }, T0),
+      ev({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Bash" }] } }, T0 + 1000),
+      ev({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] } }, T0 + 90 * 60_000),
+    ]);
+    const sig = stopSignals(s, T0 + 1000, 100_000);
+    expect(sig.waiting).toBe(true);
+    expect(needsInput(sig)).toBe(true);
+  });
+
+  it("does not flag a finished turn whose tools all returned", () => {
+    const s = parseSignals([
+      ev({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Read" }] } }, T0),
+      ev({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] } }, T0 + 500),
+      ev({ type: "assistant", message: { content: [{ type: "text", text: "Done, pushed." }] } }, T0 + 2000),
+    ]);
+    expect(needsInput(stopSignals(s, T0 + 2000, 100_000))).toBe(false);
   });
 });

@@ -18,6 +18,8 @@ function textOf(content) {
 export function parseSignals(lines) {
   const prompts = [];
   const replies = [];
+  const toolUses = [];
+  const toolResults = new Map();
   let cwd = null;
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -28,6 +30,12 @@ export function parseSignals(lines) {
     if (!Number.isFinite(at)) continue;
     cwd = event.cwd ?? cwd;
     const content = event.message?.content;
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        if (block?.type === "tool_use" && event.type === "assistant") toolUses.push({ at, id: block.id, name: block.name });
+        if (block?.type === "tool_result" && !toolResults.has(block.tool_use_id)) toolResults.set(block.tool_use_id, at);
+      }
+    }
     if (event.type === "user") {
       const isToolResult = Array.isArray(content) && content.some((block) => block?.type === "tool_result");
       const text = textOf(content);
@@ -37,7 +45,7 @@ export function parseSignals(lines) {
       if (text.trim()) replies.push({ at, text: text.slice(-400) });
     }
   }
-  return { prompts, replies, cwd };
+  return { prompts, replies, toolUses, toolResults, cwd };
 }
 
 /** Every prompt across all sessions, sorted, so "were you active elsewhere since?" is a quick lookup. */
@@ -68,7 +76,14 @@ export function stopSignals(signals, start, prefix) {
   const reply = [...(signals.replies ?? [])].reverse().find((r) => r.at <= start + 1000);
   const prompt = [...(signals.prompts ?? [])].reverse().find((p) => p.at <= start + 1000);
   const prompts = (signals.prompts ?? []).filter((p) => p.at <= start + 1000);
+  // A tool call with no result yet when you left: Claude was stuck on a permission prompt or a question.
+  const results = signals.toolResults ?? new Map();
+  const pending = (signals.toolUses ?? []).filter((use) => use.at <= start + 1000 && !(results.get(use.id) <= start + 1000));
+  const lastPending = pending.at(-1);
+  const waiting = Boolean(lastPending) && !(reply && reply.at > lastPending.at);
   return {
+    waiting,
+    askedTool: waiting && /AskUser/i.test(lastPending.name ?? ""),
     asked: reply ? ASKED.test(reply.text.trim()) : false,
     done: reply ? DONE.test(reply.text) : false,
     thanks: prompt ? THANKS.test(prompt.text) && prompt.text.length < 80 : false,
@@ -78,7 +93,13 @@ export function stopSignals(signals, start, prefix) {
   };
 }
 
+/** Claude needs you: it ended on a question, or it's stuck waiting for your approval or answer. */
+export function needsInput(signals) {
+  return Boolean(signals?.waiting || signals?.asked);
+}
+
 export const FEATURES = [
+  ["waiting", "Claude was stuck waiting for your approval or answer"],
   ["asked", "Claude ended by asking you something"],
   ["done", "Claude said the task was done"],
   ["thanks", "your last message was a thanks / ok"],
@@ -98,6 +119,7 @@ export function featuresAt(period, at, index) {
   const date = new Date(at);
   const hour = date.getHours() + date.getMinutes() / 60;
   return [
+    s.waiting ? 1 : 0,
     s.asked ? 1 : 0,
     s.done ? 1 : 0,
     s.thanks ? 1 : 0,

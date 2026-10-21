@@ -6,7 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WRITE, priceFor } from "./prices.mjs";
-import { activityIndex, explain, featuresAt, parseSignals, predict, stopSignals, train } from "./return-model.mjs";
+import { activityIndex, explain, featuresAt, needsInput, parseSignals, predict, stopSignals, train } from "./return-model.mjs";
 
 // Keeps idle Claude Code sessions' prompt cache warm, and measures whether that actually paid off.
 //
@@ -262,6 +262,36 @@ export function behaviorPolicy(model, index, limit) {
 }
 
 /**
+ * The plain rule: keep a session warm only while Claude needs you (it asked something, or it's stuck on
+ * your approval). Also how often you actually came back in time, waiting vs. not.
+ */
+export function backtestNeedsInput(sessions, limits = [1.5 * HOUR, 2 * HOUR, 3 * HOUR, 4 * HOUR, 8 * HOUR], now = Date.now()) {
+  const periods = idlePeriods(sessions, now);
+  const backWithin = (list, hours) => (list.length ? list.filter((p) => p.end !== Infinity && p.end - p.start <= hours * HOUR).length / list.length : 0);
+  const needing = periods.filter((p) => needsInput(p.signals));
+  const other = periods.filter((p) => !needsInput(p.signals));
+  return {
+    needing: needing.length,
+    other: other.length,
+    backNeeding: backWithin(needing, 3),
+    backOther: backWithin(other, 3),
+    policies: limits.map((limit) => score(periods, (at, p) => needsInput(p.signals) && at - p.start <= limit, limit)),
+  };
+}
+
+export function formatNeedsInput(r) {
+  if (!r.needing) return "No idle stretch where Claude was waiting for you (no question or pending approval found).";
+  const best = r.policies.reduce((x, y) => (y.net > x.net ? y : x));
+  return [
+    `When Claude needed you (asked something or waited for approval): ${r.needing} idle stretches; other: ${r.other}.`,
+    `You were back within 3h: ${Math.round(r.backNeeding * 100)}% when Claude needed you, ${Math.round(r.backOther * 100)}% otherwise.`,
+    "Keeping warm only while Claude needs you, for at most...",
+    ...r.policies.map((p) => `  up to ${String(p.limit / HOUR).padEnd(4)}h      ${String(p.rescued).padStart(5)} rescued   pings ${money(p.spent).padStart(8)}   saved ${money(p.saved).padStart(8)}   net ${money(p.net).padStart(8)}`),
+    best.net > 0 ? `Best: only when Claude needs you, up to ${best.limit / HOUR}h (--needs-input). Net ${money(best.net)}.` : "Even only-when-Claude-needs-you doesn't pay off for you.",
+  ].join("\n");
+}
+
+/**
  * Learn on the older half of your history, score on the newer half: a time-only model, a behavior model
  * (how the session stopped, what you did next), and the best fixed limit picked with hindsight.
  */
@@ -427,6 +457,7 @@ function parseArgs(argv) {
     else if (arg === "--test") { options.mode = "test"; options.testSession = argv[index + 1] && !argv[index + 1].startsWith("--") ? argv[++index] : "latest"; }
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--smart") options.smart = true;
+    else if (arg === "--needs-input") options.needsInput = true;
     else if (arg === "--as-model") setModelOverride(value());
     else if (arg === "--min-size") { const k = /^(\d+)k?$/i.exec(value()); if (!k) throw new Error("--min-size takes a token count like 300k"); options.minPrefix = Number(k[1]) * (/k$/i.test(argv[index]) ? 1000 : 1); }
     else if (arg === "--tail") { const tail = Number(value()); if (!Number.isFinite(tail) || tail < 0) throw new Error("--tail must be a token count"); setPingTail(tail); }
@@ -548,6 +579,7 @@ export function runOnce(options, now = Date.now(), pinger = ping, log = console.
     const decision = plan(session, record, now, options.maxIdleMs, options.window, options.minPrefix);
     if (decision.action !== "ping") continue;
     const { rebuild, ping: estimate } = economics(session.prefix, session.model, session.ttl);
+    if (options.needsInput && !needsInput(stopSignals(turns.signals ?? {}, session.lastActivity, session.prefix))) continue;
     if (options.smart) {
       const period = { session: id, cwd: turns.signals?.cwd, start: session.lastActivity, ttl: session.ttl, signals: stopSignals(turns.signals ?? {}, session.lastActivity, session.prefix) };
       const chance = predict(returnModel(options, now), featuresAt(period, now, liveIndex));
@@ -637,6 +669,7 @@ Keeps idle Claude Code sessions' prompt cache warm, then measures whether it pai
   --tail <tokens>  What-if for --backtest: tokens each ping writes (default 12000, measured; 0 = API keep-alive)
   --min-size <n>   Only keep sessions at least this big warm (default 200k; 0 = all; see --backtest)
   --as-model <m>   What-if for --backtest/--details: price all history as this model (e.g. claude-opus-5-5)
+  --needs-input    Only ping while Claude is waiting for you (it asked something, or awaits your approval)
   --smart          Only ping when your history says you're likely back before the cache dies
   --hours <a-b>    Only ping during these local hours, e.g. 9-19 (also used by --backtest)
   --workdays <d>   Only ping on these days, e.g. sun-thu or mon-fri
@@ -674,6 +707,7 @@ export function main(argv = process.argv.slice(2)) {
     if (plain.gaps.length) {
       const bestLimit = plain.policies.reduce((x, y) => (y.net > x.net ? y : x)).limit;
       console.log(`\n${formatBySize(backtestBySize(sessions, bestLimit), bestLimit)}`);
+      console.log(`\n${formatNeedsInput(backtestNeedsInput(sessions))}`);
     }
     const window = options.window ?? { from: 9, to: 19, days: [0, 1, 2, 3, 4, 5, 6] };
     console.log(`\n${"-".repeat(72)}\n`);
