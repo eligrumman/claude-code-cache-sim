@@ -1,0 +1,743 @@
+#!/usr/bin/env node
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { WRITE, priceFor } from "./prices.mjs";
+import { activityIndex, explain, featuresAt, needsInput, parseSignals, predict, stopSignals, train } from "./return-model.mjs";
+
+// Keeps idle Claude Code sessions' prompt cache warm, and measures whether that actually paid off.
+//
+// How a ping works: `claude -p --resume <id> --fork-session --no-session-persistence` replays the
+// session's exact prefix (tools + system + history) plus one tiny message. The server reads the
+// cached prefix, which resets its TTL. The fork is never written to disk, so the original transcript
+// is untouched and nothing shows up in /resume. Everything stays local except that one request.
+
+const TTL_MS = Object.freeze({ "5m": 5 * 60_000, "1h": 60 * 60_000 });
+// Ping this long before expiry: enough slack for a slow `claude` start (pings land every 57 minutes).
+const MARGIN_MS = Object.freeze({ "5m": 60_000, "1h": 3 * 60_000 });
+const PROMPT = "Keep-alive ping from cc-keep-warm. Do not use any tools. Reply with exactly: ok";
+// Env a parent Claude Code session leaks into child processes; inheriting it hijacks the child's session id.
+const STRIP_ENV = ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_REMOTE_SESSION_ID"];
+
+// Besides reading the session, every ping writes a tail to the cache: the resumed session's last
+// turn re-rendered plus the ping message. Measured: ~12k tokens on the first ping of a chain
+// (12,406 / 11k / 13k), ~5.4k on each ping after it (5,424 and 5,418), which reuses the first's write.
+export const PING_TAIL = 12_000;
+export const PING_TAIL_NEXT = 5_500;
+let pingTail = PING_TAIL;
+let pingTailNext = PING_TAIL_NEXT;
+/** Override the per-ping tail (e.g. 0 for an API keep-alive with max_tokens: 0). */
+export function setPingTail(tokens) { pingTail = tokens; pingTailNext = Math.min(tokens, PING_TAIL_NEXT); }
+
+/**
+ * Rebuild vs ping cost for a prefix. `ping` is the first ping of a chain, `pingNext` each one after it;
+ * `maxPings` is how many pings one avoided rebuild pays for.
+ */
+export function economics(prefixTokens, model, ttl) {
+  const price = priceFor(model);
+  const rebuild = (prefixTokens * price.input * WRITE[ttl]) / 1e6;
+  const read = (prefixTokens * price.read) / 1e6;
+  const ping = read + (pingTail * price.input * WRITE[ttl]) / 1e6;
+  const pingNext = read + (pingTailNext * price.input * WRITE[ttl]) / 1e6;
+  return { rebuild, ping, pingNext, maxPings: ping > 0 ? Math.floor((rebuild - ping) / pingNext) : 0 };
+}
+
+/** What `sent` pings in one chain cost. */
+let modelOverride = null;
+/** What-if for the backtest: price every session as if it ran on this model. */
+export function setModelOverride(model) { modelOverride = model; }
+
+export function chainCost(period, sent) {
+  return sent ? period.ping + (sent - 1) * period.pingNext : 0;
+}
+
+const HOUR = 3_600_000;
+export const BACKTEST_LIMITS = [1.5, 2, 3, 4, 6, 8, 12, 24].map((hours) => hours * HOUR);
+
+/**
+ * Replay real sessions against "keep warm for up to N hours" policies. For every time you came back
+ * after the cache expired: if the policy would have bridged the gap, it pays for the pings and saves
+ * the rebuild; if the gap was longer, it pays for the pings it sent before giving up and saves nothing.
+ */
+/** Working hours in local time, e.g. { from: 9, to: 19, days: [0,1,2,3,4] } (0 = Sunday). */
+export function inWindow(window, time) {
+  if (!window) return true;
+  const date = new Date(time);
+  const hour = date.getHours() + date.getMinutes() / 60;
+  return window.days.includes(date.getDay()) && hour >= window.from && hour < window.to;
+}
+
+// A session idle this long with no return counts as abandoned (pings sent to it were wasted).
+const ABANDONED_MS = 48 * HOUR;
+
+/** Every idle stretch long enough for keep-warm to act on, including sessions you never came back to. */
+export function idlePeriods(sessions, now = Date.now()) {
+  const periods = [];
+  for (const turns of sessions) {
+    const ttl = summarize(turns)?.ttl ?? "1h";
+    const signals = turns.signals ?? { prompts: [], replies: [], cwd: null };
+    // Keep-warm is for main sessions, which cache for 1h; a 5m session would need a ping every ~4 minutes.
+    if (ttl !== "1h") continue;
+    const every = TTL_MS[ttl] - MARGIN_MS[ttl];
+    const push = (before, end, rebuilt) => {
+      const prefix = before.input + before.read + before.write;
+      const model = modelOverride ?? before.model;
+      const price = priceFor(model);
+      const perToken = (price.input * WRITE[ttl] - price.read) / 1e6;
+      const cost = economics(prefix, model, ttl);
+      periods.push({ session: before.sessionId, cwd: signals.cwd ?? before.cwd, signals: stopSignals(signals, before.at, prefix), model, prefix, start: before.at, end, ttl, ping: cost.ping, pingNext: cost.pingNext, expected: prefix * perToken, saving: Math.min(rebuilt, prefix) * perToken });
+    };
+    for (let index = 1; index < turns.length; index += 1) {
+      if (turns[index].at - turns[index - 1].at >= every) push(turns[index - 1], turns[index].at, turns[index].write);
+    }
+    const last = turns.at(-1);
+    if (last && now - last.at > ABANDONED_MS) push(last, Infinity, 0);
+  }
+  return periods.sort((x, y) => x.start - y.start);
+}
+
+/**
+ * Replay one idle stretch: at each ping time, ask the policy whether to ping. The cache stays warm until
+ * TTL after the last touch; once the policy declines, the chain is broken and the cache dies.
+ */
+function simulate(period, decide) {
+  const every = TTL_MS[period.ttl] - MARGIN_MS[period.ttl];
+  const stop = Math.min(period.end, period.start + ABANDONED_MS);
+  let aliveUntil = period.start + TTL_MS[period.ttl];
+  let sent = 0;
+  for (let at = period.start + every; at < stop; at += every) {
+    if (!decide(at, period)) break;
+    sent += 1;
+    aliveUntil = at + TTL_MS[period.ttl];
+  }
+  const neededRescue = period.end - period.start >= TTL_MS[period.ttl] && period.end !== Infinity;
+  return { sent, rescued: neededRescue && aliveUntil > period.end };
+}
+
+function score(periods, decide, limit) {
+  let spent = 0;
+  let saved = 0;
+  let rescued = 0;
+  for (const period of periods) {
+    const result = simulate(period, decide);
+    spent += chainCost(period, result.sent);
+    if (result.rescued) { saved += period.saving; rescued += 1; }
+  }
+  return { limit, rescued, spent, saved, net: saved - spent };
+}
+
+const hourBlock = (time) => Math.floor(new Date(time).getHours() / 3);
+const idleBucket = (idle) => (idle < 2 * HOUR ? 0 : idle < 4 * HOUR ? 1 : idle < 8 * HOUR ? 2 : 3);
+
+/**
+ * Learn, from past idle stretches, how likely you are to come back within the next TTL given the time
+ * of day and how long you have already been away. Returns p(time, idle).
+ */
+export function learnReturns(periods) {
+  const cells = new Map();
+  const pooled = new Map();
+  const bump = (map, key, hit) => { const c = map.get(key) ?? { hit: 0, n: 0 }; c.hit += hit; c.n += 1; map.set(key, c); };
+  for (const period of periods) {
+    const every = TTL_MS[period.ttl] - MARGIN_MS[period.ttl];
+    for (let at = period.start + every; at < Math.min(period.end, period.start + ABANDONED_MS); at += every) {
+      const hit = period.end <= at + TTL_MS[period.ttl] ? 1 : 0;
+      bump(cells, `${hourBlock(at)}:${idleBucket(at - period.start)}`, hit);
+      bump(pooled, idleBucket(at - period.start), hit);
+    }
+  }
+  return (time, idle) => {
+    const cell = cells.get(`${hourBlock(time)}:${idleBucket(idle)}`);
+    const base = pooled.get(idleBucket(idle)) ?? { hit: 0, n: 0 };
+    const prior = (base.hit + 1) / (base.n + 2);
+    // Shrink sparse cells toward the pooled rate so a handful of samples can't dominate.
+    return cell ? (cell.hit + 5 * prior) / (cell.n + 5) : prior;
+  };
+}
+
+/** Ping only when the chance you are back before the cache dies pays for the ping. */
+export function smartPolicy(p) {
+  return (at, period) => p(at, at - period.start) * period.expected >= period.ping;
+}
+
+/** Every idle stretch under one policy, with what the pings cost and what actually happened. */
+export function backtestDetails(sessions, limit, window = null, now = Date.now()) {
+  return idlePeriods(sessions, now).map((period) => {
+    const { sent, rescued } = simulate(period, (at, p) => at - p.start <= limit && inWindow(window, at));
+    const gap = period.end - period.start;
+    const outcome = period.end === Infinity ? "never came back"
+      : gap < TTL_MS[period.ttl] ? (sent ? "back before cache expired (ping not needed)" : "back while warm")
+      : rescued ? "rescued: came back warm" : "came back cold anyway (gone too long)";
+    const cost = chainCost(period, sent);
+    const saved = rescued ? period.saving : 0;
+    return { ...period, gap, sent, cost, saved, net: saved - cost, outcome };
+  });
+}
+
+export function formatDetails(rows, limit) {
+  const sum = (list, key) => list.reduce((total, row) => total + row[key], 0);
+  const groups = (key) => [...new Set(rows.map((row) => row[key]))].map((value) => {
+    const list = rows.filter((row) => row[key] === value);
+    return `  ${String(value).padEnd(46)} ${String(list.length).padStart(6)}   pings ${String(sum(list, "sent")).padStart(6)}  cost ${money(sum(list, "cost")).padStart(9)}  saved ${money(sum(list, "saved")).padStart(9)}  net ${money(sum(list, "net")).padStart(9)}`;
+  });
+  const bySession = new Map();
+  for (const row of rows) {
+    const s = bySession.get(row.session) ?? { session: row.session, ttl: row.ttl, prefix: 0, periods: 0, sent: 0, cost: 0, saved: 0, net: 0 };
+    s.periods += 1; s.sent += row.sent; s.cost += row.cost; s.saved += row.saved; s.net += row.net; s.prefix = Math.max(s.prefix, row.prefix);
+    bySession.set(row.session, s);
+  }
+  const sessions = [...bySession.values()].sort((a, b) => a.net - b.net);
+  const line = (s) => `  ${short(s.session)}  ${s.ttl.padEnd(3)} ${String(Math.round(s.prefix / 1000)).padStart(5)}k   idle stretches ${String(s.periods).padStart(4)}   pings ${String(s.sent).padStart(5)}  cost ${money(s.cost).padStart(8)}  saved ${money(s.saved).padStart(8)}  net ${money(s.net).padStart(8)}`;
+  return [
+    `Policy: keep warm up to ${limit / HOUR}h. Every idle stretch long enough for a ping, by what happened:`,
+    ...groups("outcome"),
+    "",
+    "By model (each priced at its own list price; --as-model reprices everything):",
+    ...groups("model"),
+    "",
+    "Sessions that lost the most:",
+    ...sessions.slice(0, 10).map(line),
+    "",
+    "Sessions that saved the most:",
+    ...sessions.slice(-10).reverse().map(line),
+  ].join("\n");
+}
+
+/**
+ * Replay real sessions against keep-warm policies: a plain max-idle limit, optionally only during working
+ * hours. Every idle stretch counts: pings that bridged a gap save the rebuild; pings sent before you came
+ * back anyway, before the policy gave up, or to sessions you abandoned are spent for nothing.
+ */
+export function backtest(sessions, limits = BACKTEST_LIMITS, window = null, now = Date.now()) {
+  const periods = idlePeriods(sessions, now);
+  const cold = periods.filter((p) => p.end !== Infinity && p.end - p.start >= TTL_MS[p.ttl]);
+  const policies = limits.map((limit) => score(periods, (at, period) => at - period.start <= limit && inWindow(window, at), limit));
+  return { gaps: cold.map((p) => ({ ...p, gap: p.end - p.start })), periods, policies, rebuildCost: cold.reduce((sum, g) => sum + g.saving, 0) };
+}
+
+export const SIZE_THRESHOLDS = [0, 100_000, 200_000, 300_000, 400_000, 500_000];
+
+/** Same policy, but only for sessions at least this big: the ping's fixed tail matters less on big ones. */
+export function backtestBySize(sessions, limit, thresholds = SIZE_THRESHOLDS, window = null, now = Date.now()) {
+  const periods = idlePeriods(sessions, now);
+  return thresholds.map((min) => ({ min, ...score(periods.filter((p) => p.prefix >= min), (at, period) => at - period.start <= limit && inWindow(window, at), limit) }));
+}
+
+export function formatBySize(rows, limit) {
+  const best = rows.reduce((x, y) => (y.net > x.net ? y : x));
+  return [
+    `Keeping only big sessions warm (up to ${limit / HOUR}h), by session size:`,
+    ...rows.map((r) => `  ${(r.min ? `${r.min / 1000}k+ tokens` : "all sessions").padEnd(16)} ${String(r.rescued).padStart(5)} rescued   pings ${money(r.spent).padStart(8)}   saved ${money(r.saved).padStart(8)}   net ${money(r.net).padStart(8)}`),
+    !(best.net > 0) ? "No size threshold makes it pay off." : best.min ? `Best: only sessions of ${best.min / 1000}k+ tokens (--min-size ${best.min / 1000}k). Net ${money(best.net)}.` : `Best: no size filter. Net ${money(best.net)}.`,
+  ].join("\n");
+}
+
+/** Learn return patterns from the older half of your history, then score on the newer half. */
+/** Index of every prompt you typed, across sessions, for the "active elsewhere since?" signals. */
+export function sessionIndex(sessions) {
+  return activityIndex(sessions.map((turns) => ({ sessionId: summarize(turns)?.sessionId, cwd: turns.signals?.cwd, prompts: turns.signals?.prompts ?? [] })));
+}
+
+/** Training rows: at every ping moment of every idle stretch, were you back before the cache died? */
+export function trainingRows(periods, index) {
+  const rows = [];
+  for (const period of periods) {
+    const every = TTL_MS[period.ttl] - MARGIN_MS[period.ttl];
+    for (let at = period.start + every; at < Math.min(period.end, period.start + 24 * HOUR); at += every) {
+      rows.push({ x: featuresAt(period, at, index), y: period.end <= at + TTL_MS[period.ttl] ? 1 : 0 });
+    }
+  }
+  return rows;
+}
+
+/** Ping only when the predicted chance you're back in time, times the rebuild it saves, beats the ping. */
+export function behaviorPolicy(model, index, limit) {
+  return (at, period) => {
+    if (at - period.start > limit) return false;
+    const first = at - period.start <= TTL_MS[period.ttl] - MARGIN_MS[period.ttl] + 1000;
+    return predict(model, featuresAt(period, at, index)) * period.expected >= (first ? period.ping : period.pingNext);
+  };
+}
+
+/**
+ * The plain rule: keep a session warm only while Claude needs you (it asked something, or it's stuck on
+ * your approval). Also how often you actually came back in time, waiting vs. not.
+ */
+export function backtestNeedsInput(sessions, limits = [1.5 * HOUR, 2 * HOUR, 3 * HOUR, 4 * HOUR, 8 * HOUR], now = Date.now()) {
+  const periods = idlePeriods(sessions, now);
+  const backWithin = (list, hours) => (list.length ? list.filter((p) => p.end !== Infinity && p.end - p.start <= hours * HOUR).length / list.length : 0);
+  const needing = periods.filter((p) => needsInput(p.signals));
+  const other = periods.filter((p) => !needsInput(p.signals));
+  return {
+    needing: needing.length,
+    other: other.length,
+    backNeeding: backWithin(needing, 3),
+    backOther: backWithin(other, 3),
+    policies: limits.map((limit) => score(periods, (at, p) => needsInput(p.signals) && at - p.start <= limit, limit)),
+  };
+}
+
+export function formatNeedsInput(r) {
+  if (!r.needing) return "No idle stretch where Claude was waiting for you (no question or pending approval found).";
+  const best = r.policies.reduce((x, y) => (y.net > x.net ? y : x));
+  return [
+    `When Claude needed you (asked something or waited for approval): ${r.needing} idle stretches; other: ${r.other}.`,
+    `You were back within 3h: ${Math.round(r.backNeeding * 100)}% when Claude needed you, ${Math.round(r.backOther * 100)}% otherwise.`,
+    "Keeping warm only while Claude needs you, for at most...",
+    ...r.policies.map((p) => `  up to ${String(p.limit / HOUR).padEnd(4)}h      ${String(p.rescued).padStart(5)} rescued   pings ${money(p.spent).padStart(8)}   saved ${money(p.saved).padStart(8)}   net ${money(p.net).padStart(8)}`),
+    best.net > 0 ? `Best: only when Claude needs you, up to ${best.limit / HOUR}h (--needs-input). Net ${money(best.net)}.` : "Even only-when-Claude-needs-you doesn't pay off for you.",
+  ].join("\n");
+}
+
+/**
+ * Learn on the older half of your history, score on the newer half: a time-only model, a behavior model
+ * (how the session stopped, what you did next), and the best fixed limit picked with hindsight.
+ */
+export function backtestSmart(sessions, now = Date.now()) {
+  const periods = idlePeriods(sessions, now);
+  const index = sessionIndex(sessions);
+  const split = Math.floor(periods.length / 2);
+  const train_ = periods.slice(0, split);
+  const test = periods.slice(split);
+  const fixed = (limit) => (at, period) => at - period.start <= limit;
+  const best = (scores) => scores.reduce((x, y) => (y.net > x.net ? y : x));
+  const learnedLimit = best(BACKTEST_LIMITS.map((limit) => score(train_, fixed(limit), limit))).limit;
+  const p = learnReturns(train_);
+  const smart = score(test, (at, period) => fixed(learnedLimit)(at, period) && smartPolicy(p)(at, period), learnedLimit);
+  const model = train(trainingRows(train_, index));
+  const behaviorLimit = best([learnedLimit, 4 * HOUR, 24 * HOUR].map((limit) => score(train_, behaviorPolicy(model, index, limit), limit))).limit;
+  const behavior = score(test, behaviorPolicy(model, index, behaviorLimit), behaviorLimit);
+  const bestSimple = best(BACKTEST_LIMITS.map((limit) => score(test, fixed(limit), limit)));
+  const fullModel = train(trainingRows(periods, index));
+  return { smart, behavior, learnedLimit, bestSimple, testFrom: test[0]?.start, testCount: test.length, signals: explain(fullModel) };
+}
+
+export function formatBacktest({ gaps, periods, policies, rebuildCost }, days, window = null) {
+  if (!gaps.length) return `No returns to an expired cache in the last ${days} days. Keep-warm has nothing to save for you.`;
+  const buckets = [[1, 2], [2, 4], [4, 8], [8, 24], [24, Infinity]].map(([from, to]) => {
+    const inside = gaps.filter((g) => g.gap >= from * HOUR && g.gap < to * HOUR);
+    return `  ${to === Infinity ? `${from}h+` : `${from}-${to}h`}`.padEnd(9) + `${String(inside.length).padStart(5)} times   rebuilds ${money(inside.reduce((sum, g) => sum + g.saving, 0))}`;
+  });
+  const best = policies.reduce((a, b) => (b.net > a.net ? b : a));
+  const label = (limit) => (limit === Infinity ? "while in hours" : `up to ${limit / HOUR}h`);
+  const row = (p) => `  ${label(p.limit).padEnd(16)}  ${String(p.rescued).padStart(5)} rescued   pings ${money(p.spent).padStart(8)}   saved ${money(p.saved).padStart(8)}   net ${money(p.net).padStart(8)}`;
+  return [
+    `Last ${days} days: you came back to an expired cache ${gaps.length} time${gaps.length === 1 ? "" : "s"}. Those rebuilds cost ${money(rebuildCost)}.`,
+    `(${periods.filter((p) => p.end === Infinity).length} sessions you never came back to are counted too: pings sent to them are wasted.)`,
+    "",
+    "How long you were away:",
+    ...buckets,
+    "",
+    window ? `If keep-warm had been running, only during working hours (${describeWindow(window)}), for at most...` : "If keep-warm had been running, keeping sessions warm for at most...",
+    ...policies.map(row),
+    "",
+    best.net > 0
+      ? `Best for you: keep sessions warm ${label(best.limit)}${window ? ` during ${describeWindow(window)}` : ""}. Net ${money(best.net)} over ${days} days (~${money((best.net * 30) / days)}/month).`
+      : "Keep-warm would not have paid off for how you work: the pings cost more than the rebuilds they avoid.",
+    `Each ping is priced as a cache read of the session plus new tokens written: ~${pingTail / 1000}k on the first ping of a break, ~${pingTailNext / 1000}k on each after it${pingTail === PING_TAIL ? " (measured)" : " (--tail)"}. List prices, not your subscription bill.`,
+  ].join("\n");
+}
+
+function usageOf(event) {
+  const usage = event?.message?.usage;
+  if (!usage || typeof usage !== "object") return null;
+  const n = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+  const creation = usage.cache_creation ?? {};
+  return {
+    input: n(usage.input_tokens),
+    read: n(usage.cache_read_input_tokens),
+    write: n(usage.cache_creation_input_tokens),
+    write1h: n(creation.ephemeral_1h_input_tokens),
+    write5m: n(creation.ephemeral_5m_input_tokens),
+  };
+}
+
+/** Main-thread assistant turns of one transcript, oldest first. */
+export function parseTurns(lines) {
+  const turns = [];
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    let event;
+    try { event = JSON.parse(line); } catch { continue; }
+    if (event.type !== "assistant" || event.isSidechain) continue;
+    const usage = usageOf(event);
+    const at = Date.parse(event.timestamp);
+    if (!usage || !Number.isFinite(at) || event.message?.model === "<synthetic>") continue;
+    turns.push({ at, model: event.message.model, cwd: event.cwd, sessionId: event.sessionId, ...usage });
+  }
+  return turns;
+}
+
+/** What a ping needs to know about a session, from its transcript. Null if it never got a real reply. */
+export function summarize(turns) {
+  const last = turns.at(-1);
+  if (!last) return null;
+  const lastWrite = [...turns].reverse().find((turn) => turn.write > 0);
+  const ttl = lastWrite && lastWrite.write1h === 0 && lastWrite.write5m > 0 ? "5m" : "1h";
+  return { sessionId: last.sessionId, model: last.model, cwd: last.cwd, lastActivity: last.at, prefix: last.input + last.read + last.write, ttl };
+}
+
+/** Decide what to do with one session right now. Pure: every input is explicit. */
+export function plan(session, record, now, maxIdleMs, window = null, minPrefix = 0) {
+  const pings = record?.since === session.lastActivity ? record.pings : [];
+  const lastTouch = Math.max(session.lastActivity, pings.at(-1)?.at ?? 0);
+  const idle = now - session.lastActivity;
+  const sinceTouch = now - lastTouch;
+  const ttl = TTL_MS[session.ttl];
+  if (record?.disabled) return { action: "skip", reason: record.disabled };
+  if (session.ttl !== "1h") return { action: "skip", reason: "not a main session (5-minute cache)" };
+  if (session.prefix < minPrefix) return { action: "skip", reason: "smaller than --min-size" };
+  if (sinceTouch >= ttl) return { action: "skip", reason: "already cold" };
+  if (sinceTouch < ttl - MARGIN_MS[session.ttl]) return { action: "wait", inMs: ttl - MARGIN_MS[session.ttl] - sinceTouch };
+  if (idle > maxIdleMs) return { action: "skip", reason: "past --max-idle" };
+  if (!inWindow(window, now)) return { action: "skip", reason: "outside working hours" };
+  const { maxPings } = economics(session.prefix, session.model, session.ttl);
+  if (pings.length >= maxPings) return { action: "skip", reason: "more pings would cost more than the rebuild" };
+  return { action: "ping" };
+}
+
+/** Did the user come back after a ping and get a warm read? Compares the first real turn after the last ping. */
+export function verify(record, turns) {
+  const lastPing = record?.pings?.at(-1);
+  if (!lastPing || record.outcome) return null;
+  const next = turns.find((turn) => turn.at > lastPing.at);
+  if (!next) return null;
+  const warm = next.read >= 0.8 * lastPing.prefix;
+  return { warm, at: next.at, read: next.read, write: next.write };
+}
+
+const DAY_NAMES = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+export function describeWindow(window) {
+  const days = window.days.length === 7 ? "every day" : window.days.map((day) => DAY_NAMES[day]).join(",");
+  return `${String(window.from).padStart(2, "0")}:00-${String(window.to).padStart(2, "0")}:00, ${days}`;
+}
+
+/** "9-19" -> {from, to}; "sun-thu" or "mon,wed" -> day indexes. */
+export function parseHours(value) {
+  const match = /^(\d{1,2})-(\d{1,2})$/.exec(String(value));
+  if (!match || Number(match[1]) >= Number(match[2]) || Number(match[2]) > 24) throw new Error(`bad --hours: ${value} (use e.g. 9-19)`);
+  return { from: Number(match[1]), to: Number(match[2]) };
+}
+
+export function parseDays(value) {
+  const days = new Set();
+  for (const part of String(value).toLowerCase().split(",")) {
+    const [a, b = a] = part.split("-").map((name) => DAY_NAMES.indexOf(name.slice(0, 3)));
+    if (a < 0 || b < 0) throw new Error(`bad --workdays: ${value} (use e.g. sun-thu or mon-fri)`);
+    for (let day = a; ; day = (day + 1) % 7) { days.add(day); if (day === b) break; }
+  }
+  return [...days].sort();
+}
+
+function parseDuration(value) {
+  const match = /^(\d+(?:\.\d+)?)(m|h)?$/.exec(String(value));
+  if (!match) throw new Error(`bad duration: ${value} (use e.g. 90m or 8h)`);
+  return Number(match[1]) * (match[2] === "m" ? 60_000 : 3_600_000);
+}
+
+function parseArgs(argv) {
+  const home = os.homedir();
+  const options = { dir: path.join(home, ".claude", "projects"), state: path.join(home, ".claude", "keep-warm", "state.json"), maxIdleMs: 2 * 3_600_000, minPrefix: 200_000, claude: "claude", mode: "once", dryRun: false, interval: 60_000 };
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    const value = () => {
+      const next = argv[++index];
+      if (!next) throw new Error(`${arg} needs a value`);
+      return next;
+    };
+    if (arg === "--help" || arg === "-h") options.mode = "help";
+    else if (arg === "--watch") options.mode = "watch";
+    else if (arg === "--report") options.mode = "report";
+    else if (arg === "--days") { options.days = Number(value()); if (!(options.days > 0)) throw new Error("--days must be a positive number"); }
+    else if (arg === "--details") { options.mode = "details"; options.detailsLimit = parseDuration(value()); }
+    else if (arg === "--backtest") { options.mode = "backtest"; options.days = /^\d+$/.test(argv[index + 1] ?? "") ? Number(argv[++index]) : 30; }
+    else if (arg === "--test") { options.mode = "test"; options.testSession = argv[index + 1] && !argv[index + 1].startsWith("--") ? argv[++index] : "latest"; }
+    else if (arg === "--dry-run") options.dryRun = true;
+    else if (arg === "--smart") options.smart = true;
+    else if (arg === "--needs-input") options.needsInput = true;
+    else if (arg === "--as-model") setModelOverride(value());
+    else if (arg === "--min-size") { const k = /^(\d+)k?$/i.exec(value()); if (!k) throw new Error("--min-size takes a token count like 300k"); options.minPrefix = Number(k[1]) * (/k$/i.test(argv[index]) ? 1000 : 1); }
+    else if (arg === "--tail") { const tail = Number(value()); if (!Number.isFinite(tail) || tail < 0) throw new Error("--tail must be a token count"); setPingTail(tail); }
+    else if (arg === "--max-idle") options.maxIdleMs = parseDuration(value());
+    else if (arg === "--dir") options.dir = path.resolve(value().replace(/^~(?=$|\/)/, home));
+    else if (arg === "--state") options.state = path.resolve(value().replace(/^~(?=$|\/)/, home));
+    else if (arg === "--claude") options.claude = value();
+    else if (arg === "--hours") options.window = { days: options.window?.days ?? [0, 1, 2, 3, 4, 5, 6], ...parseHours(value()) };
+    else if (arg === "--workdays") options.window = { from: 9, to: 19, ...options.window, days: parseDays(value()) };
+    else throw new Error(`Unknown option: ${arg}`);
+  }
+  return options;
+}
+
+/** Top-level session transcripts (`<project>/<session-id>.jsonl`), skipping subagent files. */
+function transcripts(dir, newerThan) {
+  const found = [];
+  let projects;
+  try { projects = fs.readdirSync(dir, { withFileTypes: true }); } catch { return found; }
+  for (const project of projects) {
+    if (!project.isDirectory()) continue;
+    const projectDir = path.join(dir, project.name);
+    let files;
+    try { files = fs.readdirSync(projectDir, { withFileTypes: true }); } catch { continue; }
+    for (const file of files) {
+      if (!file.isFile() || !file.name.endsWith(".jsonl")) continue;
+      const fullPath = path.join(projectDir, file.name);
+      try { if (fs.statSync(fullPath).mtimeMs >= newerThan) found.push(fullPath); } catch { /* vanished mid-scan */ }
+    }
+  }
+  return found;
+}
+
+function readTurns(file) {
+  let lines;
+  try { lines = fs.readFileSync(file, "utf8").split(/\r?\n/); } catch { return []; }
+  const turns = parseTurns(lines);
+  turns.signals = parseSignals(lines);
+  return turns;
+}
+
+/** Turns from `since` on, keeping the session's prompt/reply signals attached. */
+function keepSince(turns, since) {
+  const kept = turns.filter((turn) => turn.at >= since);
+  kept.signals = turns.signals;
+  return kept;
+}
+
+function loadState(file) {
+  try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return { sessions: {}, ledger: [] }; }
+}
+
+function saveState(file, state) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(state, null, 2));
+}
+
+/** Send one keep-alive. Returns what it cost and how much of the session's prefix it actually read. */
+export function ping(session, options, run = spawnSync) {
+  const env = { ...process.env };
+  for (const key of STRIP_ENV) delete env[key];
+  const args = ["-p", PROMPT, "--resume", session.sessionId, "--fork-session", "--no-session-persistence", "--output-format", "json", "--model", session.model];
+  // Windows installs claude as a .cmd shim, which Node only launches through a shell.
+  const windows = process.platform === "win32";
+  const result = run(windows ? `"${options.claude}"` : options.claude, windows ? args.map((arg) => `"${arg}"`) : args, { cwd: session.cwd && fs.existsSync(session.cwd) ? session.cwd : undefined, env, encoding: "utf8", timeout: 180_000, shell: windows });
+  if (result.error?.code === "ENOENT") return { ok: false, error: `can't find "${options.claude}". Is Claude Code installed? Pass its path with --claude <path>.` };
+  if (result.error || result.status !== 0) return { ok: false, error: String(result.error?.message ?? result.stderr ?? "").trim().slice(0, 300) || `exit ${result.status}` };
+  let out;
+  try { out = JSON.parse(result.stdout); } catch { return { ok: false, error: "claude printed no JSON result" }; }
+  if (out.is_error) return { ok: false, error: String(out.result ?? out.subtype).slice(0, 300) };
+  const usage = out.usage ?? {};
+  const read = Number(usage.cache_read_input_tokens) || 0;
+  return { ok: true, read, write: Number(usage.cache_creation_input_tokens) || 0, cost: Number(out.total_cost_usd) || 0, hit: session.prefix ? read / session.prefix : 0 };
+}
+
+const money = (value) => `${value < 0 ? "-" : ""}$${Math.abs(value) < 0.1 ? Math.abs(value).toFixed(4) : Math.abs(value).toFixed(2)}`;
+const mins = (ms) => `${Math.round(ms / 60_000)}m`;
+const short = (id) => String(id).slice(0, 8);
+
+function activeSessions(options, now) {
+  const window = options.maxIdleMs + TTL_MS["1h"];
+  return transcripts(options.dir, now - window)
+    .map((file) => ({ turns: readTurns(file) }))
+    .map(({ turns }) => ({ turns, session: summarize(turns) }))
+    .filter(({ session }) => session?.sessionId && now - session.lastActivity <= window);
+}
+
+let learned = { at: -Infinity, model: null };
+/** Your return model from the last 120 days of transcripts, relearned at most hourly. */
+function returnModel(options, now) {
+  if (now - learned.at > HOUR) {
+    const since = now - 120 * 86_400_000;
+    const sessions = transcripts(options.dir, since).map((file) => keepSince(readTurns(file), since)).filter((turns) => turns.length);
+    learned = { at: now, model: train(trainingRows(idlePeriods(sessions, now), sessionIndex(sessions))) };
+  }
+  return learned.model;
+}
+
+/** One pass over recent sessions: settle outcomes of earlier pings, then ping whatever is about to expire. */
+export function runOnce(options, now = Date.now(), pinger = ping, log = console.log) {
+  const state = loadState(options.state);
+  state.sessions ??= {};
+  state.ledger ??= [];
+  const active = activeSessions(options, now);
+  const liveIndex = sessionIndex(active.map(({ turns }) => turns));
+  for (const { session, turns } of active) {
+    const id = session.sessionId;
+    let record = state.sessions[id];
+    const outcome = verify(record, turns);
+    if (outcome) {
+      const pings = record.pings;
+      const { rebuild } = economics(pings.at(-1).prefix, session.model, session.ttl);
+      const readCost = (pings.at(-1).prefix * priceFor(session.model).read) / 1e6;
+      state.ledger.push({ session: id, model: session.model, pings: pings.length, pingCost: pings.reduce((sum, p) => sum + p.cost, 0), warm: outcome.warm, avoided: outcome.warm ? rebuild - readCost : 0, at: outcome.at });
+      record.outcome = outcome.warm ? "warm" : "cold";
+      log(`${short(id)}  you came back ${outcome.warm ? "to a WARM cache" : "to a COLD cache"} after ${pings.length} ping(s)`);
+    }
+    if (record && record.since !== session.lastActivity) record = state.sessions[id] = { since: session.lastActivity, pings: [], disabled: record.disabled };
+    const decision = plan(session, record, now, options.maxIdleMs, options.window, options.minPrefix);
+    if (decision.action !== "ping") continue;
+    const { rebuild, ping: estimate } = economics(session.prefix, session.model, session.ttl);
+    if (options.needsInput && !needsInput(stopSignals(turns.signals ?? {}, session.lastActivity, session.prefix))) continue;
+    if (options.smart) {
+      const period = { session: id, cwd: turns.signals?.cwd, start: session.lastActivity, ttl: session.ttl, signals: stopSignals(turns.signals ?? {}, session.lastActivity, session.prefix) };
+      const chance = predict(returnModel(options, now), featuresAt(period, now, liveIndex));
+      if (chance * rebuild < estimate) { log(`${short(id)}  skipped: ${Math.round(chance * 100)}% chance you're back in time`); continue; }
+    }
+    if (options.dryRun) {
+      log(`${short(id)}  would ping (${session.model}, ${Math.round(session.prefix / 1000)}k prefix, idle ${mins(now - session.lastActivity)}): ~${money(estimate)} now vs ${money(rebuild)} rebuild`);
+      continue;
+    }
+    const result = pinger(session, options);
+    record = state.sessions[id] ??= { since: session.lastActivity, pings: [] };
+    if (!result.ok) {
+      log(`${short(id)}  ping failed: ${result.error}`);
+      continue;
+    }
+    record.pings.push({ at: now, prefix: session.prefix, read: result.read, write: result.write, cost: result.cost });
+    if (result.hit < 0.8) record.disabled = `ping read only ${Math.round(result.hit * 100)}% of the prefix, so it can't keep this session warm`;
+    else if (result.cost >= rebuild) record.disabled = `a ping cost ${money(result.cost)}, more than the ${money(rebuild)} rebuild it prevents`;
+    log(`${short(id)}  pinged: read ${Math.round(result.read / 1000)}k of ${Math.round(session.prefix / 1000)}k (${Math.round(result.hit * 100)}%), cost ${money(result.cost)} vs ${money(rebuild)} rebuild${record.disabled ? "  -> disabled for this session" : ""}`);
+  }
+  if (!options.dryRun) saveState(options.state, state);
+  return state;
+}
+
+export function report(state) {
+  const ledger = state.ledger ?? [];
+  const pending = Object.values(state.sessions ?? {}).filter((record) => record.pings?.length && !record.outcome);
+  const spent = ledger.reduce((sum, row) => sum + row.pingCost, 0) + pending.reduce((sum, record) => sum + record.pings.reduce((s, p) => s + p.cost, 0), 0);
+  const avoided = ledger.reduce((sum, row) => sum + row.avoided, 0);
+  const warm = ledger.filter((row) => row.warm).length;
+  return [
+    `Sessions you came back to: ${ledger.length} (${warm} warm, ${ledger.length - warm} cold)`,
+    `Still idle, outcome unknown: ${pending.length}`,
+    `Spent on pings:   ${money(spent)}`,
+    `Rebuilds avoided: ${money(avoided)}`,
+    `Net:              ${money(avoided - spent)} ${avoided >= spent ? "saved" : "lost — keep-warm isn't paying off for how you work"}`,
+    "List-price value of tokens, not your subscription bill.",
+  ].join("\n");
+}
+
+/** The session --test should ping: one whose cache is still warm, since a cold one can only show a rebuild. */
+export function pickTestSession(sessions, wanted, now) {
+  const matches = wanted === "latest" ? sessions : sessions.filter((session) => session.sessionId.startsWith(wanted));
+  const warm = matches.filter((session) => now - session.lastActivity < TTL_MS[session.ttl] - 60_000);
+  const newest = (list) => [...list].sort((a, b) => b.lastActivity - a.lastActivity)[0];
+  return { session: newest(warm), coldMatch: warm.length ? undefined : newest(matches) };
+}
+
+function selfTest(options, log = console.log) {
+  const now = Date.now();
+  const sessions = activeSessions({ ...options, maxIdleMs: 30 * 86_400_000 }, now).map(({ session }) => session);
+  const { session, coldMatch } = pickTestSession(sessions, options.testSession, now);
+  if (!session) {
+    if (coldMatch) log(`Session ${short(coldMatch.sessionId)} was last used ${mins(now - coldMatch.lastActivity)} ago, so its cache is gone and a ping would just pay for a rebuild.`);
+    else log("No matching Claude Code session found in the last 30 days.");
+    log("Use Claude Code for a minute (any session), then run --test again within the hour.");
+    return 1;
+  }
+  const idle = now - session.lastActivity;
+  const { rebuild, ping: estimate, maxPings } = economics(session.prefix, session.model, session.ttl);
+  log(`Session ${short(session.sessionId)}  ${session.model}  ${Math.round(session.prefix / 1000)}k-token prefix  ${session.ttl} TTL  idle ${mins(idle)}`);
+  const result = ping(session, options);
+  if (!result.ok) { log(`Ping failed: ${result.error}`); return 1; }
+  log(`Ping read ${Math.round(result.read / 1000)}k of ${Math.round(session.prefix / 1000)}k prefix tokens (${Math.round(result.hit * 100)}%), wrote ${Math.round(result.write / 1000)}k, cost ${money(result.cost)}.`);
+  log(`A cold rebuild of this session costs ~${money(rebuild)}. Expected ping ~${money(estimate)}: one avoided rebuild pays for ~${maxPings} pings.`);
+  if (result.hit < 0.8) log("VERDICT: the ping did not reuse this session's cache (different model/effort/settings?). Keep-warm won't help this session.");
+  else if (result.cost >= rebuild) log("VERDICT: the ping hit the cache, but extra requests made it cost more than the rebuild. Keep-warm loses money in this setup; don't run it.");
+  else if (result.cost > rebuild / 3) log("VERDICT: the ping hit the cache, but extra requests made it expensive. Run --report after a few days before trusting it.");
+  else log("VERDICT: works. Pings are cheap relative to a rebuild. Run it with --watch and check --report in a week.");
+  return 0;
+}
+
+const HELP = `Usage: cc-keep-warm [options]
+
+Keeps idle Claude Code sessions' prompt cache warm, then measures whether it paid off.
+
+  (no flag)        One pass: ping sessions about to go cold (run from cron every ~5 min)
+  --watch          Keep running, one pass per minute
+  --test [id]      Ping one session now (default: latest) and show what it read and cost
+  --backtest [days] Replay your last 30 days (or N): would keep-warm have paid off, and for how long?
+                   Sends nothing, costs nothing.
+  --days <n>       How far back --details looks (default 120)
+  --details <d>    Per session and per idle stretch: pings, cost, and what actually happened under
+                   a "keep warm up to <d>" policy (e.g. 2h); also writes ~/claude-keep-warm-details.csv
+  --report         What pinging has spent vs. the rebuilds it avoided
+  --dry-run        Show what would be pinged, send nothing
+  --tail <tokens>  What-if for --backtest: tokens each ping writes (default 12000, measured; 0 = API keep-alive)
+  --min-size <n>   Only keep sessions at least this big warm (default 200k; 0 = all; see --backtest)
+  --as-model <m>   What-if for --backtest/--details: price all history as this model (e.g. claude-opus-5-5)
+  --needs-input    Only ping while Claude is waiting for you (it asked something, or awaits your approval)
+  --smart          Only ping when your history says you're likely back before the cache dies
+  --hours <a-b>    Only ping during these local hours, e.g. 9-19 (also used by --backtest)
+  --workdays <d>   Only ping on these days, e.g. sun-thu or mon-fri
+  --max-idle <d>   Stop pinging after this much idle time (default 2h; run --backtest to find yours)
+  --dir <path>     Claude projects directory (default ~/.claude/projects)
+  --state <file>   State file (default ~/.claude/keep-warm/state.json)
+  --claude <bin>   claude executable (default: claude on PATH)`;
+
+export function main(argv = process.argv.slice(2)) {
+  let options;
+  try { options = parseArgs(argv); } catch (error) { console.error(`cc-keep-warm: ${error.message}\nRun with --help for usage.`); return 1; }
+  if (options.mode === "help") { console.log(HELP); return 0; }
+  if (options.mode === "report") { console.log(report(loadState(options.state))); return 0; }
+  if (options.mode === "test") return selfTest(options);
+  if (options.mode === "details") {
+    const since = Date.now() - (options.days ?? 120) * 86_400_000;
+    const sessions = transcripts(options.dir, since).map((file) => keepSince(readTurns(file), since)).filter((turns) => turns.length);
+    const rows = backtestDetails(sessions, options.detailsLimit, options.window);
+    const out = path.join(os.homedir(), "claude-keep-warm-details.csv");
+    const csv = ["session,model,ttl,prefix_tokens,idle_start,idle_minutes,pings,ping_cost_usd,saved_usd,net_usd,outcome",
+      ...rows.map((r) => [r.session, r.model, r.ttl, r.prefix, new Date(r.start).toISOString(), r.end === Infinity ? "" : Math.round(r.gap / 60_000), r.sent, r.cost.toFixed(4), r.saved.toFixed(4), r.net.toFixed(4), `"${r.outcome}"`].join(","))];
+    fs.writeFileSync(out, csv.join("\n"));
+    console.log(formatDetails(rows, options.detailsLimit));
+    console.log(`\nEvery idle stretch, one per row: ${out}`);
+    return 0;
+  }
+  if (options.mode === "backtest") {
+    const since = Date.now() - options.days * 86_400_000;
+    const sessions = transcripts(options.dir, since).map((file) => keepSince(readTurns(file), since)).filter((turns) => turns.length > 1);
+    const first = Math.min(...sessions.map((turns) => turns[0].at));
+    const covered = sessions.length ? Math.max(1, Math.ceil((Date.now() - first) / 86_400_000)) : 0;
+    const days = covered || options.days;
+    const plain = backtest(sessions);
+    console.log(formatBacktest(plain, days));
+    if (plain.gaps.length) {
+      const bestLimit = plain.policies.reduce((x, y) => (y.net > x.net ? y : x)).limit;
+      console.log(`\n${formatBySize(backtestBySize(sessions, bestLimit), bestLimit)}`);
+      console.log(`\n${formatNeedsInput(backtestNeedsInput(sessions))}`);
+    }
+    const window = options.window ?? { from: 9, to: 19, days: [0, 1, 2, 3, 4, 5, 6] };
+    console.log(`\n${"-".repeat(72)}\n`);
+    console.log(formatBacktest(backtest(sessions, [2 * HOUR, 4 * HOUR, 8 * HOUR, Infinity], window), days, window));
+    if (!options.window) console.log("(Default working hours. Set yours with --hours 9-19 --workdays sun-thu.)");
+    const smart = backtestSmart(sessions);
+    console.log(`\n${"-".repeat(72)}\n`);
+    if (smart.testCount < 40) console.log("Smart mode needs more history to learn your patterns (try --backtest 120).");
+    else console.log([
+      "Smart mode: predicts whether you'll be back before the cache dies, and pings only when that pays.",
+      "Learned on your older half, scored on the newer half (no peeking):",
+      `  time only (≤${smart.learnedLimit / HOUR}h)       ${String(smart.smart.rescued).padStart(5)} rescued   pings ${money(smart.smart.spent).padStart(8)}   saved ${money(smart.smart.saved).padStart(8)}   net ${money(smart.smart.net).padStart(8)}`,
+      `  behavior (≤${smart.behavior.limit / HOUR}h)        ${String(smart.behavior.rescued).padStart(5)} rescued   pings ${money(smart.behavior.spent).padStart(8)}   saved ${money(smart.behavior.saved).padStart(8)}   net ${money(smart.behavior.net).padStart(8)}`,
+      `  best fixed limit (${smart.bestSimple.limit / HOUR}h)  ${String(smart.bestSimple.rescued).padStart(5)} rescued   pings ${money(smart.bestSimple.spent).padStart(8)}   saved ${money(smart.bestSimple.saved).padStart(8)}   net ${money(smart.bestSimple.net).padStart(8)}   (picked with hindsight)`,
+      `  (newer half starts ${new Date(smart.testFrom).toISOString().slice(0, 10)})`,
+      "",
+      "What predicts you coming back (odds multiplier for a typical change; >1 = more likely back):",
+      ...smart.signals.slice(0, 8).map((sig) => `  ${sig.odds.toFixed(2).padStart(5)}x  ${sig.label}`),
+    ].join("\n"));
+    if (covered && covered < options.days - 1) console.log(`\nYou asked for ${options.days} days, but your logs only go back ${covered} (to ${new Date(first).toISOString().slice(0, 10)}). Claude Code deletes old transcripts; raise "cleanupPeriodDays" in ~/.claude/settings.json to keep more.`);
+    return 0;
+  }
+  runOnce(options);
+  if (options.mode === "watch") setInterval(() => runOnce(options), options.interval);
+  return 0;
+}
+
+let invokedAsMain = false;
+try {
+  invokedAsMain = Boolean(process.argv[1])
+    && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+} catch { /* Importing the pure functions must never trigger CLI side effects. */ }
+if (invokedAsMain) process.exitCode = main();

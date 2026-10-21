@@ -5,7 +5,8 @@
   "type": "module",
   "description": "The Claude Code Simulator - deterministic cache-economy engine + Svelte UI, builds to one self-contained offline HTML.",
   "bin": {
-    "cc-cache-report": "bin/cc-cache-report.mjs"
+    "cc-cache-report": "bin/cc-cache-report.mjs",
+    "cc-keep-warm": "bin/cc-keep-warm.mjs"
   },
   "scripts": {
     "dev": "vite",
@@ -14,7 +15,8 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "report": "node bin/cc-cache-report.mjs"
+    "report": "node bin/cc-cache-report.mjs",
+    "keep-warm": "node bin/cc-keep-warm.mjs"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^6.2.4",
